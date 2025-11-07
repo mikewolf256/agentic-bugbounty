@@ -1,0 +1,50 @@
+{
+  "program_name": "23andMe Public Bug Bounty",
+  "primary_targets": [
+    "you.23andme.com",
+    "auth.23andme.com",
+    "api.23andme.com",
+    "store.23andme.com"
+  ],
+  "secondary_targets": [
+    "mediacenter.23andme.com",
+    "blog.23andme.com",
+    "therapeutics.23andme.com",
+    "research.23andme.com",
+    "education.23andme.com",
+    "medical.23andme.com",
+    "pd-api.polkadoc.com",
+    "clinic.lemonaidhealth.com",
+    "healthaid.lemonaidhealth.com",
+    "sapi-live.lh.us-west-2.prd.23andme.us"
+  ],
+  "rules": {
+    "rate_limit_rps": 3,
+    "header_required": "X-HackerOne-Research",
+    "use_hackerone_alias": true,
+    "alias_format": "h1<username>@wearehackerone.com",
+    "disclosure": "Private – do not disclose without 23andMe's written consent",
+    "last_updated": "2025-04-24",
+    "focus_areas": [
+      "Sensitive Data Exposure",
+      "Remote Code Execution (RCE)",
+      "Authentication Bypass",
+      "Broken Access Control",
+      "SQL Injection (or equivalent)",
+      "Server-Side Request Forgery (SSRF)",
+      "Malicious File Uploads",
+      "XML External Entities (XXE)",
+      "Cross-Site Scripting (XSS)",
+      "Exfiltration of AWS credentials",
+      "Misconfigured cloud infrastructure leading to data leakage"
+    ],
+    "exclusions": [
+      "Vulnerabilities caused by past or present data breaches",
+      "Low-impact issues (e.g., missing headers, outdated libraries, clickjacking)",
+      "Attacks requiring unlikely user interaction or physical access",
+      "Denial-of-Service (DoS) or brute-force attacks",
+      "Rate limiting on non-authentication endpoints",
+      "Third-party vendors (e.g., Ada, Zendesk, Braintree, Google Maps API keys)"
+    ]
+  }
+}

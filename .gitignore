@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+output_zap/
+metrics/
+logs/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

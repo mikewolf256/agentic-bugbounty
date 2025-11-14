@@ -1,3 +1,63 @@
+def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
+    """/mcp/export_report should read findings JSON and emit markdown + index files."""
+
+    # Use temp output dir for reports and findings
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+
+    # Point the module-level OUTPUT_DIR to tmp_path as well
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    # Set a scope so generate_h1_markdown uses the program name
+    scope_payload = {
+        "program_name": "unit-test-program",
+        "primary_targets": ["example.com"],
+        "secondary_targets": [],
+        "rules": {},
+    }
+    r = client.post("/mcp/set_scope", json=scope_payload)
+    assert r.status_code == 200
+
+    scan_id = "scan123"
+    # IMPORTANT: write findings where export_report will look
+    findings_path = tmp_path / f"zap_findings_{scan_id}.json"
+    findings = [
+        {
+            "id": "f1",
+            "url": "https://example.com/one",
+            "name": "XSS in param q",
+            "risk": "High",
+            "evidence": "<script>alert(1)</script>",
+        },
+        {
+            "id": "f2",
+            "url": "https://example.com/two",
+            "name": "SQL injection",
+            "risk": "High",
+            "evidence": "' OR 1=1 --",
+        },
+    ]
+    findings_path.write_text(json.dumps(findings))
+
+    resp = client.get(f"/mcp/export_report/{scan_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    index_path = tmp_path / f"{scan_id}_reports_index.json"
+    assert data["index"] == str(index_path)
+    assert index_path.exists()
+    listed_reports = json.loads(index_path.read_text())
+    assert len(listed_reports) == 2
+
+    for report_file in listed_reports:
+        p = tmp_path / os.path.basename(report_file)
+        assert p.exists()
+        content = p.read_text()
+        assert "unit-test-program" in content
+
+    all_md = "\n".join((tmp_path / os.path.basename(f)).read_text() for f in listed_reports)
+    assert "https://example.com/one" in all_md
+    assert "https://example.com/two" in all_md
 #!/usr/bin/env python3
 # mcp_zap_server.py
 """
@@ -8,7 +68,66 @@ MCP-style starter server using free tooling:
 - interactsh-client (optional) for OAST / blind callback tests
 
 Features:
-- /mcp/set_scope         -> upload scope (json)
+- /mcp/set_scope         -> upload scope (json)def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
+    ""/mcp/export_report should read findings JSON and emit markdown + index files""
+
+    # Use temp output dir for reports and findings
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+
+    # Point the module-level OUTPUT_DIR to tmp_path as well
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    # Set a scope so generate_h1_markdown uses the program name
+    scope_payload = {
+        "program_name": "unit-test-program",
+        "primary_targets": ["example.com"],
+        "secondary_targets": [],
+        "rules": {},
+    }
+    r = client.post("/mcp/set_scope", json=scope_payload)
+    assert r.status_code == 200
+
+    scan_id = "scan123"
+    # IMPORTANT: write findings where export_report will look
+    findings_path = tmp_path / f"zap_findings_{scan_id}.json"
+    findings = [
+        {
+            "id": "f1",
+            "url": "https://example.com/one",
+            "name": "XSS in param q",
+            "risk": "High",
+            "evidence": "<script>alert(1)</script>",
+        },
+        {
+            "id": "f2",
+            "url": "https://example.com/two",
+            "name": "SQL injection",
+            "risk": "High",
+            "evidence": "' OR 1=1 --",
+        },
+    ]
+    findings_path.write_text(json.dumps(findings))
+
+    resp = client.get(f"/mcp/export_report/{scan_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    index_path = tmp_path / f"{scan_id}_reports_index.json"
+    assert data["index"] == str(index_path)
+    assert index_path.exists()
+    listed_reports = json.loads(index_path.read_text())
+    assert len(listed_reports) == 2
+
+    for report_file in listed_reports:
+        p = tmp_path / os.path.basename(report_file)
+        assert p.exists()
+        content = p.read_text()
+        assert "unit-test-program" in content
+
+    all_md = "\n".join((tmp_path / os.path.basename(f)).read_text() for f in listed_reports)
+    assert "https://example.com/one" in all_md
+    assert "https://example.com/two" in all_md
 - /mcp/start_zap_scan    -> start a ZAP spider + active scan (injects X-HackerOne-Research header)
 - /mcp/run_ffuf          -> run ffuf on a target endpoint with header
 - /mcp/run_sqlmap        -> run sqlmap on a target endpoint with header

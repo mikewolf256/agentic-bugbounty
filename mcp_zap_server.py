@@ -1,3 +1,64 @@
+def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
+    """/mcp/export_report should read findings JSON and emit markdown + index files."""
+
+    # Use temp output dir for reports and findings
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+
+    # Point the module-level OUTPUT_DIR to tmp_path as well
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    # Set a scope so generate_h1_markdown uses the program name
+    scope_payload = {
+        "program_name": "unit-test-program",
+        "primary_targets": ["example.com"],
+        "secondary_targets": [],
+        "rules": {},
+    }
+    r = client.post("/mcp/set_scope", json=scope_payload)
+    assert r.status_code == 200
+
+    scan_id = "scan123"
+    # IMPORTANT: write findings where export_report will look
+    findings_path = tmp_path / f"zap_findings_{scan_id}.json"
+    findings = [
+        {
+            "id": "f1",
+            "url": "https://example.com/one",
+            "name": "XSS in param q",
+            "risk": "High",
+            "evidence": "<script>alert(1)</script>",
+        },
+        {
+            "id": "f2",
+            "url": "https://example.com/two",
+            "name": "SQL injection",
+            "risk": "High",
+            "evidence": "' OR 1=1 --",
+        },
+    ]
+    findings_path.write_text(json.dumps(findings))
+
+    resp = client.get(f"/mcp/export_report/{scan_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    index_path = tmp_path / f"{scan_id}_reports_index.json"
+    assert data["index"] == str(index_path)
+    assert index_path.exists()
+    listed_reports = json.loads(index_path.read_text())
+    assert len(listed_reports) == 2
+
+    for report_file in listed_reports:
+        p = tmp_path / os.path.basename(report_file)
+        assert p.exists()
+        content = p.read_text()
+        assert "unit-test-program" in content
+
+    all_md = "\n".join((tmp_path / os.path.basename(f)).read_text() for f in listed_reports)
+    assert "https://example.com/one" in all_md
+    assert "https://example.com/two" in all_md
+#!/usr/bin/env python3
 # mcp_zap_server.py
 """
 MCP-style starter server using free tooling:
@@ -7,12 +68,77 @@ MCP-style starter server using free tooling:
 - interactsh-client (optional) for OAST / blind callback tests
 
 Features:
-- /mcp/set_scope      -> upload scope (json)
-- /mcp/start_zap_scan -> start a ZAP spider + active scan (injects X-HackerOne-Research header)
-- /mcp/run_ffuf       -> run ffuf on a target endpoint with header
-- /mcp/run_sqlmap     -> run sqlmap on a target endpoint with header
-- /mcp/poll_zap       -> poll ZAP for alerts and normalize
-- /mcp/export_report  -> produce HackerOne markdown reports for alerts/findings
+- /mcp/set_scope         -> upload scope (json)def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
+    ""/mcp/export_report should read findings JSON and emit markdown + index files""
+
+    # Use temp output dir for reports and findings
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+
+    # Point the module-level OUTPUT_DIR to tmp_path as well
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    # Set a scope so generate_h1_markdown uses the program name
+    scope_payload = {
+        "program_name": "unit-test-program",
+        "primary_targets": ["example.com"],
+        "secondary_targets": [],
+        "rules": {},
+    }
+    r = client.post("/mcp/set_scope", json=scope_payload)
+    assert r.status_code == 200
+
+    scan_id = "scan123"
+    # IMPORTANT: write findings where export_report will look
+    findings_path = tmp_path / f"zap_findings_{scan_id}.json"
+    findings = [
+        {
+            "id": "f1",
+            "url": "https://example.com/one",
+            "name": "XSS in param q",
+            "risk": "High",
+            "evidence": "<script>alert(1)</script>",
+        },
+        {
+            "id": "f2",
+            "url": "https://example.com/two",
+            "name": "SQL injection",
+            "risk": "High",
+            "evidence": "' OR 1=1 --",
+        },
+    ]
+    findings_path.write_text(json.dumps(findings))
+
+    resp = client.get(f"/mcp/export_report/{scan_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    index_path = tmp_path / f"{scan_id}_reports_index.json"
+    assert data["index"] == str(index_path)
+    assert index_path.exists()
+    listed_reports = json.loads(index_path.read_text())
+    assert len(listed_reports) == 2
+
+    for report_file in listed_reports:
+        p = tmp_path / os.path.basename(report_file)
+        assert p.exists()
+        content = p.read_text()
+        assert "unit-test-program" in content
+
+    all_md = "\n".join((tmp_path / os.path.basename(f)).read_text() for f in listed_reports)
+    assert "https://example.com/one" in all_md
+    assert "https://example.com/two" in all_md
+- /mcp/start_zap_scan    -> start a ZAP spider + active scan (injects X-HackerOne-Research header)
+- /mcp/run_ffuf          -> run ffuf on a target endpoint with header
+- /mcp/run_sqlmap        -> run sqlmap on a target endpoint with header
+- /mcp/poll_zap          -> poll ZAP for alerts and normalize
+- /mcp/export_report     -> produce HackerOne markdown reports for alerts/findings
+
+P0 add-ons (new):
+- /mcp/run_js_miner      -> run JS/config miner as a background job
+- /mcp/run_reflector     -> run parameter reflector tester as a background job
+- /mcp/run_backup_hunt   -> run ffuf backup/VCS hunt as a background job
+- /mcp/job/{id}          -> query background job status/results
 
 Notes:
 - Requires local ZAP running with API accessible (default http://localhost:8080).
@@ -20,25 +146,40 @@ Notes:
 - For interactsh usage, install the interactsh-client binary and provide path in config.
 """
 import os
+import sys
 import json
 import time
 import subprocess
 import threading
 from typing import List, Dict, Any, Optional
 from uuid import uuid4
+from urllib.parse import urlparse
 
 import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+def normalize_target(t: str) -> str:
+    """Strip scheme, path, and port - keep only the hostname."""
+    if "://" in t:
+        u = urlparse(t)
+        host = (u.netloc or u.path).split("/")[0]
+    else:
+        host = t.split("/")[0]
+    return host.lower().strip().rstrip(".")
+
 
 # ========== CONFIG ==========
 ZAP_API_BASE = os.environ.get("ZAP_API_BASE", "http://localhost:8080")
 ZAP_API_KEY = os.environ.get("ZAP_API_KEY", "")  # optional if ZAP requires it
 H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
 MAX_REQ_PER_SEC = float(os.environ.get("MAX_REQ_PER_SEC", "3.0"))
-INTERACTSH_CLIENT = os.environ.get("INTERACTSH_CLIENT", "")  # optional: path to interactsh-client
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "./output_zap")
+INTERACTSH_CLIENT = os.environ.get("INTERACTSH_CLIENT", "")  # optional: path to interactsh-client
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+ARTIFACTS_DIR = os.path.join(OUTPUT_DIR, "artifacts")
+os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
 # ========== simple rate limiter ==========
 _last_time = 0.0
@@ -115,8 +256,6 @@ def zap_api(endpoint_path: str, params: Dict[str, Any] = None, method: str = "GE
         return r.text
 
 # Add a simple httpsender script to inject header into outgoing requests.
-# ZAP supports scripts with type 'httpsender' and engines like 'ECMAScript' or 'Oracle Nashorn'.
-# We'll attempt to add one named 'h1_research_header' that adds X-HackerOne-Research header.
 def ensure_zap_header_script():
     # Check existing scripts
     try:
@@ -150,9 +289,51 @@ function responseReceived(msg, initiator, helper) {{
         zap_api("/JSON/script/action/addScript/", params=params, method="POST")
         return True
     except Exception as e:
-        # some ZAP versions restrict script adding; return False but continue
         print("[!] Could not add ZAP header script:", e)
         return False
+
+# ========== helpers ==========
+def _scope_allowed_host(host_or_url: str) -> bool:
+    if SCOPE is None:
+        return False
+    host = normalize_target(host_or_url)
+    allowed = {normalize_target(x) for x in (SCOPE.primary_targets + SCOPE.secondary_targets)}
+    return host in allowed
+
+def _enforce_scope(host_or_url: str) -> str:
+    if not _scope_allowed_host(host_or_url):
+        raise HTTPException(status_code=400, detail=f"Target {normalize_target(host_or_url)} not in scope.")
+    return normalize_target(host_or_url)
+
+def _spawn_job(cmd_argv: List[str], job_kind: str, artifact_dir: Optional[str] = None) -> str:
+    job_id = str(uuid4())
+    JOB_STORE[job_id] = {
+        "type": job_kind,
+        "status": "started",
+        "started_at": time.time(),
+        "artifact_dir": artifact_dir,
+        "cmd": cmd_argv,
+    }
+    def worker():
+        try:
+            if artifact_dir:
+                os.makedirs(artifact_dir, exist_ok=True)
+            p = subprocess.run(cmd_argv, capture_output=True, text=True, timeout=3600)
+            JOB_STORE[job_id]["status"] = "finished" if p.returncode == 0 else f"error({p.returncode})"
+            JOB_STORE[job_id]["result"] = {
+                "returncode": p.returncode,
+                "stdout": (p.stdout or "")[-4000:],
+                "stderr": (p.stderr or "")[-4000:],
+                "artifact_dir": artifact_dir
+            }
+        except subprocess.TimeoutExpired:
+            JOB_STORE[job_id]["status"] = "timeout"
+            JOB_STORE[job_id]["result"] = {"error": "timeout"}
+        except Exception as e:
+            JOB_STORE[job_id]["status"] = "error"
+            JOB_STORE[job_id]["result"] = {"error": str(e)}
+    threading.Thread(target=worker, daemon=True).start()
+    return job_id
 
 # ========== MCP endpoints ==========
 @app.post("/mcp/set_scope")
@@ -170,27 +351,28 @@ def set_scope(cfg: dict):
 def start_zap_scan(req: ZapScanRequest):
     if SCOPE is None:
         raise HTTPException(status_code=400, detail="Scope not set. Call /mcp/set_scope first.")
-    for t in req.targets:
-        if t not in SCOPE.primary_targets and t not in SCOPE.secondary_targets:
+    # Scope check
+    allowed = {normalize_target(x) for x in (SCOPE.primary_targets + SCOPE.secondary_targets)}
+    normalized_targets = [normalize_target(t) for t in req.targets]
+    for t in normalized_targets:
+        if t not in allowed:
             raise HTTPException(status_code=400, detail=f"Target {t} not in scope.")
     # Ensure header injection in ZAP via scripts (best-effort)
     ensure_zap_header_script()
-    # First, spider each target
+
+    # Spider each target
     zap_scan_ids = []
-    for t in req.targets:
-        # Spider
+    for t in normalized_targets:
         spider_resp = zap_api("/JSON/spider/action/scan/", params={"url": f"https://{t}", "maxChildren": 0})
         scanid = spider_resp.get("scan") if isinstance(spider_resp, dict) else None
         zap_scan_ids.append(scanid)
-        # Poll spider until done (background thread)
-    # Start active scan for each base URL (use ascan)
+
+    # Start active scan in a background worker
     our_scan_id = str(uuid4())
-    JOB_STORE[our_scan_id] = {"type": "zap", "targets": req.targets, "created": time.time(), "status": "started", "zap_ids": zap_scan_ids}
+    JOB_STORE[our_scan_id] = {"type": "zap", "targets": normalized_targets, "created": time.time(), "status": "started", "zap_ids": zap_scan_ids}
     def scan_worker(our_id, targets):
         try:
-            # Wait a short time for spider to populate (conservative)
-            time.sleep(5)
-            # For each target start active scan
+            time.sleep(5)  # allow spider to populate
             active_ids = []
             for t in targets:
                 params = {"url": f"https://{t}"}
@@ -200,7 +382,6 @@ def start_zap_scan(req: ZapScanRequest):
                 aid = resp.get("scan") if isinstance(resp, dict) else None
                 active_ids.append(aid)
             JOB_STORE[our_id]["zap_ascan_ids"] = active_ids
-            # Poll until scans finish (simple loop)
             finished = False
             while not finished:
                 finished = True
@@ -216,7 +397,7 @@ def start_zap_scan(req: ZapScanRequest):
             JOB_STORE[our_id]["status"] = "finished"
         except Exception as e:
             JOB_STORE[our_id]["status"] = f"error: {e}"
-    threading.Thread(target=scan_worker, args=(our_scan_id, req.targets), daemon=True).start()
+    threading.Thread(target=scan_worker, args=(our_scan_id, normalized_targets), daemon=True).start()
     return {"our_scan_id": our_scan_id, "zap_scan_ids": zap_scan_ids}
 
 @app.get("/mcp/poll_zap/{our_scan_id}")
@@ -224,7 +405,6 @@ def poll_zap(our_scan_id: str):
     entry = JOB_STORE.get(our_scan_id)
     if not entry:
         raise HTTPException(status_code=404, detail="No such scan")
-    # Fetch alerts for each target
     findings = []
     for t in entry["targets"]:
         alerts = zap_api("/JSON/core/view/alerts/", params={"baseurl": f"https://{t}"})
@@ -246,22 +426,77 @@ def poll_zap(our_scan_id: str):
                 "raw": a
             }
             findings.append(finding)
-    # Save findings file
     out = os.path.join(OUTPUT_DIR, f"zap_findings_{our_scan_id}.json")
     with open(out, "w") as fh:
         json.dump(findings, fh, indent=2)
     return {"scan_id": our_scan_id, "count": len(findings), "findings_file": out}
 
+# ===== P0 background tool runners =====
+@app.post("/mcp/run_js_miner")
+def run_js_miner(body: Dict[str, Any]):
+    base_url = body.get("base_url") or ""
+    if not base_url:
+        raise HTTPException(status_code=400, detail="base_url required")
+    host = normalize_target(body.get("host") or base_url)
+    _enforce_scope(host)
+    subdir = body.get("subdir") or host
+    outdir = os.path.join(ARTIFACTS_DIR, "js_miner", subdir)
+    cmd = [sys.executable, "tools/js_miner.py", "--base-url", base_url, "--output", outdir]
+    job_id = _spawn_job(cmd, job_kind="js_miner", artifact_dir=outdir)
+    return {"job_id": job_id, "artifact_dir": outdir, "cmd": cmd}
+
+@app.post("/mcp/run_reflector")
+def run_reflector(body: Dict[str, Any]):
+    url = body.get("url") or ""
+    if not url:
+        raise HTTPException(status_code=400, detail="url required")
+    host = normalize_target(body.get("host") or url)
+    _enforce_scope(host)
+    subdir = body.get("subdir") or host
+    outdir = os.path.join(ARTIFACTS_DIR, "reflector", subdir)
+    cmd = [sys.executable, "tools/reflector_tester.py", "--url", url, "--output", outdir]
+    job_id = _spawn_job(cmd, job_kind="reflector", artifact_dir=outdir)
+    return {"job_id": job_id, "artifact_dir": outdir, "cmd": cmd}
+
+@app.post("/mcp/run_backup_hunt")
+def run_backup_hunt(body: Dict[str, Any]):
+    target = body.get("target") or ""
+    if not target:
+        raise HTTPException(status_code=400, detail="target required")
+    host = normalize_target(body.get("host") or target)
+    _enforce_scope(host)
+    subdir = body.get("subdir") or host
+    outdir = os.path.join(ARTIFACTS_DIR, "backup_hunt", subdir)
+    cmd = [sys.executable, "tools/backup_hunt.py", "--target", target, "--output", outdir]
+    wordlist = body.get("wordlist")
+    if wordlist:
+        cmd += ["--wordlist", wordlist]
+    job_id = _spawn_job(cmd, job_kind="backup_hunt", artifact_dir=outdir)
+    return {"job_id": job_id, "artifact_dir": outdir, "cmd": cmd}
+
+@app.get("/mcp/job/{job_id}")
+def job_status(job_id: str):
+    job = JOB_STORE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job")
+    return {
+        "job_id": job_id,
+        "type": job.get("type"),
+        "status": job.get("status"),
+        "started_at": job.get("started_at"),
+        "artifact_dir": job.get("artifact_dir"),
+        "result": job.get("result", {}),
+        "cmd": job.get("cmd"),
+    }
+
 @app.post("/mcp/run_ffuf")
 def run_ffuf(req: FfufRequest):
-    # ffuf must be installed. We'll call it with header injection.
     header_args = []
     headers = req.headers or {}
     headers["X-HackerOne-Research"] = H1_ALIAS
-    for k,v in headers.items():
+    for k, v in headers.items():
         header_args += ["-H", f"{k}: {v}"]
     rate = req.rate or int(MAX_REQ_PER_SEC)
-    # Example ffuf usage: ffuf -u https://target/FUZZ -w wordlist -H "Header: value" -p 0
     output_file = os.path.join(OUTPUT_DIR, f"ffuf_{int(time.time())}.json")
     cmd = ["ffuf", "-u", req.target.replace("FUZZ", "FUZZ"), "-w", req.wordlist, "-t", str(rate), "-of", "json", "-o", output_file] + header_args
     try:
@@ -269,9 +504,7 @@ def run_ffuf(req: FfufRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=400, detail="ffuf not found. Install ffuf and ensure it's in PATH.")
     if p.returncode != 0:
-        # still might have produced output; include stdout/stderr
         return {"status": "error", "returncode": p.returncode, "stdout": p.stdout, "stderr": p.stderr}
-    # parse output file if exists
     if os.path.exists(output_file):
         with open(output_file, "r") as fh:
             data = json.load(fh)
@@ -281,13 +514,12 @@ def run_ffuf(req: FfufRequest):
 
 @app.post("/mcp/run_sqlmap")
 def run_sqlmap(req: SqlmapRequest):
-    # sqlmap must be installed. We'll call with --batch and headers
     headers = req.headers or {}
     headers["X-HackerOne-Research"] = H1_ALIAS
-    header_str = "\\n".join([f"{k}: {v}" for k,v in headers.items()])
+    header_str = "\n".join([f"{k}: {v}" for k, v in headers.items()])
     output_dir = os.path.join(OUTPUT_DIR, f"sqlmap_{int(time.time())}")
     os.makedirs(output_dir, exist_ok=True)
-    cmd = ["sqlmap", "-u", req.target, "--batch", "--output-dir", output_dir, "--headers", header_str]
+    cmd = ["sqlmap", "-u", req.target, "--batch", "--output-dir", output_dir, "--headers", header_str, "--delay", str(1.0/MAX_REQ_PER_SEC)]
     if req.data:
         cmd += ["--data", req.data]
     try:
@@ -298,7 +530,6 @@ def run_sqlmap(req: SqlmapRequest):
 
 @app.post("/mcp/interactsh_new")
 def interactsh_new():
-    # Requires interactsh-client installed and in PATH (or use the env INTERACTSH_CLIENT)
     client = INTERACTSH_CLIENT or "interactsh-client"
     cmd = [client, "create", "--json"]
     try:
@@ -311,12 +542,10 @@ def interactsh_new():
         data = json.loads(p.stdout)
     except Exception:
         raise HTTPException(status_code=500, detail="Could not parse interactsh output: " + p.stdout)
-    # data should contain an 'id' and 'domain'
     return {"interact": data}
 
 @app.get("/mcp/export_report/{scan_id}")
 def export_report(scan_id: str):
-    # Load findings file if present
     findings_path = os.path.join(OUTPUT_DIR, f"zap_findings_{scan_id}.json")
     if not os.path.exists(findings_path):
         raise HTTPException(status_code=404, detail="Findings file not found. Call /mcp/poll_zap first.")
@@ -406,5 +635,6 @@ def remediation_guess_from_name(name: str):
 # ========== startup ==========
 if __name__ == "__main__":
     import uvicorn
-    print("MCP ZAP server starting. Ensure ZAP is running (default http://localhost:8080).")
+    print("MCP ZAP server starting. Ensure ZAP is running (default http://localhost:8080)."
+    )
     uvicorn.run("mcp_zap_server:app", host="0.0.0.0", port=8100, reload=False)

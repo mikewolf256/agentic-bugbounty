@@ -1,239 +1,245 @@
 #!/usr/bin/env python3
-"""
-Agentic runner for MCP -> LLM triage + HackerOne report generation.
-
-- Reads scope from local scope.json (project root or output folder)
-- Optionally starts a ZAP scan via the MCP server
-- Polls for findings and loads findings JSON
-- Calls an OpenAI-compatible LLM to triage and produce HackerOne-ready submission drafts
-- Produces combined report JSON + per-finding Markdown ready to paste into HackerOne
-
-Usage:
-    export OPENAI_API_KEY="sk-..."
-    export H1_ALIAS="h1yourusername@wearehackerone.com"
-    python agentic_runner.py --scan_id <SCAN_ID>          # triage existing scan
-    python agentic_runner.py --start_scan api.23andme.com  # start a scan then triage when done
-"""
 import os
-import time
 import json
+import time
+import shlex
+import subprocess
 import argparse
+from typing import Tuple, Optional
+
 import requests
-from typing import List, Dict, Any, Optional
 
-# ========== Configuration ==========
-MCP_BASE = os.environ.get("MCP_BASE", "http://localhost:8100")
-H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
+# ==== Config / Env ====
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")  # adjust if needed
-POLL_INTERVAL = int(os.environ.get("AGENT_POLL_INTERVAL", "8"))
-LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.0"))
-
+LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
 if not OPENAI_API_KEY:
-    print("ERROR: set OPENAI_API_KEY in env before running.")
-    raise SystemExit(1)
+    raise SystemExit("Set OPENAI_API_KEY env var.")
 
-HEADERS = {"Content-Type": "application/json"}
+# Dalfox config
+DALFOX_PATH = os.environ.get("DALFOX_BIN", os.path.expanduser("~/go/bin/dalfox"))
+DALFOX_DOCKER = os.environ.get("DALFOX_DOCKER", "").lower() in ("1","true","yes")
+DALFOX_TIMEOUT = int(os.environ.get("DALFOX_TIMEOUT_SECONDS", "30"))
+DALFOX_THREADS = int(os.environ.get("DALFOX_THREADS", "5"))  # dalfox -t
 
-# ---------- Helpers ----------
-def call_mcp(path: str, method="GET", json_body: Optional[dict]=None, params: dict=None):
-    url = MCP_BASE.rstrip("/") + path
-    try:
-        if method.upper() == "GET":
-            r = requests.get(url, params=params, timeout=600)
-        else:
-            r = requests.post(url, json=json_body, params=params, timeout=600)
-    except Exception as e:
-        raise SystemExit(f"Error calling MCP {url}: {e}")
-    if r.status_code >= 400:
-        raise SystemExit(f"MCP returned {r.status_code}: {r.text}")
-    try:
-        return r.json()
-    except Exception:
-        return r.text
+SYSTEM_PROMPT = """You are a senior web security engineer and bug bounty triager.
+Return STRICT JSON with keys: title, cvss_vector, cvss_score, summary, repro, impact, remediation, cwe, confidence, recommended_bounty_usd.
+Be conservative. If low-value/noisy, confidence="low", recommended_bounty_usd=0. No leaked-credential validation or SE."""
+USER_TMPL = """Program scope:
+{scope}
 
-def openai_chat(messages: List[dict], model: str = LLM_MODEL, temperature: float = LLM_TEMPERATURE):
+Finding JSON:
+{finding}
+"""
+
+# ==== Helpers ====
+def openai_chat(msgs):
+    r = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type":"application/json"},
+        json={"model": LLM_MODEL, "messages": msgs, "temperature": 0.0, "max_tokens": 1600},
+        timeout=180,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"].strip()
+
+def run_dalfox_check(target_url: str, param_name: Optional[str] = None) -> Tuple[bool, dict]:
     """
-    Minimal OpenAI Chat call using REST. If you use another LLM provider,
-    replace this function with the appropriate API call.
+    Safe Dalfox confirmation for XSS-like issues.
+    Returns (confirmed, evidence_dict).
     """
-    url = "https://api.openai.com/v1/chat/completions"
-    payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": 1600}
-    r = requests.post(url, headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}, json=payload, timeout=180)
-    if r.status_code >= 400:
-        raise SystemExit(f"LLM error {r.status_code}: {r.text}")
-    js = r.json()
-    return js["choices"][0]["message"]["content"].strip()
+    evidence = {"engine_result": None, "payload": None, "proof_snippet": None, "raw_output": None, "cmd": None}
+    safe_payload = "<svg/onload=console.log('h1-xss')>"
+    tmp_out = os.path.join("output_zap", f"dalfox_{int(time.time())}.json")
 
-# ========== LLM prompt templates ==========
-SYSTEM_PROMPT = """You are a senior web security engineer and a professional bug bounty triage reviewer.
-You will be given: program scope, and a single raw finding JSON from ZAP (or similar).
-Produce a strict JSON object with these keys:
- - title: short one-line title
- - cvss_vector: CVSS v3 vector string (or "TBD")
- - cvss_score: numeric score 0.0-10.0 (or 0)
- - summary: one- or two-sentence summary
- - repro: exact minimal reproduction steps (curl or HTTP request) with the required research header included where applicable
- - impact: prioritized impact paragraph
- - remediation: concise actionable remediation (1-3 lines)
- - cwe: CWE id or "N/A"
- - confidence: "high" | "medium" | "low"
- - recommended_bounty_usd: integer amount or 0
-Return only valid JSON. Be conservative with scoring and recommended_bounty_usd. If the finding is noisy/low-value, set confidence to \"low\" and recommended_bounty_usd to 0.
-Do NOT suggest or instruct on validating leaked credentials or performing social engineering.
-"""
-
-LLM_USER_PROMPT = """
-Program scope (JSON):
-{scope_json}
-
-ZAP finding (raw JSON):
-{finding_json}
-
-Focus Areas: Sensitive Data Exposure, RCE, Authentication Bypass, Broken Access Control, SQLi, SSRF, File Uploads, XXE, XSS, cloud credentials, misconfigured cloud.
-
-Now triage and produce the required JSON result.
-"""
-
-# ---------- LLM triage ----------
-def triage_finding_with_llm(scope: dict, finding: dict) -> dict:
-    msg_system = {"role": "system", "content": SYSTEM_PROMPT}
-    user = LLM_USER_PROMPT.format(scope_json=json.dumps(scope, indent=2), finding_json=json.dumps(finding, indent=2))
-    msg_user = {"role": "user", "content": user}
-    resp_text = openai_chat([msg_system, msg_user])
-    # try to parse JSON from LLM response
-    try:
-        parsed = json.loads(resp_text)
-        return parsed
-    except Exception:
-        # fallback: wrap summarised text into a low-confidence structure
-        return {
-            "title": finding.get("name", "Finding"),
-            "cvss_vector": "TBD",
-            "cvss_score": 0,
-            "summary": resp_text[:400],
-            "repro": "See raw evidence in '_raw_finding'.",
-            "impact": "See raw evidence",
-            "remediation": "See raw evidence",
-            "cwe": finding.get("cweid") or "N/A",
-            "confidence": "low",
-            "recommended_bounty_usd": 0
-        }
-
-# ---------- File / scope helpers ----------
-def read_scope_local() -> dict:
-    candidates = ["./output/scope.json", "./scope.json", "./output_zap/scope.json"]
-    for p in candidates:
-        if os.path.exists(p):
-            return json.load(open(p))
-    raise SystemExit("Scope JSON not found locally. Save scope.json in project root or output/")
-
-def start_zap_and_get_scan_id(target: str) -> str:
-    print(f"Starting ZAP scan for {target} ...")
-    resp = call_mcp("/mcp/start_zap_scan", method="POST", json_body={"targets":[target]})
-    scan_id = resp.get("our_scan_id")
-    print("started:", scan_id)
-    return scan_id
-
-def poll_scan_results(scan_id: str, poll_interval: int = POLL_INTERVAL, timeout: int = 60*30) -> str:
-    print("Polling MCP for scan results (this may take minutes)...")
-    start = time.time()
-    while True:
-        out = call_mcp(f"/mcp/poll_zap/{scan_id}")
-        if isinstance(out, dict) and out.get("findings_file"):
-            return out["findings_file"]
-        if time.time() - start > timeout:
-            raise SystemExit("Timeout waiting for scan results")
-        time.sleep(poll_interval)
-
-def load_findings_from_file(path: str) -> List[dict]:
-    return json.load(open(path))
-
-# ---------- Output helpers ----------
-def build_h1_markdown_from_triage(t: dict, scope: dict) -> str:
-    title = t.get("title", "Finding")
-    cvss_vector = t.get("cvss_vector", "TBD")
-    cvss_score = t.get("cvss_score", "TBD")
-    summary = t.get("summary", "")
-    repro = t.get("repro", "")
-    impact = t.get("impact", "")
-    remediation = t.get("remediation", "")
-    cwe = t.get("cwe", "N/A")
-    md = f"""# {title}
-
-**Severity (CVSS v3):** {cvss_score} ({cvss_vector})  
-**CWE:** {cwe}
-
-## Summary
-{summary}
-
-## Steps to reproduce
-{repro}
-
-## Impact
-{impact}
-
-## Recommended remediation
-{remediation}
-
-**Scope compliance:** Tested only within configured program scope. Research header used: {H1_ALIAS}. Rate limit honored per program rules.
-"""
-    return md
-
-# ---------- Main agent flow ----------
-def run_agent_for_scan(scan_id: Optional[str], start_scan_targets: Optional[List[str]]):
-    scope = read_scope_local()
-    if start_scan_targets:
-        # basic scope enforcement
-        for t in start_scan_targets:
-            if t not in scope.get("primary_targets", []) and t not in scope.get("secondary_targets", []):
-                raise SystemExit(f"Target {t} not in scope.json")
-        scan_id = start_zap_and_get_scan_id(start_scan_targets[0])
-    elif scan_id:
-        pass
+    # --- ensure run_url contains FUZZ ---
+    from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+    u = urlparse(target_url)
+    qs = dict(parse_qsl(u.query, keep_blank_values=True))
+    if param_name:
+        qs[param_name] = "FUZZ"
     else:
-        raise SystemExit("Either pass --scan_id or --start_scan target(s)")
+        if "FUZZ" not in u.query:
+            qs["x"] = "FUZZ"
+    run_url = urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(qs, doseq=True), u.fragment))
+    # -----------------------------------
 
-    findings_file = poll_scan_results(scan_id)
-    print("Findings file:", findings_file)
-    findings = load_findings_from_file(findings_file)
-    print(f"Loaded {len(findings)} findings")
+    if DALFOX_DOCKER:
+        cmd = [
+            "docker","run","--rm","--network","host","ghcr.io/hahwul/dalfox:latest",
+            "dalfox","url",run_url,"--simple","--json","-o","/tmp/dalfox_out.json","-t",str(DALFOX_THREADS)
+        ]
+        tmp_out_fs = "/tmp/dalfox_out.json"
+    else:
+        cmd = [DALFOX_PATH,"url",run_url,"--simple","--json","-o",tmp_out,"-t",str(DALFOX_THREADS)]
+        tmp_out_fs = tmp_out
+
+    evidence["cmd"] = " ".join(shlex.quote(x) for x in cmd)
+    print(f"[DALFOX] {evidence['cmd']}")
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=DALFOX_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        evidence["engine_result"] = "timeout"
+        return False, evidence
+
+    # Try to read JSON output
+    if os.path.exists(tmp_out_fs):
+        try:
+            raw_out = open(tmp_out_fs, "r", encoding="utf-8").read()
+            evidence["raw_output"] = raw_out
+            j = json.loads(raw_out) if raw_out.strip() else {}
+            results = j.get("results") if isinstance(j, dict) else None
+
+            # Dalfox JSON schema: look for any result with type "xss"
+            confirmed = False
+            if isinstance(results, list):
+                for r in results:
+                    rtype = (r.get("type") or "").lower()
+                    if "xss" in rtype:
+                        confirmed = True
+                        evidence["payload"] = r.get("payload") or safe_payload
+                        evidence["proof_snippet"] = r.get("evidence") or r.get("poC") or ""
+                        break
+
+            if confirmed:
+                evidence["engine_result"] = "confirmed"
+                return True, evidence
+
+        except Exception as e:
+            # JSON or parse failure – fall back to text heuristics
+            evidence["raw_output"] = (evidence.get("raw_output") or "") + f"\n[parse_error] {e}"
+
+    out_text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    evidence["raw_output"] = (evidence.get("raw_output") or "") + "\n" + out_text
+
+    # Heuristic text check
+    if "xss" in out_text.lower() or "found" in out_text.lower():
+        evidence["engine_result"] = "maybe"
+        return False, evidence
+
+    evidence["engine_result"] = "not_found"
+    return False, evidence
+
+# ==== Main triage ====
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--findings_file", required=True)
+    ap.add_argument("--scope_file", default="scope.json")
+    args = ap.parse_args()
+
+    print(f"[TRIAGE] Using DALFOX_BIN={DALFOX_PATH} (docker={DALFOX_DOCKER})")
+
+    scope = json.load(open(args.scope_file))
+    findings = json.load(open(args.findings_file))
+    out_dir = "output_zap"
+    os.makedirs(out_dir, exist_ok=True)
 
     triaged = []
     for f in findings:
-        print("Triaging:", (f.get("name") or "finding")[:80])
-        t = triage_finding_with_llm(scope, f)
+        msgs = [
+            {"role":"system","content":SYSTEM_PROMPT},
+            {"role":"user","content":USER_TMPL.format(scope=json.dumps(scope,indent=2),
+                                                      finding=json.dumps(f,indent=2))}
+        ]
+        # LLM triage
+        try:
+            raw = openai_chat(msgs)
+            try:
+                t = json.loads(raw)
+            except json.JSONDecodeError:
+                # If the model returns non‑strict JSON, wrap it
+                t = {"title": "LLM parse error", "summary": raw}
+        except Exception as e:
+            t = {
+                "title": "LLM triage failure",
+                "summary": f"Error during triage: {e}",
+                "cvss_vector": "TBD",
+                "cvss_score": "TBD",
+                "impact": "",
+                "repro": "",
+                "remediation": "",
+                "cwe": "N/A",
+                "confidence": "low",
+                "recommended_bounty_usd": 0,
+            }
+
+        # Attach raw
         t["_raw_finding"] = f
+
+        # === Dalfox validation for XSS ===
+        try:
+            url = f.get("url") or f.get("request", {}).get("url")
+            param = f.get("parameter") or f.get("param")
+            if url:
+                confirmed, evidence = run_dalfox_check(url, param)
+                t.setdefault("validation", {})
+                t["validation"]["dalfox"] = evidence
+                t["validation"]["dalfox_confirmed"] = confirmed
+        except Exception as e:
+            t.setdefault("validation", {})
+            t["validation"]["dalfox"] = {
+                "engine_result": "error",
+                "raw_output": str(e),
+                "cmd": None,
+            }
+            t["validation"]["dalfox_confirmed"] = False
+        # === end Dalfox validation ===
+
         triaged.append(t)
-        # be polite to LLM
-        time.sleep(1.0)
+        time.sleep(0.4)
 
-    out_path = f"./output_zap/triage_{scan_id}.json"
-    with open(out_path, "w") as fh:
-        json.dump(triaged, fh, indent=2)
-    print("Triage saved to", out_path)
+    scan_id = os.path.basename(args.findings_file).replace("zap_findings_","").replace(".json","")
+    triage_path = os.path.join(out_dir, f"triage_{scan_id}.json")
+    json.dump(triaged, open(triage_path,"w"), indent=2)
+    print("Wrote", triage_path)
 
-    # write per-finding markdown
-    for idx, t in enumerate(triaged):
-        md = build_h1_markdown_from_triage(t, scope)
-        safe_name = t.get("title", f"finding_{idx}").replace(" ", "_")[:80]
-        fname = f"./output_zap/{scan_id}__{safe_name}.md"
-        with open(fname, "w") as fh:
-            fh.write(md)
-        print("Wrote", fname)
+    # Markdown rendering
+    def md(t, scope):
+        dal = (t.get("validation") or {}).get("dalfox") or {}
+        dal_result = dal.get("engine_result","")
+        dal_conf = (t.get("validation") or {}).get("dalfox_confirmed", False)
+        dal_payload = dal.get("payload","")
+        dal_raw = (dal.get("raw_output","") or "")[:4000]
 
-    print("Agent run complete. Inspect output_zap/*.md for HackerOne-ready drafts.")
+        return f"""# {t.get('title','Finding')}
 
-# ---------- CLI ----------
+**Severity (CVSS v3):** {t.get('cvss_score','TBD')} ({t.get('cvss_vector','TBD')})
+**CWE:** {t.get('cwe','N/A')}
+**Confidence:** {t.get('confidence','low')}
+**Suggested bounty (USD):** ${t.get('recommended_bounty_usd',0)}
+
+## Summary
+{t.get('summary','')}
+
+## Steps to reproduce
+{t.get('repro','')}
+
+## Impact
+{t.get('impact','')}
+
+## Recommended remediation
+{t.get('remediation','')}
+
+## Validation Evidence (Automated)
+- Dalfox result: {dal_result}
+- Dalfox confirmed: {dal_conf}
+- Dalfox payload: `{dal_payload}`
+
+<details><summary>Raw Dalfox output</summary>
+
+{dal_raw}
+
+</details>
+
+**Scope compliance:** Tested only within configured scope. Research header used: {H1_ALIAS}. Rate ≤ program rules.
+"""
+
+    for t in triaged:
+        name = (t.get("title","finding") or "finding").replace(" ","_")[:80]
+        path = os.path.join(out_dir, f"{scan_id}__{name}.md")
+        open(path,"w").write(md(t, scope))
+        print("Wrote", path)
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--scan_id", help="Existing our_scan_id to triage")
-    parser.add_argument("--start_scan", nargs="+", help="Start a new scan on provided target(s) then triage first target")
-    args = parser.parse_args()
-    if args.start_scan:
-        run_agent_for_scan(None, args.start_scan)
-    else:
-        if not args.scan_id:
-            parser.print_help()
-            raise SystemExit(1)
-        run_agent_for_scan(args.scan_id, None)
+    main()

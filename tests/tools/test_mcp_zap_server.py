@@ -121,6 +121,142 @@ def _set_minimal_scope(client):
     r = client.post("/mcp/set_scope", json=scope_payload)
     assert r.status_code == 200
 
+def test_start_auth_scan_requires_auth_config(tmp_path, monkeypatch):
+    """/mcp/start_auth_scan should fail if no auth config exists for a target host."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # Ensure no auth configs are present for this test, regardless of previous tests
+    mcp_zap_server.AUTH_CONFIGS.clear()
+
+    # No auth set yet -> expect 400
+    zap_req = {"targets": ["https://example.com"]}
+    resp = client.post("/mcp/start_auth_scan", json=zap_req)
+    assert resp.status_code == 400
+    assert "No auth config set" in resp.json().get("detail", "")
+def _set_auth_for_example(client):
+    body = {
+        "host": "example.com",
+        "type": "header",
+        "headers": {"Authorization": "Bearer testtoken"},
+    }
+    r = client.post("/mcp/set_auth", json=body)
+    assert r.status_code == 200
+
+
+def test_ensure_zap_header_script_includes_auth_headers(monkeypatch):
+    """ensure_zap_header_script should render AUTH_CONFIGS into the script body.
+
+    We mock zap_api to capture the script text passed to the ZAP addScript API and
+    assert that it contains the configured host and header values.
+    """
+
+    # Prepare an in-memory auth config
+    mcp_zap_server.AUTH_CONFIGS.clear()
+    mcp_zap_server.AUTH_CONFIGS["example.com"] = mcp_zap_server.AuthConfig(
+        host="example.com",
+        headers={"Authorization": "Bearer testtoken", "Cookie": "sid=123"},
+    )
+
+    calls = []
+
+    def fake_zap_api(path, params=None, method="GET", json_body=None):
+        if path.endswith("/script/view/listScripts/"):
+            return {"scripts": []}
+        if path.endswith("/script/action/addScript/"):
+            calls.append({"path": path, "params": params})
+            return {"result": "OK"}
+        return {}
+
+    monkeypatch.setattr(mcp_zap_server, "zap_api", fake_zap_api)
+
+    # Invoke header script helper
+    ok = mcp_zap_server.ensure_zap_header_script()
+    assert ok
+
+    # There should be one addScript call
+    assert len(calls) == 1
+    script_params = calls[0]["params"]
+    script_text = script_params["script"]
+
+    # The script should contain the host and both headers
+    assert "example.com" in script_text
+    assert "Authorization" in script_text
+    assert "Bearer testtoken" in script_text
+    assert "Cookie" in script_text
+    assert "sid=123" in script_text
+
+
+def test_set_auth_requires_in_scope_host(tmp_path, monkeypatch):
+    """/mcp/set_auth should enforce that auth host is within current scope."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+
+    # Scope only allows example.com
+    _set_minimal_scope(client)
+
+    # Attempt to set auth for out-of-scope host
+    body = {
+        "host": "out-of-scope.test",
+        "type": "header",
+        "headers": {"Authorization": "Bearer nope"},
+    }
+    resp = client.post("/mcp/set_auth", json=body)
+    assert resp.status_code == 400
+    assert "not in scope" in resp.json().get("detail", "")
+
+
+def test_start_auth_scan_requires_auth_config(tmp_path, monkeypatch):
+    """/mcp/start_auth_scan should fail if no auth config exists for a target host."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # No auth set yet -> expect 400
+    zap_req = {"targets": ["https://example.com"]}
+    resp = client.post("/mcp/start_auth_scan", json=zap_req)
+    assert resp.status_code == 400
+    assert "No auth config set" in resp.json().get("detail", "")
+
+
+def test_start_auth_scan_happy_path(tmp_path, monkeypatch):
+    """/mcp/start_auth_scan should launch a ZAP scan when auth config is present.
+
+    We mock zap_api and ensure_zap_header_script so we don't need a running ZAP.
+    """
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+    _set_auth_for_example(client)
+
+    # Mock ZAP API and header script helper
+    with mock.patch("mcp_zap_server.ensure_zap_header_script", return_value=True) as mock_hdr, \
+         mock.patch("mcp_zap_server.zap_api") as mock_zap:
+
+        # First call for spider scan, then multiple calls for ascan + status
+        mock_zap.side_effect = [
+            {"scan": "1"},  # spider scan id
+            {"scan": "2"},  # ascan id
+            {"status": "100"},  # status for ascan
+        ]
+
+        zap_req = {"targets": ["https://example.com"]}
+        resp = client.post("/mcp/start_auth_scan", json=zap_req)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "our_scan_id" in body
+        assert body["zap_scan_ids"] == ["1"]
+
+        # Header script helper should be called
+        mock_hdr.assert_called_once()
+
+
 def test_run_js_miner_in_scope(tmp_path, monkeypatch):
     """/mcp/run_js_miner should enforce scope and call _spawn_job with the right args."""
 

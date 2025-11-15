@@ -1,63 +1,3 @@
-def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
-    """/mcp/export_report should read findings JSON and emit markdown + index files."""
-
-    # Use temp output dir for reports and findings
-    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    client = TestClient(mcp_zap_server.app)
-
-    # Point the module-level OUTPUT_DIR to tmp_path as well
-    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
-
-    # Set a scope so generate_h1_markdown uses the program name
-    scope_payload = {
-        "program_name": "unit-test-program",
-        "primary_targets": ["example.com"],
-        "secondary_targets": [],
-        "rules": {},
-    }
-    r = client.post("/mcp/set_scope", json=scope_payload)
-    assert r.status_code == 200
-
-    scan_id = "scan123"
-    # IMPORTANT: write findings where export_report will look
-    findings_path = tmp_path / f"zap_findings_{scan_id}.json"
-    findings = [
-        {
-            "id": "f1",
-            "url": "https://example.com/one",
-            "name": "XSS in param q",
-            "risk": "High",
-            "evidence": "<script>alert(1)</script>",
-        },
-        {
-            "id": "f2",
-            "url": "https://example.com/two",
-            "name": "SQL injection",
-            "risk": "High",
-            "evidence": "' OR 1=1 --",
-        },
-    ]
-    findings_path.write_text(json.dumps(findings))
-
-    resp = client.get(f"/mcp/export_report/{scan_id}")
-    assert resp.status_code == 200
-    data = resp.json()
-
-    index_path = tmp_path / f"{scan_id}_reports_index.json"
-    assert data["index"] == str(index_path)
-    assert index_path.exists()
-    listed_reports = json.loads(index_path.read_text())
-    assert len(listed_reports) == 2
-
-    for report_file in listed_reports:
-        p = tmp_path / os.path.basename(report_file)
-        assert p.exists()
-        content = p.read_text()
-        assert "unit-test-program" in content
-
-    all_md = "\n".join((tmp_path / os.path.basename(f)).read_text() for f in listed_reports)
-    assert "https://example.com/one" in all_md
-    assert "https://example.com/two" in all_md
 #!/usr/bin/env python3
 # mcp_zap_server.py
 """
@@ -68,66 +8,7 @@ MCP-style starter server using free tooling:
 - interactsh-client (optional) for OAST / blind callback tests
 
 Features:
-- /mcp/set_scope         -> upload scope (json)def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
-    ""/mcp/export_report should read findings JSON and emit markdown + index files""
-
-    # Use temp output dir for reports and findings
-    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    client = TestClient(mcp_zap_server.app)
-
-    # Point the module-level OUTPUT_DIR to tmp_path as well
-    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
-
-    # Set a scope so generate_h1_markdown uses the program name
-    scope_payload = {
-        "program_name": "unit-test-program",
-        "primary_targets": ["example.com"],
-        "secondary_targets": [],
-        "rules": {},
-    }
-    r = client.post("/mcp/set_scope", json=scope_payload)
-    assert r.status_code == 200
-
-    scan_id = "scan123"
-    # IMPORTANT: write findings where export_report will look
-    findings_path = tmp_path / f"zap_findings_{scan_id}.json"
-    findings = [
-        {
-            "id": "f1",
-            "url": "https://example.com/one",
-            "name": "XSS in param q",
-            "risk": "High",
-            "evidence": "<script>alert(1)</script>",
-        },
-        {
-            "id": "f2",
-            "url": "https://example.com/two",
-            "name": "SQL injection",
-            "risk": "High",
-            "evidence": "' OR 1=1 --",
-        },
-    ]
-    findings_path.write_text(json.dumps(findings))
-
-    resp = client.get(f"/mcp/export_report/{scan_id}")
-    assert resp.status_code == 200
-    data = resp.json()
-
-    index_path = tmp_path / f"{scan_id}_reports_index.json"
-    assert data["index"] == str(index_path)
-    assert index_path.exists()
-    listed_reports = json.loads(index_path.read_text())
-    assert len(listed_reports) == 2
-
-    for report_file in listed_reports:
-        p = tmp_path / os.path.basename(report_file)
-        assert p.exists()
-        content = p.read_text()
-        assert "unit-test-program" in content
-
-    all_md = "\n".join((tmp_path / os.path.basename(f)).read_text() for f in listed_reports)
-    assert "https://example.com/one" in all_md
-    assert "https://example.com/two" in all_md
+- /mcp/set_scope         -> upload scope (json)
 - /mcp/start_zap_scan    -> start a ZAP spider + active scan (injects X-HackerOne-Research header)
 - /mcp/run_ffuf          -> run ffuf on a target endpoint with header
 - /mcp/run_sqlmap        -> run sqlmap on a target endpoint with header
@@ -224,10 +105,23 @@ class SqlmapRequest(BaseModel):
     data: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
 
+
+class AuthConfig(BaseModel):
+    """Per-host authentication configuration for ZAP scans.
+
+    For P1 we keep this simple and header-based: provide a host and a set of
+    headers (e.g. Authorization, Cookie) that ZAP should send on requests.
+    """
+
+    host: str
+    type: str = "header"  # reserved for future auth types (forms, scripts, etc.)
+    headers: Dict[str, str]
+
 # in-memory stores
 SCOPE: Optional[ScopeConfig] = None
 JOB_STORE: Dict[str, Dict[str, Any]] = {}
 ZAP_SCAN_IDS: Dict[str, str] = {}  # our_scan_id -> zap_scan_id
+AUTH_CONFIGS: Dict[str, AuthConfig] = {}  # host -> auth configuration
 
 # ========== helper ZAP API calls ==========
 def zap_api(endpoint_path: str, params: Dict[str, Any] = None, method: str = "GET", json_body: Any = None):
@@ -255,7 +149,57 @@ def zap_api(endpoint_path: str, params: Dict[str, Any] = None, method: str = "GE
     except ValueError:
         return r.text
 
-# Add a simple httpsender script to inject header into outgoing requests.
+def _build_auth_script_body() -> str:
+    """Render a ZAP httpsender script that injects research + auth headers.
+
+    The script maintains a simple per-host header map based on AUTH_CONFIGS.
+    """
+
+    # Build a JS object literal for authConfigs from AUTH_CONFIGS
+    entries = []
+    for host, cfg in AUTH_CONFIGS.items():
+        header_entries = []
+        for hk, hv in cfg.headers.items():
+            # Basic escaping for quotes and backslashes
+            safe_key = str(hk).replace("\\", "\\\\").replace("\"", "\\\"")
+            safe_val = str(hv).replace("\\", "\\\\").replace("\"", "\\\"")
+            header_entries.append(f'"{safe_key}": "{safe_val}"')
+        headers_obj = ", ".join(header_entries)
+        entries.append(f'"{host}": {{{headers_obj}}}')
+    auth_map = ", ".join(entries)
+
+    script_body = f"""
+var authConfigs = {{{auth_map}}};
+
+function sendingRequest(msg, initiator, helper) {{
+    var headers = msg.getRequestHeader();
+    var uri = msg.getRequestHeader().getURI();
+    var host = uri.getHost();
+
+    // Always add research header
+    headers.setHeader("X-HackerOne-Research", "{H1_ALIAS}");
+
+    // If we have auth config for this host, apply headers
+    if (authConfigs[host]) {{
+        var hmap = authConfigs[host];
+        for (var key in hmap) {{
+            if (hmap.hasOwnProperty(key)) {{
+                headers.setHeader(key, hmap[key]);
+            }}
+        }}
+    }}
+
+    msg.setRequestHeader(headers);
+}}
+
+function responseReceived(msg, initiator, helper) {{
+    // no-op
+}}
+"""
+    return script_body
+
+
+# Add / update a httpsender script to inject research + auth headers.
 def ensure_zap_header_script():
     # Check existing scripts
     try:
@@ -266,24 +210,20 @@ def ensure_zap_header_script():
     # scripts is like {"scripts": [...]}
     for s in scripts.get("scripts", []):
         if s.get("name") == "h1_research_header":
-            return True
-    # Create script body (ECMAScript example) - it prepends the header on each request
-    script_body = f"""
-function sendingRequest(msg, initiator, helper) {{
-    var headers = msg.getRequestHeader();
-    headers.setHeader("X-HackerOne-Research", "{H1_ALIAS}");
-    msg.setRequestHeader(headers);
-}}
-function responseReceived(msg, initiator, helper) {{
-    // no-op
-}}
-"""
-    # Add script. engine=ECMAScript, type=httpsender
+            # Best-effort update by removing and re-adding with latest config
+            try:
+                zap_api("/JSON/script/action/removeScript/", params={"scriptName": "h1_research_header"}, method="POST")
+            except Exception:
+                # If remove fails, continue and attempt to add new below
+                pass
+            break
+
+    script_body = _build_auth_script_body()
     params = {
         "scriptName": "h1_research_header",
         "scriptType": "httpsender",
         "scriptEngine": "ECMAScript",
-        "script": script_body
+        "script": script_body,
     }
     try:
         zap_api("/JSON/script/action/addScript/", params=params, method="POST")
@@ -397,6 +337,93 @@ def start_zap_scan(req: ZapScanRequest):
             JOB_STORE[our_id]["status"] = "finished"
         except Exception as e:
             JOB_STORE[our_id]["status"] = f"error: {e}"
+    threading.Thread(target=scan_worker, args=(our_scan_id, normalized_targets), daemon=True).start()
+    return {"our_scan_id": our_scan_id, "zap_scan_ids": zap_scan_ids}
+
+
+@app.post("/mcp/set_auth")
+def set_auth(cfg: AuthConfig):
+    """Set authentication configuration for a specific host.
+
+    This is intentionally simple for P1: a host plus headers to send (e.g.
+    Authorization, Cookie). We enforce that the host is in the current scope.
+    """
+    if SCOPE is None:
+        raise HTTPException(status_code=400, detail="Scope not set. Call /mcp/set_scope first.")
+    host = _enforce_scope(cfg.host)
+    # Normalize and store
+    normalized_cfg = AuthConfig(host=host, type=cfg.type, headers=cfg.headers)
+    AUTH_CONFIGS[host] = normalized_cfg
+    return {"status": "ok", "host": host, "type": normalized_cfg.type}
+
+
+@app.post("/mcp/start_auth_scan")
+def start_auth_scan(req: ZapScanRequest):
+    """Start an authenticated ZAP scan.
+
+    Behavior is currently identical to /mcp/start_zap_scan, but we additionally
+    require that each target host has an AuthConfig registered. The actual
+    header injection is handled by ZAP scripts (P1 focuses on control plane).
+    """
+    if SCOPE is None:
+        raise HTTPException(status_code=400, detail="Scope not set. Call /mcp/set_scope first.")
+    # Scope + auth check
+    allowed = {normalize_target(x) for x in (SCOPE.primary_targets + SCOPE.secondary_targets)}
+    normalized_targets = [normalize_target(t) for t in req.targets]
+    for t in normalized_targets:
+        if t not in allowed:
+            raise HTTPException(status_code=400, detail=f"Target {t} not in scope.")
+        if t not in AUTH_CONFIGS:
+            # Fail fast on missing auth config before we talk to ZAP
+            raise HTTPException(status_code=400, detail=f"No auth config set for host {t}. Call /mcp/set_auth first.")
+
+    # Only after input is valid do we touch ZAP / scripts
+    ensure_zap_header_script()
+
+    zap_scan_ids = []
+    for t in normalized_targets:
+        spider_resp = zap_api("/JSON/spider/action/scan/", params={"url": f"https://{t}", "maxChildren": 0})
+        scanid = spider_resp.get("scan") if isinstance(spider_resp, dict) else None
+        zap_scan_ids.append(scanid)
+
+    our_scan_id = str(uuid4())
+    JOB_STORE[our_scan_id] = {
+        "type": "zap-auth",
+        "targets": normalized_targets,
+        "created": time.time(),
+        "status": "started",
+        "zap_ids": zap_scan_ids,
+        "auth_hosts": normalized_targets,
+    }
+
+    def scan_worker(our_id, targets):
+        try:
+            time.sleep(5)
+            active_ids = []
+            for t in targets:
+                params = {"url": f"https://{t}"}
+                if ZAP_API_KEY:
+                    params["apikey"] = ZAP_API_KEY
+                resp = zap_api("/JSON/ascan/action/scan/", params=params)
+                aid = resp.get("scan") if isinstance(resp, dict) else None
+                active_ids.append(aid)
+            JOB_STORE[our_id]["zap_ascan_ids"] = active_ids
+            finished = False
+            while not finished:
+                finished = True
+                for aid in active_ids:
+                    if not aid:
+                        continue
+                    status = zap_api("/JSON/ascan/view/status/", params={"scanId": aid})
+                    pct = int(status.get("status") or 100)
+                    JOB_STORE[our_id].setdefault("progress", {})[str(aid)] = pct
+                    if pct < 100:
+                        finished = False
+                time.sleep(5)
+            JOB_STORE[our_id]["status"] = "finished"
+        except Exception as e:
+            JOB_STORE[our_id]["status"] = f"error: {e}"
+
     threading.Thread(target=scan_worker, args=(our_scan_id, normalized_targets), daemon=True).start()
     return {"our_scan_id": our_scan_id, "zap_scan_ids": zap_scan_ids}
 

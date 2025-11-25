@@ -62,6 +62,32 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 ARTIFACTS_DIR = os.path.join(OUTPUT_DIR, "artifacts")
 os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
+# Curated nuclei recon template pack (high-value, low-noise)
+NUCLEI_RECON_TEMPLATES: List[str] = [
+    "technologies/",
+    "ssl/",
+    "http/exposed-panels/",
+    "http/fingerprints/",
+    "http/miscellaneous/",
+    "exposures/apis/",
+    "exposures/files/",
+    "exposures/configs/",
+    "exposures/logs/",
+    "exposures/tokens/",
+    "exposures/env/",
+    "exposures/keys/",
+    "http/auth-bypass/",
+    "http/misconfig/cors/",
+    "http/misconfig/backup/",
+    "http/vulnerabilities/jwt/",
+    "http/api/",
+    "http/graphql/",
+    "http/misconfig/openapi/",
+    "cloud/metadata/",
+    "cloud/firebase/",
+    "default-logins/",
+]
+
 # ========== simple rate limiter ==========
 _last_time = 0.0
 _allowance = MAX_REQ_PER_SEC
@@ -104,6 +130,35 @@ class SqlmapRequest(BaseModel):
     target: str
     data: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
+
+
+class NucleiRequest(BaseModel):
+    """Request parameters for running a nuclei scan.
+
+    This keeps things simple and CLI-aligned: you can specify a target URL or
+    host, optional templates, severities, and tags. Results are written to a
+    JSONL file and returned as structured data.
+    """
+
+    target: str
+    templates: Optional[List[str]] = None
+    severity: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    mode: Optional[str] = "recon"  # "recon" uses curated templates if none provided
+
+
+class NucleiValidationRequest(BaseModel):
+    """Simplified PoC validation request using nuclei.
+
+    This is intended for LLM-driven PoC workflows: you provide a single target
+    and one or more nuclei templates that represent the PoC. The server runs
+    nuclei and returns a boolean `validated` flag plus a match count.
+    """
+
+    target: str
+    templates: List[str]
+    severity: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
 
 
 class AuthConfig(BaseModel):
@@ -274,6 +329,130 @@ def _spawn_job(cmd_argv: List[str], job_kind: str, artifact_dir: Optional[str] =
             JOB_STORE[job_id]["result"] = {"error": str(e)}
     threading.Thread(target=worker, daemon=True).start()
     return job_id
+
+
+def summarize_nuclei_findings(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Produce a lightweight PoC-oriented summary from nuclei findings.
+
+    Each summary entry focuses on identifiers and a single matched location,
+    which is easier for an LLM or UI to consume than the full nuclei JSON.
+    """
+
+    summaries: List[Dict[str, Any]] = []
+    for f in findings:
+        # Skip lines that were only captured as raw text
+        if "raw" in f:
+            continue
+
+        info = f.get("info") or {}
+        summaries.append(
+            {
+                "template_id": f.get("template-id") or f.get("id"),
+                "name": info.get("name"),
+                "severity": info.get("severity"),
+                "matched_at": f.get("matched-at") or f.get("host") or f.get("url"),
+                "tags": info.get("tags", []),
+            }
+        )
+    return summaries
+
+
+def _load_nuclei_findings_for_host(host: str) -> List[Dict[str, Any]]:
+    """Load all nuclei JSONL findings for a given host from OUTPUT_DIR.
+
+    This is a best-effort helper: it scans nuclei_*.jsonl files, parses any
+    JSON lines, and filters them where the matched host/URL appears to match
+    the requested host. It is intentionally conservative to avoid coupling to
+    nuclei internals.
+    """
+
+    host = normalize_target(host)
+    findings: List[Dict[str, Any]] = []
+    if not os.path.isdir(OUTPUT_DIR):
+        return findings
+
+    for name in os.listdir(OUTPUT_DIR):
+        if not name.startswith("nuclei_") or not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(OUTPUT_DIR, name)
+        try:
+            with open(path, "r") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    matched = obj.get("matched-at") or obj.get("host") or obj.get("url")
+                    if matched and normalize_target(str(matched)) == host:
+                        findings.append(obj)
+        except OSError:
+            continue
+    return findings
+
+
+def _build_api_and_param_inventory_for_host(host: str) -> Dict[str, Any]:
+    """Use ZAP core views to derive API-like endpoints and parameters for host.
+
+    This function relies on ZAP having already crawled the host. It pulls the
+    known URLs, then heuristically classifies API endpoints and extracts
+    simple query parameter names for LLM triage.
+    """
+
+    host = normalize_target(host)
+    api_endpoints: List[str] = []
+    parameters: Dict[str, Dict[str, Any]] = {}
+
+    try:
+        sites_resp = zap_api("/JSON/core/view/sites/") or {}
+    except HTTPException:
+        sites_resp = {}
+    sites = sites_resp.get("sites") or sites_resp.get("Sites") or []
+
+    # If ZAP exposes a urls view, use that to pull concrete URLs
+    urls: List[str] = []
+    try:
+        urls_resp = zap_api("/JSON/core/view/urls/") or {}
+        urls = urls_resp.get("urls") or urls_resp.get("Urls") or []
+    except HTTPException:
+        # Fallback: sites list only
+        urls = []
+
+    def _is_api_like(url: str) -> bool:
+        u = str(url).lower()
+        return any(p in u for p in ["/api/", "/v1/", "/v2/", "/graphql", "/openapi", "/swagger"])
+
+    from urllib.parse import urlparse, parse_qs
+
+    for u in urls:
+        try:
+            parsed = urlparse(u)
+        except Exception:
+            continue
+        if not parsed.netloc:
+            continue
+        if normalize_target(parsed.netloc) != host:
+            continue
+
+        full_url = u
+        if _is_api_like(full_url):
+            api_endpoints.append(full_url)
+
+        qs = parse_qs(parsed.query or "")
+        for pname in qs.keys():
+            if pname not in parameters:
+                parameters[pname] = {
+                    "name": pname,
+                    "locations": ["query"],
+                    "example_url": full_url,
+                }
+
+    return {
+        "api_endpoints": sorted(set(api_endpoints)),
+        "parameters": sorted(parameters.values(), key=lambda x: x["name"]),
+    }
 
 # ========== MCP endpoints ==========
 @app.post("/mcp/set_scope")
@@ -555,6 +734,134 @@ def run_sqlmap(req: SqlmapRequest):
         raise HTTPException(status_code=400, detail="sqlmap not found. Install sqlmap and ensure it's in PATH.")
     return {"returncode": p.returncode, "stdout": p.stdout[:2000], "stderr": p.stderr[:2000], "output_dir": output_dir}
 
+
+@app.post("/mcp/run_nuclei")
+def run_nuclei(req: NucleiRequest):
+    """Run nuclei against a single target with optional templates/filters.
+
+    This is a synchronous helper similar to run_ffuf/run_sqlmap; it enforces
+    scope on the host, shells out to `nuclei`, and parses JSONL output (one
+    JSON object per line) into a list of findings.
+    """
+
+    if not req.target:
+        raise HTTPException(status_code=400, detail="target required")
+
+    # Enforce that the host is in scope
+    host = normalize_target(req.target)
+    _enforce_scope(host)
+
+    timestamp = int(time.time())
+    output_file = os.path.join(OUTPUT_DIR, f"nuclei_{timestamp}.jsonl")
+
+    cmd = ["nuclei", "-u", req.target, "-json", "-o", output_file]
+
+    # Templates: use explicit list if provided, otherwise curated recon set for recon mode
+    templates = req.templates
+    if not templates and (req.mode or "recon") == "recon":
+        templates = NUCLEI_RECON_TEMPLATES
+
+    if templates:
+        for t in templates:
+            cmd += ["-t", t]
+    if req.severity:
+        cmd += ["-severity", ",".join(req.severity)]
+    if req.tags:
+        cmd += ["-tags", ",".join(req.tags)]
+
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    except FileNotFoundError:
+        raise HTTPException(status_code=400, detail="nuclei not found. Install nuclei and ensure it's in PATH.")
+
+    findings: List[Dict[str, Any]] = []
+    if os.path.exists(output_file):
+        with open(output_file, "r") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    findings.append(json.loads(line))
+                except Exception:
+                    # If a line cannot be parsed, include it as raw text
+                    findings.append({"raw": line})
+    else:
+        # Fall back to stdout/stderr if file wasn't created
+        findings.append({"stdout": p.stdout, "stderr": p.stderr})
+
+    return {
+        "cmd": cmd,
+        "returncode": p.returncode,
+        "file": output_file,
+        "findings": findings,
+    }
+
+
+@app.post("/mcp/validate_poc_with_nuclei")
+def validate_poc_with_nuclei(req: NucleiValidationRequest):
+    """Validate a PoC by running nuclei with explicit templates.
+
+    This is a thin wrapper over nuclei that is tailored for automated
+    workflows. It always requires explicit templates (we do not apply the
+    curated recon pack here) and returns a simple boolean `validated` flag
+    alongside the raw nuclei findings.
+    """
+
+    if not req.target:
+        raise HTTPException(status_code=400, detail="target required")
+    if not req.templates:
+        raise HTTPException(status_code=400, detail="at least one template is required")
+
+    # Enforce that the host is in scope
+    host = normalize_target(req.target)
+    _enforce_scope(host)
+
+    timestamp = int(time.time())
+    output_file = os.path.join(OUTPUT_DIR, f"nuclei_validate_{timestamp}.jsonl")
+
+    cmd = ["nuclei", "-u", req.target, "-json", "-o", output_file]
+
+    # Always use the explicit templates passed in
+    for t in req.templates:
+        cmd += ["-t", t]
+    if req.severity:
+        cmd += ["-severity", ",".join(req.severity)]
+    if req.tags:
+        cmd += ["-tags", ",".join(req.tags)]
+
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    except FileNotFoundError:
+        raise HTTPException(status_code=400, detail="nuclei not found. Install nuclei and ensure it's in PATH.")
+
+    findings: List[Dict[str, Any]] = []
+    if os.path.exists(output_file):
+        with open(output_file, "r") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    findings.append(json.loads(line))
+                except Exception:
+                    findings.append({"raw": line})
+    else:
+        findings.append({"stdout": p.stdout, "stderr": p.stderr})
+
+    match_count = len(findings)
+    validated = match_count > 0
+
+    return {
+        "cmd": cmd,
+        "returncode": p.returncode,
+        "file": output_file,
+        "findings": findings,
+        "match_count": match_count,
+        "validated": validated,
+        "summaries": summarize_nuclei_findings(findings),
+    }
+
 @app.post("/mcp/interactsh_new")
 def interactsh_new():
     client = INTERACTSH_CLIENT or "interactsh-client"
@@ -589,6 +896,125 @@ def export_report(scan_id: str):
     with open(index, "w") as fh:
         json.dump(reports, fh, indent=2)
     return {"reports": reports, "index": index}
+
+
+@app.post("/mcp/host_profile")
+def host_profile(body: Dict[str, Any]):
+    """Aggregate recon data for a single host to help LLM triage.
+
+    This endpoint pulls together best-effort signals from nuclei recon
+    findings, ZAP URLs, and in-memory auth config to describe the attack
+    surface of a host. It does not trigger new scans; it summarizes what we
+    already know so far.
+    """
+
+    host_input = body.get("host") or body.get("target")
+    if not host_input:
+        raise HTTPException(status_code=400, detail="host is required")
+
+    host = _enforce_scope(host_input)
+    llm_view = bool(body.get("llm_view"))
+
+    # Pull nuclei findings for this host and categorize them
+    nuclei_all = _load_nuclei_findings_for_host(host)
+    technologies: List[Dict[str, Any]] = []
+    panels: List[Dict[str, Any]] = []
+    exposures: List[Dict[str, Any]] = []
+    auth_findings: List[Dict[str, Any]] = []
+    api_related: List[Dict[str, Any]] = []
+
+    def _add(cat_list: List[Dict[str, Any]], f: Dict[str, Any]):
+        cat_list.append(
+            {
+                "template_id": f.get("template-id") or f.get("id"),
+                "matched_at": f.get("matched-at") or f.get("host") or f.get("url"),
+                "severity": (f.get("info") or {}).get("severity"),
+                "name": (f.get("info") or {}).get("name"),
+            }
+        )
+
+    for f in nuclei_all:
+        tid = f.get("template-id") or ""
+        # Template IDs often include their path; use simple prefix checks
+        if "technologies/" in tid or "fingerprints/" in tid:
+            _add(technologies, f)
+        if "exposed-panels/" in tid or "default-logins/" in tid:
+            _add(panels, f)
+        if "exposures/" in tid or "cloud/" in tid:
+            _add(exposures, f)
+        if any(x in tid for x in ["auth-bypass/", "vulnerabilities/jwt/", "misconfig/cors/"]):
+            _add(auth_findings, f)
+        if any(x in tid for x in ["http/api/", "http/graphql/", "misconfig/openapi/"]):
+            _add(api_related, f)
+
+    # Derive API endpoints and parameter inventory from ZAP
+    api_param = _build_api_and_param_inventory_for_host(host)
+
+    # Include any configured auth headers for this host
+    auth_cfg = AUTH_CONFIGS.get(host)
+    auth_surface: Dict[str, Any] = {
+        "has_auth_config": auth_cfg is not None,
+        "auth_headers": sorted(list(auth_cfg.headers.keys())) if auth_cfg else [],
+        "nuclei_findings": auth_findings,
+    }
+
+    full_profile = {
+        "host": host,
+        "technologies": technologies,
+        "panels": panels,
+        "exposures": exposures,
+        "api_findings": api_related,
+        "api_endpoints": api_param["api_endpoints"],
+        "parameters": api_param["parameters"],
+        "auth_surface": auth_surface,
+    }
+
+    if not llm_view:
+        return full_profile
+
+    # Build a compact, token-optimized view for LLM planning.
+    def _names_from(findings: List[Dict[str, Any]]) -> List[str]:
+        out: List[str] = []
+        for f in findings:
+            name = f.get("name") or f.get("template_id")
+            sev = f.get("severity")
+            if sev:
+                out.append(f"{name} ({sev})")
+            else:
+                out.append(str(name))
+        # Deduplicate while preserving order
+        seen = set()
+        uniq = []
+        for x in out:
+            if x in seen:
+                continue
+            seen.add(x)
+            uniq.append(x)
+        return uniq
+
+    # Summarize parameters: only send a small sample of names.
+    params = full_profile["parameters"]
+    param_names = sorted({p.get("name") for p in params if p.get("name")})
+    params_summary = {
+        "count": len(param_names),
+        "names_sample": param_names[:20],
+    }
+
+    # Summarize nuclei-like findings by category.
+    llm_profile = {
+        "host": host,
+        "tech": _names_from(technologies),
+        "key_panels": [p.get("matched_at") for p in panels][:10],
+        "key_apis": [f.get("matched_at") for f in api_related][:20],
+        "risky_exposures": _names_from(exposures)[:20],
+        "params_summary": params_summary,
+        "auth": {
+            "headers": auth_surface["auth_headers"],
+            "issues": _names_from(auth_surface["nuclei_findings"])[:10],
+        },
+    }
+
+    return {"host": host, "llm_profile": llm_profile}
 
 # ========== report generation helpers ==========
 def generate_h1_markdown(program: str, f: Dict[str, Any]) -> str:

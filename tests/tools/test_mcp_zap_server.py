@@ -289,6 +289,332 @@ def test_run_js_miner_in_scope(tmp_path, monkeypatch):
     assert "--base-url" in cmd_argv
     assert "https://example.com/app" in cmd_argv
 
+
+def test_run_nuclei_in_scope_success(tmp_path, monkeypatch):
+    """/mcp/run_nuclei should enforce scope and execute nuclei with JSONL output."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # Create fake nuclei JSONL output
+    nuclei_out = tmp_path / "nuclei_123.jsonl"
+    lines = [
+        json.dumps({"template-id": "test-template", "info": {"name": "Test"}, "matched-at": "https://example.com"}),
+        "not-json-line",
+    ]
+    nuclei_out.write_text("\n".join(lines))
+
+    class P:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    # Patch subprocess.run so we don't actually run nuclei; match output filename prefix
+    def fake_run(cmd, capture_output, text, timeout):
+        # Ensure we're calling nuclei with expected flags
+        assert cmd[0] == "nuclei"
+        assert "-u" in cmd and "https://example.com" in cmd
+        assert "-json" in cmd
+
+        # The handler's output_file is whatever follows "-o"
+        out_index = cmd.index("-o") + 1
+        out_path = cmd[out_index]
+
+        # Write our fake JSONL to that path so the handler can read it
+        with open(out_path, "w") as fh:
+            fh.write("\n".join(lines))
+
+        return P()
+
+    with mock.patch("mcp_zap_server.subprocess.run", side_effect=fake_run):
+        body = {
+            "target": "https://example.com",
+            "templates": ["cves/"],
+            "severity": ["high", "critical"],
+            "tags": ["cve"],
+        }
+        resp = client.post("/mcp/run_nuclei", json=body)
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Findings should include the parsed JSON object and the raw line
+        findings = data["findings"]
+        assert len(findings) == 2
+        assert any(f.get("template-id") == "test-template" for f in findings)
+        assert any("raw" in f for f in findings)
+
+
+def test_run_nuclei_rejects_out_of_scope(tmp_path, monkeypatch):
+    """/mcp/run_nuclei should reject targets whose host is out of scope."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    body = {"target": "https://out-of-scope.test"}
+    resp = client.post("/mcp/run_nuclei", json=body)
+    assert resp.status_code == 400
+    assert "not in scope" in resp.json().get("detail", "")
+
+
+def test_validate_poc_with_nuclei_validated_true(tmp_path, monkeypatch):
+    """/mcp/validate_poc_with_nuclei should return validated=True when findings exist."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # Fake nuclei output: one valid JSON line
+    lines = [
+        json.dumps({
+            "template-id": "poc-template",
+            "matched-at": "https://example.com/install.sh",
+            "info": {"name": "cURL | bash", "severity": "high", "tags": ["curl", "pipe", "bash"]},
+        }),
+    ]
+
+    class P:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(cmd, capture_output, text, timeout):
+        # Ensure correct base command and that our template is used
+        assert cmd[0] == "nuclei"
+        assert "-u" in cmd and "https://example.com" in cmd
+        assert "-json" in cmd
+        assert "-t" in cmd and "http/pocs/xss.yaml" in cmd
+
+        out_index = cmd.index("-o") + 1
+        out_path = cmd[out_index]
+        with open(out_path, "w") as fh:
+            fh.write("\n".join(lines))
+        return P()
+
+    with mock.patch("mcp_zap_server.subprocess.run", side_effect=fake_run):
+        body = {
+            "target": "https://example.com",
+            "templates": ["http/pocs/xss.yaml"],
+        }
+        resp = client.post("/mcp/validate_poc_with_nuclei", json=body)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["validated"] is True
+        assert data["match_count"] == 1
+        assert len(data["findings"]) == 1
+        # Summaries should include a single PoC-oriented summary
+        summaries = data["summaries"]
+        assert len(summaries) == 1
+        s = summaries[0]
+        assert s["template_id"] == "poc-template"
+        assert s["name"] == "cURL | bash"
+        assert s["severity"] == "high"
+        assert "install.sh" in s["matched_at"]
+        assert "curl" in s["tags"]
+
+
+def test_validate_poc_with_nuclei_validated_false_when_no_findings(tmp_path, monkeypatch):
+    """/mcp/validate_poc_with_nuclei should return validated=False when no findings are produced."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    class P:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(cmd, capture_output, text, timeout):
+        # Simulate nuclei creating an empty file
+        out_index = cmd.index("-o") + 1
+        out_path = cmd[out_index]
+        with open(out_path, "w") as fh:
+            fh.write("")
+        return P()
+
+    with mock.patch("mcp_zap_server.subprocess.run", side_effect=fake_run):
+        body = {
+            "target": "https://example.com",
+            "templates": ["http/pocs/xss.yaml"],
+        }
+        resp = client.post("/mcp/validate_poc_with_nuclei", json=body)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["validated"] is False
+        assert data["match_count"] == 0
+        assert data["findings"] == []
+
+
+def test_validate_poc_with_nuclei_rejects_out_of_scope(tmp_path, monkeypatch):
+    """/mcp/validate_poc_with_nuclei should reject targets whose host is out of scope."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    body = {
+        "target": "https://out-of-scope.test",
+        "templates": ["http/pocs/xss.yaml"],
+    }
+    resp = client.post("/mcp/validate_poc_with_nuclei", json=body)
+    assert resp.status_code == 400
+    assert "not in scope" in resp.json().get("detail", "")
+
+
+def test_host_profile_aggregates_nuclei_and_zap(tmp_path, monkeypatch):
+    """/mcp/host_profile should return a structured summary for a host.
+
+    We mock nuclei findings and ZAP URLs to validate that technologies,
+    panels, exposures, API endpoints, parameters, and auth_surface fields are
+    populated as expected.
+    """
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # Configure auth for example.com so auth_surface has headers
+    mcp_zap_server.AUTH_CONFIGS.clear()
+    mcp_zap_server.AUTH_CONFIGS["example.com"] = mcp_zap_server.AuthConfig(
+        host="example.com",
+        headers={"Authorization": "Bearer testtoken"},
+    )
+
+    fake_nuclei = [
+        {
+            "template-id": "technologies/nginx",
+            "matched-at": "https://example.com",
+            "info": {"name": "nginx", "severity": "info"},
+        },
+        {
+            "template-id": "http/exposed-panels/admin-login",
+            "matched-at": "https://example.com/admin/login",
+            "info": {"name": "Admin Login", "severity": "medium"},
+        },
+        {
+            "template-id": "exposures/apis/public-openapi",
+            "matched-at": "https://example.com/openapi.json",
+            "info": {"name": "OpenAPI Spec", "severity": "low"},
+        },
+        {
+            "template-id": "http/api/users-endpoint",
+            "matched-at": "https://example.com/api/v1/users",
+            "info": {"name": "Users API", "severity": "info"},
+        },
+        {
+            "template-id": "http/misconfig/cors/weak-cors",
+            "matched-at": "https://example.com",
+            "info": {"name": "Weak CORS", "severity": "low"},
+        },
+    ]
+
+    def fake_load_nuclei(host: str):
+        assert host == "example.com"
+        return fake_nuclei
+
+    def fake_zap_api(path, params=None, method="GET", json_body=None):
+        if path.endswith("/core/view/urls/"):
+            return {
+                "urls": [
+                    "https://example.com/",
+                    "https://example.com/api/v1/users?user_id=123",
+                    "https://example.com/graphql?query=...",
+                ]
+            }
+        if path.endswith("/core/view/sites/"):
+            return {"sites": ["https://example.com"]}
+        return {}
+
+    monkeypatch.setattr(mcp_zap_server, "_load_nuclei_findings_for_host", fake_load_nuclei)
+    monkeypatch.setattr(mcp_zap_server, "zap_api", fake_zap_api)
+
+    body = {"host": "https://example.com"}
+    resp = client.post("/mcp/host_profile", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["host"] == "example.com"
+
+    # Technologies should have our nginx entry
+    assert any(t["template_id"] == "technologies/nginx" for t in data["technologies"])
+    # Panels should include the admin login finding
+    assert any("admin/login" in p["matched_at"] for p in data["panels"])
+    # Exposures should include the OpenAPI exposure
+    assert any("openapi.json" in e["matched_at"] for e in data["exposures"])
+    # API findings should include the Users API
+    assert any("users-endpoint" in a["template_id"] for a in data["api_findings"])
+
+    # API endpoints and parameters derived from ZAP URLs
+    api_endpoints = data["api_endpoints"]
+    assert any("/api/v1/users" in u for u in api_endpoints)
+    params = data["parameters"]
+    assert any(p["name"] == "user_id" for p in params)
+
+    # Auth surface should reflect configured auth headers and nuclei auth finding
+    auth_surface = data["auth_surface"]
+    assert auth_surface["has_auth_config"] is True
+    assert "Authorization" in auth_surface["auth_headers"]
+    assert any("Weak CORS" == f["name"] for f in auth_surface["nuclei_findings"])
+
+
+def test_host_profile_llm_view_returns_compact_profile(tmp_path, monkeypatch):
+    """llm_view=true should return a compact llm_profile for the host."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    fake_nuclei = [
+        {
+            "template-id": "technologies/nginx",
+            "matched-at": "https://example.com",
+            "info": {"name": "nginx", "severity": "info"},
+        },
+        {
+            "template-id": "http/exposed-panels/admin-login",
+            "matched-at": "https://example.com/admin/login",
+            "info": {"name": "Admin Login", "severity": "medium"},
+        },
+    ]
+
+    def fake_load_nuclei(host: str):
+        assert host == "example.com"
+        return fake_nuclei
+
+    def fake_zap_api(path, params=None, method="GET", json_body=None):
+        if path.endswith("/core/view/urls/"):
+            return {
+                "urls": [
+                    "https://example.com/api/v1/users?user_id=123",
+                ]
+            }
+        if path.endswith("/core/view/sites/"):
+            return {"sites": ["https://example.com"]}
+        return {}
+
+    monkeypatch.setattr(mcp_zap_server, "_load_nuclei_findings_for_host", fake_load_nuclei)
+    monkeypatch.setattr(mcp_zap_server, "zap_api", fake_zap_api)
+
+    body = {"host": "https://example.com", "llm_view": True}
+    resp = client.post("/mcp/host_profile", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["host"] == "example.com"
+    assert "llm_profile" in data
+    lp = data["llm_profile"]
+
+    # Compact profile should have short keys and summarized content
+    assert lp["host"] == "example.com"
+    assert "tech" in lp and lp["tech"]
+    assert "key_panels" in lp and any("admin/login" in u for u in lp["key_panels"])
+    assert "key_apis" in lp and isinstance(lp["key_apis"], list)
+    assert "params_summary" in lp
+    assert lp["params_summary"]["count"] >= 1
+    assert "auth" in lp
+
 def test_run_reflector_in_scope(tmp_path, monkeypatch):
     """/mcp/run_reflector should enforce scope and call _spawn_job with the right args."""
 

@@ -89,28 +89,167 @@ This project is designed to:
 
 ## 📦 Example Workflow
 
+This section walks through a full run against a single target: from scope setup, through scanning and recon, to LLM triage and final reports.
+
+### 1. Environment setup
+
 ```bash
-# Activate environment
+# (Optional) activate virtualenv
 source .venv/bin/activate
 
-# Define scope
-cat scope.json
-# ["https://you.23andme.com", "https://api.23andme.com", ...]
-
-# Run a scope scan
-python scope_runner.py --scope scope.json
-
-# Triaging the results
-export OPENAI_API_KEY="sk-..."
-export DALFOX_BIN="$(which dalfox)"
-export MIN_PRE_CVSS=6.0
-export KEEP_NOISE=0
-python agentic_from_file.py --findings_file output_zap/test_findings.json --scope_file scope.json
+# Install Python dependencies
+pip install -r requirements.txt
 ```
 
-Results:
-- Filtered triage JSON → `output_zap/triage_<scan_id>.json`
-- Markdown reports → `output_zap/<scan_id>__Finding_Title.md`
+Configure any external tools (ZAP, ffuf, sqlmap, nuclei, interactsh-client) in your `$PATH` or via environment variables such as `ZAP_API_BASE`, `ZAP_API_KEY`, `INTERACTSH_CLIENT`, `OUTPUT_DIR`.
+
+### 2. Define program scope
+
+Create a `scope.json` with your program details:
+
+```bash
+cat > scope.json << 'EOF'
+{
+	"program_name": "demo-program",
+	"primary_targets": [
+		"https://app.example.com",
+		"https://api.example.com"
+	],
+	"secondary_targets": [],
+	"rules": {}
+}
+EOF
+```
+
+### 3. Start the MCP server
+
+Run the FastAPI MCP server that exposes all `/mcp/*` endpoints (ZAP, nuclei, recon, validation, reporting):
+
+```bash
+python mcp_zap_server.py
+```
+
+By default this listens on `http://127.0.0.1:8000`. You can interact with it via `curl`, `HTTPie`, or an agent.
+
+### 4. Load scope into MCP
+
+Send `scope.json` to the server:
+
+```bash
+curl -s \
+	-X POST http://127.0.0.1:8000/mcp/set_scope \
+	-H 'Content-Type: application/json' \
+	--data-binary @scope.json | jq .
+```
+
+You should see a response like:
+
+```json
+{ "status": "ok", "program": "demo-program" }
+```
+
+### 5. Kick off ZAP scanning
+
+Start a ZAP spider + active scan for your in-scope hosts:
+
+```bash
+curl -s \
+	-X POST http://127.0.0.1:8000/mcp/start_zap_scan \
+	-H 'Content-Type: application/json' \
+	-d '{"targets": ["https://app.example.com", "https://api.example.com"]}' | jq .
+```
+
+This returns an internal `our_scan_id` you can later correlate with alerts and reports.
+
+### 6. Optional: configure auth headers
+
+If you have authenticated areas, configure per-host auth headers so ZAP uses them:
+
+```bash
+curl -s \
+	-X POST http://127.0.0.1:8000/mcp/set_auth \
+	-H 'Content-Type: application/json' \
+	-d '{
+				"host": "app.example.com",
+				"type": "header",
+				"headers": {"Authorization": "Bearer YOUR_TOKEN"}
+			}' | jq .
+```
+
+Then run an authenticated scan:
+
+```bash
+curl -s \
+	-X POST http://127.0.0.1:8000/mcp/start_auth_scan \
+	-H 'Content-Type: application/json' \
+	-d '{"targets": ["https://app.example.com"]}' | jq .
+```
+
+### 7. Run nuclei recon and store findings
+
+Use the curated recon template pack to collect high-signal fingerprints and exposures:
+
+```bash
+curl -s \
+	-X POST http://127.0.0.1:8000/mcp/run_nuclei \
+	-H 'Content-Type: application/json' \
+	-d '{
+				"target": "https://api.example.com",
+				"mode": "recon"
+			}' | jq .
+```
+
+This writes nuclei JSONL output into `OUTPUT_DIR` (default `./output_zap`) for later aggregation.
+
+### 8. Build a host profile for LLM planning
+
+Ask the MCP server to aggregate everything it knows about a host (ZAP URLs, nuclei recon, auth surface, parameters):
+
+```bash
+curl -s \
+	-X POST http://127.0.0.1:8000/mcp/host_profile \
+	-H 'Content-Type: application/json' \
+	-d '{"host": "https://api.example.com", "llm_view": true}' | jq .
+```
+
+The response contains a compact `llm_profile` designed to be cheap to send to the LLM for planning which endpoints and issues to focus on next.
+
+### 9. Validate a specific PoC with nuclei
+
+Once your agent/LLM proposes a PoC using a particular nuclei template, you can validate it:
+
+```bash
+curl -s \
+	-X POST http://127.0.0.1:8000/mcp/validate_poc_with_nuclei \
+	-H 'Content-Type: application/json' \
+	-d '{
+				"target": "https://api.example.com/api/v1/users?id=123",
+				"templates": ["http/pocs/xss.yaml"]
+			}' | jq .
+```
+
+The response includes:
+
+- `validated`: `true`/`false`
+- `match_count`: number of findings
+- `findings`: raw nuclei findings
+- `summaries`: PoC-oriented summaries the LLM can interpret
+
+### 10. Export final triage reports
+
+After ZAP scanning and any additional tooling, consolidate findings into HackerOne-style Markdown reports. First ensure ZAP findings were exported into `output_zap/zap_findings_<scan_id>.json` (typically done by your poller or pipeline). Then:
+
+```bash
+curl -s \
+	-X GET http://127.0.0.1:8000/mcp/export_report/<scan_id> | jq .
+```
+
+This creates:
+
+- An index file: `output_zap/<scan_id>_reports_index.json`
+- One Markdown report per finding: `output_zap/<scan_id>_<finding_id>.md`
+
+Each report is ready to be reviewed by a human triager or attached directly to a bug bounty submission.
 
 ---
 

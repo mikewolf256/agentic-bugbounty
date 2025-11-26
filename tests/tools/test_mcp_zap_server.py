@@ -358,6 +358,34 @@ def test_run_nuclei_rejects_out_of_scope(tmp_path, monkeypatch):
     assert "not in scope" in resp.json().get("detail", "")
 
 
+def test_run_cloud_recon_in_scope_and_writes_file(tmp_path, monkeypatch):
+    """/mcp/run_cloud_recon should enforce scope and write findings JSON.
+
+    We don't assert on real network behavior; we just ensure that when
+    the helper runs, the endpoint returns a JSON payload and writes a
+    cloud_findings_<host>.json file under OUTPUT_DIR.
+    """
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    body = {"host": "https://example.com"}
+    resp = client.post("/mcp/run_cloud_recon", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["host"] == "example.com"
+    assert "output" in data
+
+    out_path = data["output"]
+    assert os.path.exists(out_path)
+    # The file should be valid JSON list
+    findings = json.loads(open(out_path, "r").read() or "[]")
+    assert isinstance(findings, list)
+
+
 def test_validate_poc_with_nuclei_validated_true(tmp_path, monkeypatch):
     """/mcp/validate_poc_with_nuclei should return validated=True when findings exist."""
 

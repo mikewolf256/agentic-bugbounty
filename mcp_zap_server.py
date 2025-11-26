@@ -172,6 +172,18 @@ class AuthConfig(BaseModel):
     type: str = "header"  # reserved for future auth types (forms, scripts, etc.)
     headers: Dict[str, str]
 
+
+class CloudReconRequest(BaseModel):
+    """Lightweight cloud recon request.
+
+    This keeps things simple and HTTP-only: given an in-scope host or URL,
+    we look for obvious cloud storage & CDN patterns (S3/GCS/Azure-style
+    buckets and common CNAMEs) and emit normalized findings JSON. This is
+    intentionally best‑effort and safe for bug bounty recon.
+    """
+
+    host: str
+
 # in-memory stores
 SCOPE: Optional[ScopeConfig] = None
 JOB_STORE: Dict[str, Dict[str, Any]] = {}
@@ -299,6 +311,131 @@ def _enforce_scope(host_or_url: str) -> str:
     if not _scope_allowed_host(host_or_url):
         raise HTTPException(status_code=400, detail=f"Target {normalize_target(host_or_url)} not in scope.")
     return normalize_target(host_or_url)
+
+
+def _cloud_recon_for_host(host_or_url: str) -> Dict[str, Any]:
+    """Very lightweight cloud recon helper.
+
+    Given a host or URL, infer obvious cloud assets that are safe to
+    probe unauthenticated during recon. We look for:
+    - S3 / GCS / Azure blob style hostnames derived from the target host
+    - Common CDN / PaaS CNAME patterns
+
+    This is intentionally conservative: we only construct candidate
+    endpoints (no brute forcing) and we treat HTTP 200/3xx as
+    "potentially interesting" without assuming exploitability.
+    """
+
+    import socket
+
+    target = normalize_target(host_or_url)
+    findings: List[Dict[str, Any]] = []
+
+    # Derive a few obvious bucket-like names from the host
+    pieces = target.split(".")
+    if len(pieces) >= 2:
+        base = pieces[0]
+        domain = ".".join(pieces[1:])
+    else:
+        base = target
+        domain = target
+
+    candidates: List[str] = []
+    # S3-style
+    candidates.append(f"https://{base}.s3.amazonaws.com/")
+    candidates.append(f"https://{base}-{domain.replace('.', '-')}.s3.amazonaws.com/")
+    # GCS-style
+    candidates.append(f"https://storage.googleapis.com/{base}/")
+    # Azure blob-style
+    candidates.append(f"https://{base}.blob.core.windows.net/")
+
+    session = requests.Session()
+    headers = {"User-Agent": "mcp-cloud-recon/0.1"}
+
+    # Simple patterns for high-signal secrets / PII in small text bodies
+    import re
+
+    secret_patterns = [
+        re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access key ID
+        re.compile(r"(?i)secret[_-]?key\s*[:=]\s*[\w/+]{16,}"),
+        re.compile(r"(?i)api[_-]?key\s*[:=]\s*[\w/+]{16,}"),
+        re.compile(r"(?i)password\s*[:=]\s*[^\s]{6,}"),
+        re.compile(r"\b[0-9]{3}-[0-9]{2}-[0-9]{4}\b"),  # SSN-like
+        re.compile(r"\b[0-9]{16}\b"),  # simple CC-like
+    ]
+
+    for url in candidates:
+        try:
+            rate_limit_wait()
+            resp = session.get(url, headers=headers, timeout=5, allow_redirects=False)
+        except Exception:
+            continue
+
+        status = resp.status_code
+        body_snippet = (resp.text or "")[:256]
+
+        # Treat 200 with non-empty body as potentially public content
+        # and look for obvious secrets/PII with regex; treat 3xx or
+        # XML error messages as interesting but lower signal.
+        has_body = bool(body_snippet.strip())
+        matched_secret = None
+        if has_body and status == 200:
+            for pat in secret_patterns:
+                m = pat.search(body_snippet)
+                if m:
+                    matched_secret = m.group(0)
+                    break
+
+        if matched_secret is not None:
+            findings.append(
+                {
+                    "id": f"cloud-secret-{hash(url) & 0xffffffff:x}",
+                    "url": url,
+                    "name": "Potential secret/PII in public cloud storage",
+                    "risk": "High",
+                    "description": f"Publicly readable content at {url} appears to contain a secret or PII snippet.",
+                    "evidence": body_snippet,
+                    "service": "s3/gcs/azure",
+                }
+            )
+        elif status in (200, 301, 302, 307, 308) or "<Error>" in body_snippet or "NoSuchBucket" in body_snippet:
+            findings.append(
+                {
+                    "id": f"cloud-{hash(url) & 0xffffffff:x}",
+                    "url": url,
+                    "name": "Cloud storage surface detected",
+                    "risk": "Medium",
+                    "description": f"Probe of candidate bucket/container {url} returned HTTP {status}.",
+                    "evidence": body_snippet,
+                    "service": "s3/gcs/azure",
+                }
+            )
+
+    # Basic DNS-level check for common cloud CDNs / PaaS via CNAME
+    try:
+        cname = socket.gethostbyname_ex(target)
+        aliases = cname[1] or []
+        cloud_aliases: List[str] = []
+        for a in aliases:
+            la = a.lower()
+            if any(x in la for x in ["cloudfront.net", "azureedge.net", "trafficmanager.net", "appspot.com"]):
+                cloud_aliases.append(a)
+        if cloud_aliases:
+            findings.append(
+                {
+                    "id": f"cname-{hash(target) & 0xffffffff:x}",
+                    "url": f"https://{target}/",
+                    "name": "Cloud CDN / PaaS CNAME detected",
+                    "risk": "Info",
+                    "description": "Target host appears to be fronted by a cloud CDN or PaaS.",
+                    "evidence": ", ".join(cloud_aliases),
+                    "service": "cdn/paas",
+                }
+            )
+    except Exception:
+        pass
+
+    return {"host": target, "findings": findings}
 
 def _spawn_job(cmd_argv: List[str], job_kind: str, artifact_dir: Optional[str] = None) -> str:
     job_id = str(uuid4())
@@ -453,6 +590,28 @@ def _build_api_and_param_inventory_for_host(host: str) -> Dict[str, Any]:
         "api_endpoints": sorted(set(api_endpoints)),
         "parameters": sorted(parameters.values(), key=lambda x: x["name"]),
     }
+
+
+@app.post("/mcp/run_cloud_recon")
+def run_cloud_recon(req: CloudReconRequest):
+    """Run lightweight cloud recon for an in-scope host.
+
+    This is HTTP-only and conservative: we derive a few candidate cloud
+    storage / CDN endpoints from the provided host, probe them with
+    unauthenticated GETs, and return any interesting surfaces as
+    normalized findings. Results are also written to
+    OUTPUT_DIR/cloud_findings_<host>.json for downstream triage.
+    """
+
+    host = _enforce_scope(req.host)
+    result = _cloud_recon_for_host(host)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    out_path = os.path.join(OUTPUT_DIR, f"cloud_findings_{host}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result["findings"], fh, indent=2)
+
+    return {"host": host, "findings": result["findings"], "output": out_path}
 
 
 def _score_host_risk_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:

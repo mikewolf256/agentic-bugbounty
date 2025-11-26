@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl wget git unzip \
+ && rm -rf /var/lib/apt/lists/*
+
+# Copy code (including vendored nuclei tarball)
+COPY . /app
+
+# Install nuclei from vendored tarball
+RUN unzip tools/nuclei_3.5.1_linux_amd64.zip -d /usr/local/bin \
+ && chmod +x /usr/local/bin/nuclei
+
+# Python deps
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 8000
+ENV ZAP_API_BASE="http://zap:8080"
+ENV OUTPUT_DIR="/app/output_zap"
+
+CMD ["uvicorn", "mcp_zap_server:app", "--host", "0.0.0.0", "--port", "8000"]

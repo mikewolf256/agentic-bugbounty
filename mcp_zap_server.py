@@ -454,6 +454,91 @@ def _build_api_and_param_inventory_for_host(host: str) -> Dict[str, Any]:
         "parameters": sorted(parameters.values(), key=lambda x: x["name"]),
     }
 
+
+def _score_host_risk_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute a simple 1–100 risk score and rationale from a host profile.
+
+    This is intentionally heuristic and lightweight: it looks at the number
+    of API endpoints, exposures, technologies, parameters, and auth issues
+    to give a rough prioritization signal for agent workflows.
+    """
+
+    tech = profile.get("technologies", [])
+    panels = profile.get("panels", [])
+    exposures = profile.get("exposures", [])
+    api_findings = profile.get("api_findings", [])
+    api_endpoints = profile.get("api_endpoints", [])
+    params = profile.get("parameters", [])
+    auth_surface = profile.get("auth_surface", {})
+
+    # Base score from API surface and exposures
+    score = 0
+    score += min(len(api_endpoints) * 3, 30)  # up to 30 points
+    score += min(len(exposures) * 5, 25)      # up to 25 points
+    score += min(len(api_findings) * 2, 10)   # up to 10 points
+
+    # Parameters and panels add some weight
+    score += min(len(params), 15)             # up to 15 points
+    score += min(len(panels) * 3, 10)         # up to 10 points
+
+    # Auth issues are important
+    auth_issues = auth_surface.get("nuclei_findings", [])
+    score += min(len(auth_issues) * 5, 10)    # up to 10 points
+
+    # Technologies: bump if we see common high-risk stacks
+    tech_names = " ".join(str(t.get("name", "")) for t in tech).lower()
+    for kw in ["wordpress", "php", "laravel", "rails", "drupal"]:
+        if kw in tech_names:
+            score += 5
+            break
+
+    # Clamp between 1 and 100
+    score = max(1, min(int(score), 100))
+
+    rationale_bits = []
+    if api_endpoints:
+        rationale_bits.append(f"{len(api_endpoints)} API endpoints detected")
+    if exposures:
+        rationale_bits.append(f"{len(exposures)} exposure findings")
+    if auth_issues:
+        rationale_bits.append(f"{len(auth_issues)} auth-related issues")
+    if panels:
+        rationale_bits.append(f"{len(panels)} admin/login panels")
+    if params:
+        rationale_bits.append(f"{len(params)} parameters observed")
+    if not rationale_bits:
+        rationale_bits.append("limited recon data available")
+
+    rationale = "; ".join(rationale_bits)
+    return {"risk_score": score, "rationale": rationale}
+
+
+def _host_history_path(host: str) -> str:
+    host = normalize_target(host)
+    hist_dir = os.path.join(OUTPUT_DIR, "host_history")
+    os.makedirs(hist_dir, exist_ok=True)
+    return os.path.join(hist_dir, f"{host}.json")
+
+
+def _load_host_profile_snapshot(host: str) -> Optional[Dict[str, Any]]:
+    path = _host_history_path(host)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def _save_host_profile_snapshot(host: str, profile: Dict[str, Any]) -> None:
+    path = _host_history_path(host)
+    try:
+        with open(path, "w") as fh:
+            json.dump(profile, fh, indent=2)
+    except Exception:
+        pass
+
 # ========== MCP endpoints ==========
 @app.post("/mcp/set_scope")
 def set_scope(cfg: dict):
@@ -1015,6 +1100,109 @@ def host_profile(body: Dict[str, Any]):
     }
 
     return {"host": host, "llm_profile": llm_profile}
+
+
+@app.post("/mcp/prioritize_host")
+def prioritize_host(body: Dict[str, Any]):
+    """Compute a simple risk score for a host using host_profile data.
+
+    This endpoint is designed for orchestration/agent workflows: given a
+    host, it reuses the host_profile logic to assemble recon data, then
+    applies a heuristic scoring function to produce a 1–100 risk_score and
+    a short textual rationale.
+    """
+
+    host_input = body.get("host") or body.get("target")
+    if not host_input:
+        raise HTTPException(status_code=400, detail="host is required")
+
+    # Reuse host_profile computation without llm_view
+    profile = host_profile({"host": host_input})
+    scored = _score_host_risk_from_profile(profile)
+
+    return {
+        "host": profile.get("host"),
+        "risk_score": scored["risk_score"],
+        "rationale": scored["rationale"],
+    }
+
+
+@app.post("/mcp/host_delta")
+def host_delta(body: Dict[str, Any]):
+    """Return the delta between current and previous host_profile for a host.
+
+    This is a best-effort helper for agents to focus on new surface area. It
+    compares the current host_profile to the last snapshot saved on disk and
+    returns only newly observed APIs, exposures, panels, auth issues, and
+    parameters. It also saves the current profile as the new baseline.
+    """
+
+    host_input = body.get("host") or body.get("target")
+    if not host_input:
+        raise HTTPException(status_code=400, detail="host is required")
+
+    # Enforce scope and compute current profile
+    host = _enforce_scope(host_input)
+    current = host_profile({"host": host})
+
+    previous = _load_host_profile_snapshot(host)
+
+    def _as_set(items, key_fn):
+        s = set()
+        for it in items or []:
+            k = key_fn(it)
+            if k is not None:
+                s.add(k)
+        return s
+
+    # APIs
+    curr_apis = set(current.get("api_endpoints", []) or [])
+    prev_apis = set(previous.get("api_endpoints", []) or []) if previous else set()
+    new_api_endpoints = sorted(list(curr_apis - prev_apis))
+
+    # Exposures
+    curr_exposures = current.get("exposures", []) or []
+    prev_exposures = previous.get("exposures", []) or [] if previous else []
+    curr_exp_keys = _as_set(curr_exposures, lambda f: (f.get("template_id"), f.get("matched_at")))
+    prev_exp_keys = _as_set(prev_exposures, lambda f: (f.get("template_id"), f.get("matched_at")))
+    new_exp_keys = curr_exp_keys - prev_exp_keys
+    new_exposures = [f for f in curr_exposures if (f.get("template_id"), f.get("matched_at")) in new_exp_keys]
+
+    # Panels
+    curr_panels = current.get("panels", []) or []
+    prev_panels = previous.get("panels", []) or [] if previous else []
+    curr_panel_keys = _as_set(curr_panels, lambda f: f.get("matched_at"))
+    prev_panel_keys = _as_set(prev_panels, lambda f: f.get("matched_at"))
+    new_panel_keys = curr_panel_keys - prev_panel_keys
+    new_panels = [f for f in curr_panels if f.get("matched_at") in new_panel_keys]
+
+    # Auth issues
+    curr_auth = (current.get("auth_surface") or {}).get("nuclei_findings", []) or []
+    prev_auth = (previous.get("auth_surface") or {}).get("nuclei_findings", []) or [] if previous else []
+    curr_auth_keys = _as_set(curr_auth, lambda f: (f.get("name"), f.get("severity")))
+    prev_auth_keys = _as_set(prev_auth, lambda f: (f.get("name"), f.get("severity")))
+    new_auth_keys = curr_auth_keys - prev_auth_keys
+    new_auth_issues = [f for f in curr_auth if (f.get("name"), f.get("severity")) in new_auth_keys]
+
+    # Parameters
+    curr_params = current.get("parameters", []) or []
+    prev_params = previous.get("parameters", []) or [] if previous else []
+    curr_param_keys = _as_set(curr_params, lambda f: f.get("name"))
+    prev_param_keys = _as_set(prev_params, lambda f: f.get("name"))
+    new_param_names = sorted(list(curr_param_keys - prev_param_keys))
+
+    # Save current profile as new baseline
+    _save_host_profile_snapshot(host, current)
+
+    return {
+        "host": host,
+        "first_run": previous is None,
+        "new_api_endpoints": new_api_endpoints,
+        "new_exposures": new_exposures,
+        "new_panels": new_panels,
+        "new_auth_issues": new_auth_issues,
+        "new_parameters": new_param_names,
+    }
 
 # ========== report generation helpers ==========
 def generate_h1_markdown(program: str, f: Dict[str, Any]) -> str:

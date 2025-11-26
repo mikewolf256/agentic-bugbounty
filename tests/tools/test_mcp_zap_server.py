@@ -615,6 +615,164 @@ def test_host_profile_llm_view_returns_compact_profile(tmp_path, monkeypatch):
     assert lp["params_summary"]["count"] >= 1
     assert "auth" in lp
 
+
+def test_prioritize_host_uses_profile_and_scoring(tmp_path, monkeypatch):
+    """/mcp/prioritize_host should compute a non-trivial risk score from profile data."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    def fake_host_profile(body):
+        # Simulate a host with rich API surface and exposures
+        return {
+            "host": "example.com",
+            "technologies": [
+                {"name": "nginx"},
+                {"name": "php-fpm"},
+            ],
+            "panels": [
+                {"matched_at": "https://example.com/admin/login"},
+            ],
+            "exposures": [
+                {"name": "Open S3 bucket", "severity": "medium"},
+                {"name": "Public GCP bucket", "severity": "high"},
+            ],
+            "api_findings": [
+                {"name": "Users API", "severity": "info"},
+            ],
+            "api_endpoints": [
+                "https://example.com/api/v1/users",
+                "https://example.com/api/v1/admin",
+            ],
+            "parameters": [
+                {"name": "user_id"},
+                {"name": "account_id"},
+            ],
+            "auth_surface": {
+                "has_auth_config": True,
+                "auth_headers": ["Authorization"],
+                "nuclei_findings": [
+                    {"name": "Weak CORS", "severity": "low"},
+                ],
+            },
+        }
+
+    monkeypatch.setattr(mcp_zap_server, "host_profile", fake_host_profile)
+
+    body = {"host": "https://example.com"}
+    resp = client.post("/mcp/prioritize_host", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["host"] == "example.com"
+    assert 1 <= data["risk_score"] <= 100
+    # With rich surface, score should be non-trivial
+    assert data["risk_score"] >= 20
+    assert "rationale" in data and data["rationale"]
+
+
+def test_host_delta_first_run(tmp_path, monkeypatch):
+    """/mcp/host_delta should treat the first call as first_run and surface all items."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    def fake_host_profile(body):
+        return {
+            "host": body["host"],
+            "api_endpoints": ["https://example.com/api/v1/users"],
+            "exposures": [
+                {
+                    "template_id": "exposure-1",
+                    "matched_at": "https://example.com/.git/HEAD",
+                }
+            ],
+            "panels": [],
+            "auth_surface": {"nuclei_findings": []},
+            "parameters": [
+                {"name": "user_id"},
+            ],
+        }
+
+    monkeypatch.setattr(mcp_zap_server, "host_profile", fake_host_profile)
+
+    resp = client.post("/mcp/host_delta", json={"host": "https://example.com"})
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # host is normalized by the server; we care primarily about delta contents
+    assert data["host"] == "example.com"
+    assert data["new_api_endpoints"] == ["https://example.com/api/v1/users"]
+    assert len(data["new_exposures"]) == 1
+    assert data["new_exposures"][0]["template_id"] == "exposure-1"
+    assert data["new_parameters"] == ["user_id"]
+
+
+def test_host_delta_subsequent_run_shows_only_new_items(tmp_path, monkeypatch):
+    """/mcp/host_delta should only report new items after the baseline."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    profiles = [
+        {
+            "host": "https://example.com",
+            "api_endpoints": ["https://example.com/api/v1/users"],
+            "exposures": [],
+            "panels": [],
+            "auth_surface": {"nuclei_findings": []},
+            "parameters": [
+                {"name": "user_id"},
+            ],
+        },
+        {
+            "host": "https://example.com",
+            "api_endpoints": [
+                "https://example.com/api/v1/users",
+                "https://example.com/api/v1/admin",
+            ],
+            "exposures": [
+                {
+                    "template_id": "exposure-2",
+                    "matched_at": "https://example.com/.env",
+                }
+            ],
+            "panels": [],
+            "auth_surface": {"nuclei_findings": []},
+            "parameters": [
+                {"name": "user_id"},
+                {"name": "admin"},
+            ],
+        },
+    ]
+
+    call_count = {"n": 0}
+
+    def fake_host_profile(body):
+        idx = call_count["n"]
+        call_count["n"] += 1
+        return profiles[min(idx, len(profiles) - 1)]
+
+    monkeypatch.setattr(mcp_zap_server, "host_profile", fake_host_profile)
+
+    # First run establishes (or refreshes) baseline; we just ensure success
+    resp1 = client.post("/mcp/host_delta", json={"host": "https://example.com"})
+    assert resp1.status_code == 200
+
+    # Second run should show only newly added elements
+    resp2 = client.post("/mcp/host_delta", json={"host": "https://example.com"})
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+
+    assert data2["host"] == "example.com"
+    assert data2["new_api_endpoints"] == ["https://example.com/api/v1/admin"]
+    assert data2["new_parameters"] == ["admin"]
+    assert len(data2["new_exposures"]) == 1
+    assert data2["new_exposures"][0]["template_id"] == "exposure-2"
+
 def test_run_reflector_in_scope(tmp_path, monkeypatch):
     """/mcp/run_reflector should enforce scope and call _spawn_job with the right args."""
 

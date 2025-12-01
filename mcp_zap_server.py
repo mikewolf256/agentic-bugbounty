@@ -106,6 +106,17 @@ def rate_limit_wait():
     else:
         _allowance -= 1.0
 
+
+class BacChecksRequest(BaseModel):
+    """Minimal request model for BAC/IDOR checks.
+
+    For v1 this is just a stub endpoint; we only enforce scope and create an
+    empty findings file on disk so the contract is stable for future work.
+    """
+
+    host: str
+    url: Optional[str] = None
+
 # ========== FastAPI & models ==========
 app = FastAPI(title="MCP ZAP Starter Server (Free tools)")
 
@@ -673,27 +684,60 @@ def _score_host_risk_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _host_history_path(host: str) -> str:
+    """Return the directory for a host's history snapshots.
+
+    We now keep per-snapshot files under OUTPUT_DIR/host_history/<host>/ so we
+    can reason about multiple runs over time. The latest snapshot is still
+    discoverable via _load_host_profile_snapshot.
+    """
+
     host = normalize_target(host)
-    hist_dir = os.path.join(OUTPUT_DIR, "host_history")
+    hist_dir = os.path.join(OUTPUT_DIR, "host_history", host)
     os.makedirs(hist_dir, exist_ok=True)
-    return os.path.join(hist_dir, f"{host}.json")
+    return hist_dir
 
 
 def _load_host_profile_snapshot(host: str) -> Optional[Dict[str, Any]]:
-    path = _host_history_path(host)
-    if not os.path.exists(path):
+    """Load the most recent host_profile snapshot for a host, if any.
+
+    We treat the lexicographically largest filename in the host's history
+    directory as the latest snapshot (filenames are based on integer
+    timestamps), and return its parsed JSON content.
+    """
+
+    hist_dir = _host_history_path(host)
+    if not os.path.isdir(hist_dir):
         return None
+
     try:
-        with open(path, "r") as fh:
+        candidates = [f for f in os.listdir(hist_dir) if f.endswith(".json")]
+    except FileNotFoundError:
+        return None
+
+    if not candidates:
+        return None
+
+    latest = sorted(candidates)[-1]
+    path = os.path.join(hist_dir, latest)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
             return json.load(fh)
     except Exception:
         return None
 
 
 def _save_host_profile_snapshot(host: str, profile: Dict[str, Any]) -> None:
-    path = _host_history_path(host)
+    """Persist a new host_profile snapshot for a host.
+
+    Snapshots are stored as OUTPUT_DIR/host_history/<host>/<timestamp>.json to
+    allow longitudinal analysis and red-team style reporting.
+    """
+
+    hist_dir = _host_history_path(host)
+    ts = int(time.time())
+    path = os.path.join(hist_dir, f"{ts}.json")
     try:
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(profile, fh, indent=2)
     except Exception:
         pass
@@ -977,6 +1021,40 @@ def run_sqlmap(req: SqlmapRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=400, detail="sqlmap not found. Install sqlmap and ensure it's in PATH.")
     return {"returncode": p.returncode, "stdout": p.stdout[:2000], "stderr": p.stderr[:2000], "output_dir": output_dir}
+
+
+@app.post("/mcp/run_bac_checks")
+def run_bac_checks(req: BacChecksRequest):
+    """Stub Broken Access Control / IDOR checks endpoint.
+
+    For now this only enforces scope for the provided host and writes an empty
+    BAC findings file under OUTPUT_DIR. This keeps the API contract stable
+    while we iterate on actual probing logic.
+    """
+
+    if not req.host:
+        raise HTTPException(status_code=400, detail="host required")
+
+    host = normalize_target(req.host)
+    _enforce_scope(host)
+
+    ts = int(time.time())
+    out_file = os.path.join(OUTPUT_DIR, f"bac_findings_{host}_{ts}.json")
+    payload = {
+        "host": host,
+        "url": req.url,
+        "checked_urls": [],
+        "issues": [],
+        "version": 1,
+    }
+    with open(out_file, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+
+    return {
+        "status": "ok",
+        "host": host,
+        "file": out_file,
+    }
 
 
 @app.post("/mcp/run_nuclei")

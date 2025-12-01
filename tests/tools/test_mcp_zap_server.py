@@ -491,6 +491,30 @@ def test_validate_poc_with_nuclei_rejects_out_of_scope(tmp_path, monkeypatch):
     assert "not in scope" in resp.json().get("detail", "")
 
 
+def test_run_bac_checks_stub_creates_empty_findings(tmp_path, monkeypatch):
+    """/mcp/run_bac_checks should enforce scope and write an empty findings file."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    body = {"host": "https://example.com"}
+    resp = client.post("/mcp/run_bac_checks", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["host"] == "example.com"
+
+    out_path = data["file"]
+    assert os.path.exists(out_path)
+    payload = json.loads(open(out_path, "r", encoding="utf-8").read())
+    assert payload["host"] == "example.com"
+    assert payload["checked_urls"] == []
+    assert payload["issues"] == []
+
+
 def test_host_profile_aggregates_nuclei_and_zap(tmp_path, monkeypatch):
     """/mcp/host_profile should return a structured summary for a host.
 

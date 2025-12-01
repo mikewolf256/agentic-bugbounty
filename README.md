@@ -187,7 +187,16 @@ curl -s \
 
 ### 7. Run nuclei recon and store findings
 
-Use the curated recon template pack to collect high-signal fingerprints and exposures:
+Use the curated recon template pack to collect high-signal fingerprints and exposures.
+
+> Note: This project does **not** ship any nuclei templates. The
+> `NUCLEI_RECON_TEMPLATES` list in `mcp_zap_server.py` is built from a
+> small set of relative paths and an optional `NUCLEI_TEMPLATES_DIR`
+> environment variable. If `NUCLEI_TEMPLATES_DIR` is set (for example to
+> `$HOME/nuclei-templates`), each relative entry like `http/exposed-panels/`
+> is resolved under that directory. Otherwise the relative paths are
+> passed through as-is and nuclei will resolve them according to its own
+> search rules.
 
 ```bash
 curl -s \
@@ -296,6 +305,94 @@ Long-term goal:
 **Current phase:** P0 Implementation  
 **Focus:** Reliable core, noise reduction, token efficiency, validated results.  
 **Next Up:** Authenticated ZAP scanning and distributed job orchestration.
+
+---
+
+## 🐳 Run the stack in Docker (easy path)
+
+The simplest way to run the MCP server + ZAP together is via `docker-compose`. This gives you:
+
+- A ZAP daemon container listening on `8080`.
+- An MCP API container (FastAPI) listening on `8000`.
+- A shared `./output_zap` volume for findings & triage artifacts.
+
+### 1. Prerequisites
+
+- Docker and docker-compose installed.
+- An `OPENAI_API_KEY` in your environment (used by `agentic_runner.py` for triage).
+
+### 2. Build and start the services
+
+From the `agentic-bugbounty` directory:
+
+```bash
+docker compose up --build
+```
+
+This starts:
+
+- `zap` at `http://localhost:8080` (inside the Docker network as `http://zap:8080`).
+- `mcp` at `http://localhost:8000`.
+
+You can verify MCP is up via:
+
+```bash
+curl -s http://localhost:8000/docs >/dev/null && echo "MCP is up"
+```
+
+### 3. Provide a scope file
+
+Create a `scope.json` in the same directory as `agentic_runner.py` with an explicit `in_scope` list, for example:
+
+```json
+{
+	"program_name": "demo-program",
+	"primary_targets": ["app.example.com"],
+	"secondary_targets": [],
+	"in_scope": [
+		{ "url": "https://app.example.com" }
+	],
+	"rules": {}
+}
+```
+
+### 4. Run a full scan + triage from your host
+
+With MCP + ZAP running in Docker, you can orchestrate scans from your host using `agentic_runner.py`:
+
+```bash
+cd agentic-bugbounty
+
+export OPENAI_API_KEY="sk-..."          # required for triage
+export MCP_SERVER_URL="http://localhost:8000"
+
+python agentic_runner.py --mode full-scan --scope_file scope.json
+```
+
+What this does:
+
+- Calls `/mcp/set_scope` with your `scope.json`.
+- Starts ZAP scans for each `in_scope` URL.
+- (Best-effort) runs nuclei recon and lightweight cloud recon.
+- Builds `host_profile`, `prioritize_host`, and `host_delta` per host.
+- Writes a run summary to `output_zap/program_run_<ts>.json`.
+- Auto-triages any `zap_findings_*.json` and `cloud_findings_*.json` into:
+	- `output_zap/triage_*.json` (structured triage)
+	- `output_zap/*__<title>.md` (Markdown reports).
+
+### 5. Inspecting results
+
+On your host machine:
+
+```bash
+ls -1 output_zap
+
+# Example: inspect triaged findings
+jq '.[] | {title, cvss_score, confidence, recommended_bounty_usd}' \
+	output_zap/triage_*.json | less
+```
+
+You can also open the Markdown reports in your editor or browser; they are designed to be close to ready-to-submit bug bounty writeups.
 
 ---
 

@@ -21,9 +21,12 @@ services:
     environment:
       - ZAP_API_BASE=http://zap:8080
       - OUTPUT_DIR=/app/output_zap
+      - NUCLEI_TEMPLATES_DIR=/app/nuclei-templates
     ports:
       - "8000:8000"
     volumes:
       - ./output_zap:/app/output_zap
+      # Optionally mount your local nuclei templates into the container
+      # - ~/nuclei-templates:/app/nuclei-templates:ro
     depends_on:
       - zap

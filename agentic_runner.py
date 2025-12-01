@@ -475,6 +475,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                     "engine_result": "skipped_not_xss_or_low_confidence",
                     "raw_output": "",
                     "cmd": None,
+                    "endpoint": None,
                 }
                 t["validation"]["dalfox_confirmed"] = False
             else:
@@ -491,6 +492,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 "engine_result": "error",
                 "raw_output": str(e),
                 "cmd": None,
+                "endpoint": None,
             }
             t["validation"]["dalfox_confirmed"] = False
         # === end Dalfox validation ===
@@ -520,6 +522,8 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                             "engine_result": "ran",
                             "output_dir": resp.get("output_dir"),
                             "returncode": resp.get("returncode"),
+                            "endpoint": "/mcp/run_sqlmap",
+                            "target": url,
                         }
                     except SystemExit as e:
                         t.setdefault("validation", {})
@@ -528,6 +532,8 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                             "output_dir": None,
                             "returncode": None,
                             "error": str(e),
+                            "endpoint": "/mcp/run_sqlmap",
+                            "target": url,
                         }
             else:
                 t.setdefault("validation", {})
@@ -535,6 +541,8 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                     "engine_result": "skipped_not_sqli_or_low_confidence",
                     "output_dir": None,
                     "returncode": None,
+                    "endpoint": "/mcp/run_sqlmap",
+                    "target": None,
                 }
         except Exception as e:
             t.setdefault("validation", {})
@@ -543,7 +551,68 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 "output_dir": None,
                 "returncode": None,
                 "error": str(e),
+                "endpoint": "/mcp/run_sqlmap",
+                "target": None,
             }
+
+        # === SSRF planning stub ===
+        try:
+            title = (t.get("title") or "").lower()
+            cwe = (t.get("cwe") or "").lower()
+            category = (t.get("category") or "").lower()
+            confidence = (t.get("confidence") or "").lower()
+
+            looks_ssrf = (
+                "ssrf" in title
+                or "server-side request forgery" in title
+                or "ssrf" in category
+                or "server-side request forgery" in category
+                or "cwe-918" in cwe
+            )
+
+            if looks_ssrf and confidence in ("medium", "high", "very_high", "very high"):
+                url = f.get("url") or f.get("request", {}).get("url") or ""
+                param = f.get("parameter") or f.get("param") or "url"
+                t.setdefault("validation", {})
+                t["validation"].setdefault("ssrf", {})
+                t["validation"]["ssrf"].update(
+                    {
+                        "engine_result": "planned",
+                        "endpoint": "/mcp/run_ssrf_checks",
+                        "target": url,
+                        "param": param,
+                    }
+                )
+        except Exception:
+            # SSRF planning is best-effort; ignore errors.
+            pass
+
+        # === Derive overall validation_status per finding ===
+        v = t.get("validation") or {}
+        engines = []
+        results = []
+        for eng_name, eng_data in v.items():
+            if not isinstance(eng_data, dict):
+                continue
+            engines.append(eng_name)
+            res = str(eng_data.get("engine_result") or "").lower()
+            if res:
+                results.append(res)
+
+        status = "unknown"
+        if results:
+            if any(r in ("confirmed", "ran") for r in results):
+                status = "validated"
+            elif any(r == "planned" for r in results):
+                status = "planned"
+            elif all(r.startswith("skipped") for r in results):
+                status = "skipped"
+            elif any(r == "error" for r in results):
+                status = "error"
+
+        # Always expose validation_status/validation_engines for downstream consumers
+        t["validation_status"] = status
+        t["validation_engines"] = sorted(engines) if engines else []
         # === end SQLi validation ===
 
         triaged.append(t)
@@ -565,6 +634,33 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         # If there is no real Dalfox data, omit the whole section
         show_dalfox = bool(dal_result or dal_payload or dal_raw)
 
+        # Validation + MITRE summary
+        validation_status = t.get("validation_status", "unknown")
+        validation_engines = t.get("validation_engines") or []
+        if validation_engines:
+            engines_str = ", ".join(map(str, validation_engines))
+        else:
+            engines_str = "none"
+
+        mitre = t.get("mitre") or {}
+        mitre_line = "None"
+        if isinstance(mitre, dict) and mitre:
+            parts = []
+            techs = mitre.get("techniques") or []
+            if techs:
+                # techniques may be list of dicts from map_mitre
+                if techs and isinstance(techs[0], dict):
+                    tech_ids = [str(x.get("id") or "") for x in techs if x.get("id")]
+                else:
+                    tech_ids = list(map(str, techs))
+                if tech_ids:
+                    parts.append("Techniques: " + ", ".join(tech_ids))
+            tactics = mitre.get("tactics") or []
+            if tactics:
+                parts.append("Tactics: " + ", ".join(map(str, tactics)))
+            if parts:
+                mitre_line = "; ".join(parts)
+
         body = f"""# {t.get('title','Finding')}
 
 **Severity (CVSS v3):** {t.get('cvss_score','TBD')} ({t.get('cvss_vector','TBD')})
@@ -574,6 +670,10 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
 ## Summary
 {t.get('summary','')}
+
+## Validation & MITRE Context
+**Validation:** Status: {validation_status}; Engines: {engines_str}
+**MITRE ATT&CK:** {mitre_line}
 
 ## Steps to reproduce
 {t.get('repro','')}

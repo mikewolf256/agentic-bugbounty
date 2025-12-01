@@ -57,36 +57,43 @@ H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
 MAX_REQ_PER_SEC = float(os.environ.get("MAX_REQ_PER_SEC", "3.0"))
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "./output_zap")
 INTERACTSH_CLIENT = os.environ.get("INTERACTSH_CLIENT", "")  # optional: path to interactsh-client
+SSRF_CALLBACK_URL = os.environ.get("SSRF_CALLBACK_URL", "")  # optional: base callback URL for SSRF checks
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 ARTIFACTS_DIR = os.path.join(OUTPUT_DIR, "artifacts")
 os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
-# Curated nuclei recon template pack (high-value, low-noise)
-NUCLEI_RECON_TEMPLATES: List[str] = [
+# Curated nuclei recon template pack (high-value, low-noise).
+#
+# This is intentionally a *list of paths* that will be passed to nuclei's
+# `-t` flag. It does not ship any templates in this repo. You should point
+# these entries at locations in your local nuclei-templates checkout or
+# your own curated directory, for example:
+#
+#   - "$HOME/nuclei-templates/http/exposed-panels/"
+#   - "$HOME/nuclei-templates/http/fingerprints/"
+#   - "$HOME/my-private-templates/recon/"
+#
+# At runtime we first look for a `NUCLEI_TEMPLATES_DIR` env var. If set, the
+# relative paths below are resolved beneath that directory. Otherwise, they
+# are passed through as-is and nuclei will resolve them according to its
+# own search rules.
+_NUCLEI_RECON_RELATIVE: List[str] = [
     "technologies/",
     "ssl/",
     "http/exposed-panels/",
     "http/fingerprints/",
-    "http/miscellaneous/",
-    "exposures/apis/",
     "exposures/files/",
     "exposures/configs/",
-    "exposures/logs/",
-    "exposures/tokens/",
-    "exposures/env/",
-    "exposures/keys/",
-    "http/auth-bypass/",
-    "http/misconfig/cors/",
-    "http/misconfig/backup/",
-    "http/vulnerabilities/jwt/",
-    "http/api/",
-    "http/graphql/",
-    "http/misconfig/openapi/",
-    "cloud/metadata/",
-    "cloud/firebase/",
-    "default-logins/",
 ]
+
+NUCLEI_TEMPLATES_DIR = os.environ.get("NUCLEI_TEMPLATES_DIR", "").strip()
+if NUCLEI_TEMPLATES_DIR:
+    NUCLEI_RECON_TEMPLATES: List[str] = [
+        os.path.join(NUCLEI_TEMPLATES_DIR, p) for p in _NUCLEI_RECON_RELATIVE
+    ]
+else:
+    NUCLEI_RECON_TEMPLATES: List[str] = list(_NUCLEI_RECON_RELATIVE)
 
 # ========== simple rate limiter ==========
 _last_time = 0.0
@@ -683,6 +690,27 @@ def _score_host_risk_from_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
     return {"risk_score": score, "rationale": rationale}
 
 
+def _load_bac_config_for_host(host: str) -> Optional[Dict[str, Any]]:
+    """Load BAC configuration for a host, if present.
+
+    For v1 we look for a JSON file named bac_config_<host>.json under
+    OUTPUT_DIR. The config describes roles (low_priv/admin) and a list of
+    vertical/IDOR checks.
+    """
+
+    host = normalize_target(host)
+    cfg_path = os.path.join(OUTPUT_DIR, f"bac_config_{host}.json")
+    if not os.path.isfile(cfg_path):
+        return None
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+            cfg["__path"] = cfg_path
+            return cfg
+    except Exception:
+        return None
+
+
 def _host_history_path(host: str) -> str:
     """Return the directory for a host's history snapshots.
 
@@ -1025,11 +1053,12 @@ def run_sqlmap(req: SqlmapRequest):
 
 @app.post("/mcp/run_bac_checks")
 def run_bac_checks(req: BacChecksRequest):
-    """Stub Broken Access Control / IDOR checks endpoint.
+    """Broken Access Control / IDOR checks endpoint (v1).
 
-    For now this only enforces scope for the provided host and writes an empty
-    BAC findings file under OUTPUT_DIR. This keeps the API contract stable
-    while we iterate on actual probing logic.
+    This version loads a per-host BAC configuration file (if present) and
+    executes simple vertical and IDOR-style checks using configured roles.
+    If no configuration exists, it returns status="no_config" and does not
+    treat this as an error so that orchestration can proceed gracefully.
     """
 
     if not req.host:
@@ -1038,23 +1067,108 @@ def run_bac_checks(req: BacChecksRequest):
     host = normalize_target(req.host)
     _enforce_scope(host)
 
+    cfg = _load_bac_config_for_host(host)
     ts = int(time.time())
     out_file = os.path.join(OUTPUT_DIR, f"bac_findings_{host}_{ts}.json")
-    payload = {
+
+    base_payload: Dict[str, Any] = {
         "host": host,
         "url": req.url,
         "checked_urls": [],
         "issues": [],
         "version": 1,
     }
+
+    if cfg is None:
+        # No configuration for this host yet; surface this as a non-error
+        # so agents can decide whether to prompt for config.
+        payload = dict(base_payload)
+        payload["status"] = "no_config"
+        with open(out_file, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        return {"status": "no_config", "host": host, "file": None, "issues": []}
+
+    # Prepare HTTP helper
+    session = requests.Session()
+
+    def _do_request(url: str, headers: Dict[str, str]) -> int:
+        try:
+            rate_limit_wait()
+            r = session.get(url, headers=headers, timeout=15, allow_redirects=False)
+            return r.status_code
+        except Exception:
+            return 0
+
+    roles = cfg.get("roles", {}) or {}
+    low = roles.get("low_priv") or {}
+    admin = roles.get("admin") or {}
+    low_headers = low.get("headers", {}) or {}
+    admin_headers = admin.get("headers", {}) or {}
+
+    checks = cfg.get("checks", []) or []
+    issues: List[Dict[str, Any]] = []
+    checked_urls: List[str] = []
+
+    for chk in checks:
+        ctype = chk.get("type")
+        if ctype == "vertical":
+            url = chk.get("url")
+            if not url:
+                continue
+            expected_low = chk.get("expected_status_low") or [401, 403]
+            expected_admin = chk.get("expected_status_admin") or [200]
+            status_low = _do_request(url, low_headers)
+            status_admin = _do_request(url, admin_headers)
+            checked_urls.append(url)
+
+            if status_low in expected_admin or status_low not in expected_low:
+                issues.append(
+                    {
+                        "type": "vertical",
+                        "url": url,
+                        "observed_low_status": status_low,
+                        "observed_admin_status": status_admin,
+                        "expected_low": expected_low,
+                        "expected_admin": expected_admin,
+                    }
+                )
+
+        elif ctype == "idor":
+            template = chk.get("template")
+            low_id = chk.get("low_priv_id")
+            forbidden_ids = chk.get("forbidden_ids") or []
+            if not template or not low_id or not forbidden_ids:
+                continue
+
+            # Ensure baseline behaves as expected (accessible ID for low-priv)
+            base_url = template.format(id=low_id)
+            base_status = _do_request(base_url, low_headers)
+            checked_urls.append(base_url)
+
+            expected_forbidden = chk.get("expected_forbidden_status") or [401, 403]
+
+            for fid in forbidden_ids:
+                url = template.format(id=fid)
+                status = _do_request(url, low_headers)
+                checked_urls.append(url)
+                if status not in expected_forbidden and status != 0:
+                    issues.append(
+                        {
+                            "type": "idor",
+                            "url": url,
+                            "id": fid,
+                            "observed_status": status,
+                            "expected_forbidden_status": expected_forbidden,
+                            "baseline_status": base_status,
+                        }
+                    )
+
+    payload = dict(base_payload)
+    payload.update({"status": "ok", "checked_urls": checked_urls, "issues": issues, "checks_run": len(checks)})
     with open(out_file, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
 
-    return {
-        "status": "ok",
-        "host": host,
-        "file": out_file,
-    }
+    return {"status": "ok", "host": host, "file": out_file, "issues": issues}
 
 
 @app.post("/mcp/run_nuclei")
@@ -1199,6 +1313,74 @@ def interactsh_new():
     except Exception:
         raise HTTPException(status_code=500, detail="Could not parse interactsh output: " + p.stdout)
     return {"interact": data}
+
+
+@app.post("/mcp/run_ssrf_checks")
+def run_ssrf_checks(body: Dict[str, Any]):
+    """Minimal SSRF check helper.
+
+    Given a target URL and a parameter name, this endpoint injects a
+    callback URL (configured via SSRF_CALLBACK_URL) into the parameter and
+    records which payloads were sent. For v1 we do not attempt to confirm
+    out-of-band callbacks; we treat this primarily as a way to standardize
+    SSRF test traffic and logging for later correlation.
+    """
+
+    if not body.get("target"):
+        raise HTTPException(status_code=400, detail="target required")
+    if not body.get("param"):
+        raise HTTPException(status_code=400, detail="param required")
+
+    target = body["target"]
+    param = body["param"]
+
+    host = normalize_target(target)
+    _enforce_scope(host)
+
+    callback_base = SSRF_CALLBACK_URL
+    if not callback_base:
+        # Without a callback URL, we cannot do meaningful SSRF validation.
+        raise HTTPException(status_code=400, detail="SSRF_CALLBACK_URL is not configured.")
+
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+    parsed = urlparse(target)
+    qs = parse_qs(parsed.query or "")
+
+    payloads = [
+        callback_base,
+        f"{callback_base}?param={param}",
+    ]
+
+    sent_payloads: List[str] = []
+    session = requests.Session()
+
+    for pval in payloads:
+        qs[param] = [pval]
+        new_query = urlencode(qs, doseq=True)
+        new_url = urlunparse(parsed._replace(query=new_query))
+        try:
+            rate_limit_wait()
+            session.get(new_url, timeout=10, allow_redirects=False)
+        except Exception:
+            # Best-effort; continue with remaining payloads.
+            pass
+        sent_payloads.append(pval)
+
+    ts = int(time.time())
+    out_file = os.path.join(OUTPUT_DIR, f"ssrf_findings_{host}_{ts}.json")
+    payload = {
+        "host": host,
+        "target": target,
+        "param": param,
+        "payloads_sent": sent_payloads,
+        "validated": False,
+        "version": 1,
+    }
+    with open(out_file, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+
+    return {"host": host, "target": target, "param": param, "file": out_file, "payloads_sent": sent_payloads, "validated": False}
 
 @app.get("/mcp/export_report/{scan_id}")
 def export_report(scan_id: str):
@@ -1448,6 +1630,36 @@ def generate_h1_markdown(program: str, f: Dict[str, Any]) -> str:
     risk = f.get("risk") or "Medium"
     cwe = f.get("cweid") or "N/A"
     evidence = f.get("evidence") or f.get("otherinfo") or ""
+    # Optional enriched fields from triage
+    validation_status = f.get("validation_status") or "unknown"
+    validation_engines = f.get("validation_engines") or []
+    mitre_info = f.get("mitre") or {}
+
+    # Human-friendly validation line
+    if validation_engines:
+        engines_str = ", ".join(sorted({str(e) for e in validation_engines}))
+    else:
+        engines_str = "none"
+
+    validation_line = f"Status: {validation_status}; Engines: {engines_str}"
+
+    # Compact MITRE line if mapping present
+    mitre_line = "None"
+    if isinstance(mitre_info, dict) and mitre_info:
+        # Common schema: {"techniques": [...], "tactics": [...], "tags": [...]} but stay defensive
+        parts = []
+        techniques = mitre_info.get("techniques") or mitre_info.get("technique_ids") or []
+        if techniques:
+            parts.append("Techniques: " + ", ".join(map(str, techniques)))
+        tactics = mitre_info.get("tactics") or []
+        if tactics:
+            parts.append("Tactics: " + ", ".join(map(str, tactics)))
+        tags = mitre_info.get("tags") or mitre_info.get("labels") or []
+        if tags:
+            parts.append("Tags: " + ", ".join(map(str, tags)))
+        if parts:
+            mitre_line = "; ".join(parts)
+
     md = f"""# Vulnerability Report – {program}
 
 **Target:** {host}  
@@ -1460,6 +1672,12 @@ def generate_h1_markdown(program: str, f: Dict[str, Any]) -> str:
 ## Summary
 A {name} vulnerability was identified on `{host}` within the authorized program scope.
 The issue may allow an attacker to {shorten(evidence,200)}.
+
+---
+
+## Validation & MITRE Context
+**Validation:** {validation_line}  
+**MITRE ATT&CK:** {mitre_line}
 
 ---
 

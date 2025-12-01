@@ -20,5 +20,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 ENV ZAP_API_BASE="http://zap:8080"
 ENV OUTPUT_DIR="/app/output_zap"
+ENV NUCLEI_TEMPLATES_DIR="/app/nuclei-templates"
 
 CMD ["uvicorn", "mcp_zap_server:app", "--host", "0.0.0.0", "--port", "8000"]

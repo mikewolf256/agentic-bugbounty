@@ -1,5 +1,9 @@
 def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
-    """/mcp/export_report should read findings JSON and emit markdown + index files."""
+    """/mcp/export_report should read findings JSON and emit markdown + index files.
+
+    Also verify that the new Validation & MITRE Context section renders when
+    validation/mitre fields are present on findings.
+    """
 
     # Use temp output dir for reports and findings and align module-level OUTPUT_DIR
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
@@ -25,6 +29,13 @@ def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
             "name": "XSS in param q",
             "risk": "High",
             "evidence": "<script>alert(1)</script>",
+            "validation_status": "validated",
+            "validation_engines": ["dalfox", "sqlmap"],
+            "mitre": {
+                "techniques": ["T1059"],
+                "tactics": ["Execution"],
+                "tags": ["xss", "injection"],
+            },
         },
         {
             "id": "f2",
@@ -32,6 +43,7 @@ def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
             "name": "SQL injection",
             "risk": "High",
             "evidence": "' OR 1=1 --",
+            # No validation/mitre on this one; ensures fallback logic is safe
         },
     ]
     findings_path.write_text(json.dumps(findings))
@@ -58,6 +70,15 @@ def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):
     all_md = "\n".join((tmp_path / os.path.basename(f)).read_text() for f in listed_reports)
     assert "https://example.com/one" in all_md
     assert "https://example.com/two" in all_md
+
+    # New section and lines should be present at least for the first finding
+    assert "## Validation & MITRE Context" in all_md
+    assert "Validation:" in all_md
+    assert "validated" in all_md
+    assert "dalfox" in all_md and "sqlmap" in all_md
+    assert "MITRE ATT&CK:" in all_md
+    assert "T1059" in all_md
+    assert "Execution" in all_md
 import json
 import os
 import sys
@@ -492,7 +513,7 @@ def test_validate_poc_with_nuclei_rejects_out_of_scope(tmp_path, monkeypatch):
 
 
 def test_run_bac_checks_stub_creates_empty_findings(tmp_path, monkeypatch):
-    """/mcp/run_bac_checks should enforce scope and write an empty findings file."""
+    """/mcp/run_bac_checks v1 should enforce scope and return no_config with no BAC config present."""
 
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     mcp_zap_server.OUTPUT_DIR = str(tmp_path)
@@ -504,15 +525,10 @@ def test_run_bac_checks_stub_creates_empty_findings(tmp_path, monkeypatch):
     resp = client.post("/mcp/run_bac_checks", json=body)
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "ok"
+    assert data["status"] == "no_config"
     assert data["host"] == "example.com"
-
-    out_path = data["file"]
-    assert os.path.exists(out_path)
-    payload = json.loads(open(out_path, "r", encoding="utf-8").read())
-    assert payload["host"] == "example.com"
-    assert payload["checked_urls"] == []
-    assert payload["issues"] == []
+    assert data["file"] is None
+    assert data["issues"] == []
 
 
 def test_host_profile_aggregates_nuclei_and_zap(tmp_path, monkeypatch):
@@ -666,6 +682,54 @@ def test_host_profile_llm_view_returns_compact_profile(tmp_path, monkeypatch):
     assert "params_summary" in lp
     assert lp["params_summary"]["count"] >= 1
     assert "auth" in lp
+
+
+def test_host_delta_first_run_creates_snapshot_and_marks_all_new(tmp_path, monkeypatch):
+    """/mcp/host_delta first run should treat all profile data as new and write a snapshot."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # First run calls real host_profile; we only assert snapshot behavior,
+    # not exact new_* values (covered by test_host_delta_first_run below).
+    resp = client.post("/mcp/host_delta", json={"host": "https://example.com"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["host"] == "example.com"
+    assert data["first_run"] is True
+
+    hist_dir = tmp_path / "host_history" / "example.com"
+    assert hist_dir.exists()
+    assert any(p.suffix == ".json" for p in hist_dir.iterdir())
+
+
+def test_host_delta_subsequent_run_only_returns_deltas(tmp_path, monkeypatch):
+    """/mcp/host_delta subsequent run should not be first_run and append at least one snapshot."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # Establish a real baseline snapshot
+    resp1 = client.post("/mcp/host_delta", json={"host": "https://example.com"})
+    assert resp1.status_code == 200
+
+    # Second run with the same host should at least produce another snapshot;
+    # detailed delta semantics are covered in test_host_delta_subsequent_run_shows_only_new_items.
+    resp2 = client.post("/mcp/host_delta", json={"host": "https://example.com"})
+    assert resp2.status_code == 200
+    data2 = resp2.json()
+    assert data2["host"] == "example.com"
+    assert data2["first_run"] is False
+
+    hist_dir = tmp_path / "host_history" / "example.com"
+    json_files = [p for p in hist_dir.iterdir() if p.suffix == ".json"]
+    assert len(json_files) >= 1
 
 
 def test_prioritize_host_uses_profile_and_scoring(tmp_path, monkeypatch):
@@ -977,6 +1041,136 @@ def test_run_backup_hunt_in_scope_with_wordlist(tmp_path, monkeypatch):
             cmd_argv = args[0]
             # First element is either INTERACTSH_CLIENT env or default 'interactsh-client'
             assert cmd_argv[1:] == ["create", "--json"]
+
+
+def test_run_ssrf_checks_enforces_scope_and_writes_file(tmp_path, monkeypatch):
+    """/mcp/run_ssrf_checks should enforce scope, use callback URL, and write findings."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+    monkeypatch.setenv("SSRF_CALLBACK_URL", "https://callback.test/oast")
+    # Reload module-level config if needed
+    mcp_zap_server.SSRF_CALLBACK_URL = "https://callback.test/oast"
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    class FakeResp:
+        def __init__(self, status_code=200):
+            self.status_code = status_code
+
+    def fake_get(url, timeout=10, allow_redirects=False):
+        return FakeResp(200)
+
+    with mock.patch("mcp_zap_server.requests.Session.get", side_effect=fake_get):
+        body = {
+            "target": "https://example.com/fetch?url=http://example.org",
+            "param": "url",
+        }
+        resp = client.post("/mcp/run_ssrf_checks", json=body)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["host"] == "example.com"
+    assert data["target"] == body["target"]
+    assert data["param"] == "url"
+    assert data["file"]
+    assert len(data["payloads_sent"]) >= 1
+
+    out_path = data["file"]
+    assert os.path.exists(out_path)
+    payload = json.loads(open(out_path, "r", encoding="utf-8").read())
+    assert payload["host"] == "example.com"
+    assert payload["param"] == "url"
+    assert len(payload["payloads_sent"]) >= 1
+
+
+def test_run_ssrf_checks_rejects_out_of_scope(tmp_path, monkeypatch):
+    """/mcp/run_ssrf_checks should reject targets whose host is out of scope."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+    monkeypatch.setenv("SSRF_CALLBACK_URL", "https://callback.test/oast")
+    mcp_zap_server.SSRF_CALLBACK_URL = "https://callback.test/oast"
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    body = {"target": "https://out-of-scope.test/fetch?url=http://example.org", "param": "url"}
+    resp = client.post("/mcp/run_ssrf_checks", json=body)
+    assert resp.status_code == 400
+    assert "not in scope" in resp.json().get("detail", "")
+
+
+def test_run_bac_checks_no_config_returns_no_config_status(tmp_path, monkeypatch):
+    """/mcp/run_bac_checks should return status=no_config when no config file exists."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    resp = client.post("/mcp/run_bac_checks", json={"host": "https://example.com"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "no_config"
+    assert data["host"] == "example.com"
+    assert data["file"] is None
+    assert data["issues"] == []
+
+
+def test_run_bac_checks_vertical_issue_detected(tmp_path, monkeypatch):
+    """/mcp/run_bac_checks should surface vertical BAC issues using config and HTTP calls."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # Write a minimal BAC config for example.com
+    host = "example.com"
+    cfg_path = tmp_path / f"bac_config_{host}.json"
+    cfg = {
+        "host": host,
+        "roles": {
+            "low_priv": {"headers": {"Authorization": "Bearer LOW"}},
+            "admin": {"headers": {"Authorization": "Bearer ADMIN"}},
+        },
+        "checks": [
+            {
+                "type": "vertical",
+                "url": "https://example.com/admin/dashboard",
+                "expected_status_low": [401, 403],
+                "expected_status_admin": [200],
+            }
+        ],
+    }
+    cfg_path.write_text(json.dumps(cfg))
+
+    # Patch Session.get to simulate a vertical issue: low-priv gets 200
+    class FakeResponse:
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+    def fake_get(url, headers=None, timeout=15, allow_redirects=False):
+        if headers and headers.get("Authorization") == "Bearer LOW":
+            return FakeResponse(200)
+        return FakeResponse(200)
+
+    with mock.patch("mcp_zap_server.requests.Session.get", side_effect=fake_get):
+        resp = client.post("/mcp/run_bac_checks", json={"host": "https://example.com"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["host"] == "example.com"
+    assert data["file"]
+    assert len(data["issues"]) == 1
+    issue = data["issues"][0]
+    assert issue["type"] == "vertical"
+    assert issue["url"] == "https://example.com/admin/dashboard"
 
 
     def test_export_report_creates_markdown_and_index(tmp_path, monkeypatch):

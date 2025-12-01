@@ -7,13 +7,14 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 ## Now / Next / Later
 
 - **Now (immediate P0 focus)**
-  - Solidify core pipeline and host deltas (`P0.0`).
-  - Clean up XSS + Dalfox behavior and triage outputs (`P0.1`).
-  - Ship a minimal, reliable full-scan-in-Docker path with clean reports.
+  - Core MCP + runner pipeline, host profiling, and host deltas implemented and tested (`P0.0`).
+  - XSS + Dalfox behavior tightened to XSS-only, medium+ confidence with clean triage/Markdown (`P0.1`).
+  - SQLi validation wired via `/mcp/run_sqlmap` and triage integration (`P0.2`).
+  - BAC v1 (`/mcp/run_bac_checks` + config + basic vertical/IDOR checks) and SSRF v1 (`/mcp/run_ssrf_checks` + triage stub) in place (`P0.3`, `P0.4`).
 - **Next (once core scans feel stable)**
-  - Add SQLi + BAC validation endpoints (`P0.2`, `P0.3`).
+  - Deepen BAC logic (richer IDOR/role-diff coverage) and SSRF validation (real callback correlation) (`P0.3`, `P0.4`).
   - Expand secrets/cloud/misconfig coverage (`P0.5`, `P0.6`).
-  - Standardize triage schema + Markdown templates; start MITRE mapping (`P0.8`, `P4.1`).
+  - Standardize triage schema + Markdown templates; extend MITRE mapping usage (`P0.8`, `P4.1`).
 - **Later (red-team & platform)**
   - ATT&CK Navigator export and exec PDF reporting (`P4.2`, `P4.3`).
   - Red-team simulation mode with attack graphs and high-value-path scoring (`P4.5`).
@@ -26,7 +27,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 - **MCP + Runner foundation**
   - FastAPI MCP server in `mcp_zap_server.py` with ZAP integration.
   - `agentic_runner.py` with `full-scan` and `triage` modes.
-  - Host profiling, prioritization, and host delta endpoints.
+  - Host profiling, prioritization, and `/mcp/host_delta` endpoint with per-host snapshot history under `OUTPUT_DIR/host_history/`.
 - **Containerization**
   - `Dockerfile.mcp` for MCP server.
   - `docker-compose.yml` for MCP + ZAP, wired via `ZAP_API_BASE`.
@@ -44,11 +45,11 @@ This roadmap tracks planned capabilities for the current P0 program across seven
     - [ ] JS/DOM risk indicators (inline event handlers, dangerous sinks).
   - [ ] Tune ZAP policies / scan configs for XSS-heavy coverage.
 - **Validation (Dalfox)**
-  - [ ] Tighten Dalfox integration in `agentic_runner.py`:
-    - [ ] Only run Dalfox when LLM or ZAP classifies a finding as XSS-like.
+  - [x] Tighten Dalfox integration in `agentic_runner.py`:
+    - [x] Only run Dalfox when LLM or ZAP classifies a finding as XSS-like and confidence is medium+.
     - [ ] Add `validation_engine` and `validation_confidence` fields to triage.
     - [ ] Cache Dalfox results per URL + param + payload.
-  - [ ] Skip Dalfox for cloud-only findings and hide Dalfox section in XSS-irrelevant markdown.
+  - [x] Skip Dalfox for cloud-only findings and hide Dalfox section in XSS-irrelevant markdown.
 - **Triage & Reporting**
   - [ ] Update triage prompt to classify:
     - [ ] XSS type (reflected, stored, DOM).
@@ -71,12 +72,12 @@ This roadmap tracks planned capabilities for the current P0 program across seven
     - [ ] DB-like error messages and stack traces.
     - [ ] Numeric or identifier-style parameters (`id`, `user_id`, etc.).
 - **Validation (sqlmap)**
-  - [ ] Implement `/mcp/run_sqlmap` endpoint:
-    - [ ] Accept URL, method, params, cookies, headers.
-    - [ ] Run `sqlmap` with safe defaults and timeouts.
-    - [ ] Write `sqlmap_<host>_<hash>.json` or `.txt` under `output_zap/`.
-  - [ ] Wire `agentic_runner.py` triage to:
-    - [ ] Trigger `/mcp/run_sqlmap` for suspected SQLi findings.
+  - [x] Implement `/mcp/run_sqlmap` endpoint:
+    - [x] Accept URL and optional data/headers.
+    - [x] Run `sqlmap` with safe defaults and timeouts.
+    - [x] Write `sqlmap_<host>_<ts>` output directory under `OUTPUT_DIR/`.
+  - [x] Wire `agentic_runner.py` triage to:
+    - [x] Trigger `/mcp/run_sqlmap` for suspected SQLi findings (medium+ confidence, SQLi-like).
     - [ ] Parse results into `dbms`, `vulnerable_params`, `dumped_data_summary`.
 - **Triage & Reporting**
   - [ ] SQLi-specific triage prompts and Markdown template:
@@ -93,16 +94,20 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 - **Discovery**
   - [ ] Extend `host_profile` to capture:
     - [ ] Candidate admin or internal endpoints (`/admin`, `/internal`, etc.).
-    - [ ] Object/tenant identifiers (project IDs, org IDs).
+    [ ] Object/tenant identifiers (project IDs, org IDs).
   - [ ] Define `access_model.yaml` (or similar) to describe:
     - [ ] Roles (user, admin, support, etc.).
     - [ ] Sample credentials or tokens.
 - **Validation**
-  - [ ] Implement `/mcp/run_bac_checks` endpoint:
-    - [ ] IDOR checks by swapping IDs across users/tenants.
-    - [ ] Vertical auth checks: low-priv tokens on admin endpoints.
+  - [x] Implement `/mcp/run_bac_checks` endpoint (v1):
+    - [x] Enforce scope on host and accept optional URL.
+    - [x] Load per-host `bac_config_<host>.json` with roles and checks.
+    - [x] Run basic vertical access and IDOR-style checks and write `bac_findings_<host>_<ts>.json`.
+  - [ ] Add full BAC logic:
+    - [ ] Richer IDOR checks across resources/tenants.
+    - [ ] Vertical auth checks: low-priv tokens on admin endpoints with deeper semantics.
     - [ ] Horizontal auth checks across accounts.
-    - [ ] Output `bac_findings_<host>.json` with structured results.
+    - [ ] Detailed, typed BAC results for reporting.
 - **Triage & Reporting**
   - [ ] Triage prompt tuned for:
     - [ ] Expected vs actual access level.
@@ -122,13 +127,13 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - [ ] Recon enhancements to identify SSRF candidates:
     - [ ] Parameters like `url`, `callback`, `redirect`, `target`.
     - [ ] Import-by-URL features and webhooks.
-  - [ ] Add config for callback server:
-    - [ ] `SSRF_CALLBACK_URL` env var or scope option.
+  - [x] Add config for callback server:
+    - [x] `SSRF_CALLBACK_URL` env var.
 - **Validation**
-  - [ ] Implement `/mcp/run_ssrf_checks` endpoint:
-    - [ ] Send payloads with callback URLs and variants (HTTP/HTTPS/DNS-only).
-    - [ ] Correlate callbacks with requests (logs, DNS, webhook events).
-    - [ ] Store `ssrf_findings_<host>.json`.
+  - [x] Implement `/mcp/run_ssrf_checks` endpoint:
+    - [x] Send best-effort payloads with callback URLs for a given `target` + `param`.
+    - [x] Store `ssrf_findings_<host>_<ts>.json` with `payloads_sent` for later correlation.
+  - [ ] Add real callback correlation (logs/DNS/webhook) and `validated: true` semantics.
 - **Triage & Reporting**
   - [ ] Triage classification:
     - [ ] SSRF type (blind, direct, semi-blind).
@@ -226,7 +231,9 @@ This roadmap tracks planned capabilities for the current P0 program across seven
     - [ ] Documentation in `README.md` or a dedicated API doc.
 - **Triage Schema & Templates**
   - [ ] Standardize triage JSON:
-    - [ ] `category`, `subtype`, `confidence`, `validation_engine`, `validation_status`, `evidence_refs`.
+    - [x] Add static MITRE mapping (`mitre` field) for common bug classes (XSS, SQLi, BAC, SSRF, etc.).
+    - [ ] Normalize `validation.*` blocks for Dalfox/SQLi/BAC/SSRF with consistent keys.
+    - [ ] Add top-level `validation_status` + `validation_engine`/`evidence_refs` per finding.
   - [ ] Move Markdown rendering to templates under `templates/` for reuse.
 - **Testing & CI**
   - [ ] Add tests per module (unit + small integration tests with mocked targets).
@@ -240,8 +247,8 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 - **MITRE ATT&CK Mapping**
   - [ ] Implement LLM-based MITRE mapping for each triaged finding.
-  - [ ] Create static mapping rules for common bug classes (XSS, SQLi, BAC, SSRF, etc.).
-  - [ ] Add `"mitre"` field to the unified triage JSON schema (techniques, tactics, confidence).
+  - [x] Create static mapping rules for common bug classes (XSS, SQLi, BAC, SSRF, etc.).
+  - [x] Add `"mitre"` field to the unified triage JSON schema (techniques, tactics, confidence).
   - [ ] Store MITRE tags and artifacts under `artifacts/mitre/` (per program/run).
   - [ ] Integrate MITRE tags with RAG-style memory so past ATT&CK coverage influences future scans.
 

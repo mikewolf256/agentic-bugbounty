@@ -1,4 +1,5 @@
 version: "3.9"
+
 services:
   zap:
     image: ghcr.io/zaproxy/zaproxy
@@ -26,7 +27,19 @@ services:
       - "8000:8000"
     volumes:
       - ./output_zap:/app/output_zap
-      # Optionally mount your local nuclei templates into the container
+      # Optionally mount your local nuclei templates:
       # - ~/nuclei-templates:/app/nuclei-templates:ro
     depends_on:
       - zap
+
+  juice-shop:
+    image: bkimminich/juice-shop
+    ports:
+      - "3000:3000"
+
+volumes:
+  output_zap:
+
+# mcp_zap_server.py moved to a separate file: /home/mike/Documents/Cyber/agentic-bugbounty/mcp_zap_server.py
+
+

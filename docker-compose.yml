@@ -23,6 +23,7 @@ services:
       - ZAP_API_BASE=http://zap:8080
       - OUTPUT_DIR=/app/output_zap
       - NUCLEI_TEMPLATES_DIR=/app/nuclei-templates
+      - PYTHONPATH=/app
     ports:
       - "8000:8000"
     volumes:

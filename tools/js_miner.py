@@ -70,7 +70,9 @@ def run(base_url, outdir):
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--base-url', required=True)
-    ap.add_argument('--output', required=True)
+    ap.add_argument('--output-dir', required=True)
     args = ap.parse_args()
-    run(args.base_url, args.output)
+    # keep backwards compatibility with older callers that used --output
+    outdir = args.output_dir
+    run(args.base_url, outdir)
 

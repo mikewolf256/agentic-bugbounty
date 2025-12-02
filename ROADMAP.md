@@ -11,10 +11,12 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - XSS + Dalfox behavior tightened to XSS-only, medium+ confidence with clean triage/Markdown (`P0.1`).
   - SQLi validation wired via `/mcp/run_sqlmap` and triage integration (`P0.2`).
   - BAC v1 (`/mcp/run_bac_checks` + config + basic vertical/IDOR checks) and SSRF v1 (`/mcp/run_ssrf_checks` + triage stub) in place (`P0.3`, `P0.4`).
+  - **Katana + Nuclei web recon wired via MCP `/mcp/run_katana_nuclei` and helper script (`P0.0`, `P0.1`, `P0.2`).**
 - **Next (once core scans feel stable)**
   - Deepen BAC logic (richer IDOR/role-diff coverage) and SSRF validation (real callback correlation) (`P0.3`, `P0.4`).
   - Expand secrets/cloud/misconfig coverage (`P0.5`, `P0.6`).
   - Standardize triage schema + Markdown templates; extend MITRE mapping usage (`P0.8`, `P4.1`).
+  - **Integrate `/mcp/run_katana_nuclei` into `full-scan` and auto-triage its findings.**
 - **Later (red-team & platform)**
   - ATT&CK Navigator export and exec PDF reporting (`P4.2`, `P4.3`).
   - Red-team simulation mode with attack graphs and high-value-path scoring (`P4.5`).
@@ -25,15 +27,19 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 ## P0.0 – Core Pipeline (Done / Ongoing Polish)
 
 - **MCP + Runner foundation**
-  - FastAPI MCP server in `mcp_zap_server.py` with ZAP integration.
-  - `agentic_runner.py` with `full-scan` and `triage` modes.
-  - Host profiling, prioritization, and `/mcp/host_delta` endpoint with per-host snapshot history under `OUTPUT_DIR/host_history/`.
+  - [x] FastAPI MCP server in `mcp_zap_server.py` with core integration.
+  - [x] `agentic_runner.py` with `full-scan` and `triage` modes.
+  - [x] Host profiling, prioritization, and `/mcp/host_delta` endpoint with per-host snapshot history under `OUTPUT_DIR/host_history/`.
 - **Containerization**
-  - `Dockerfile.mcp` for MCP server.
-  - `docker-compose.yml` for MCP + ZAP, wired via `ZAP_API_BASE`.
+  - [x] `Dockerfile.mcp` for MCP server.
+  - [x] `docker-compose.yml` for MCP + supporting services.
 - **Cloud recon + basic secrets**
-  - `/mcp/run_cloud_recon` endpoint and `cloud_findings_*.json` outputs.
-  - LLM triage for cloud findings with simple secret/PII regex checks.
+  - [x] `/mcp/run_cloud_recon` endpoint and `cloud_findings_*.json` outputs.
+  - [x] LLM triage for cloud findings with simple secret/PII regex checks.
+- **Web recon foundation**
+  - [x] Introduce Katana + Nuclei helper: `tools/katana_nuclei_recon.py`.
+  - [x] Add `/mcp/run_katana_nuclei` endpoint to orchestrate Katana + Nuclei and emit JSON findings.
+  - [x] Wire Katana+Nuclei findings into `full-scan` flow and unified triage automatically (basic integration).
 
 ---
 
@@ -44,23 +50,23 @@ This roadmap tracks planned capabilities for the current P0 program across seven
     - [ ] Reflected parameters and HTML injection points.
     - [ ] JS/DOM risk indicators (inline event handlers, dangerous sinks).
   - [ ] Tune ZAP policies / scan configs for XSS-heavy coverage.
-- **Validation (Dalfox)**
+**Validation (Dalfox)**
   - [x] Tighten Dalfox integration in `agentic_runner.py`:
-    - [x] Only run Dalfox when LLM or ZAP classifies a finding as XSS-like and confidence is medium+.
-    - [ ] Add `validation_engine` and `validation_confidence` fields to triage.
+    - [x] Only run Dalfox when LLM or other modules classify a finding as XSS-like and confidence is medium+.
+    - [x] Add `validation_engine` and `validation_confidence` fields to triage.
     - [ ] Cache Dalfox results per URL + param + payload.
   - [x] Skip Dalfox for cloud-only findings and hide Dalfox section in XSS-irrelevant markdown.
-- **Triage & Reporting**
-  - [ ] Update triage prompt to classify:
-    - [ ] XSS type (reflected, stored, DOM).
-    - [ ] Context (attribute, body, JS).
-  - [ ] Standard XSS report template:
-    - [ ] Reproduction steps with payload.
-    - [ ] Impact narrative (session theft, account takeover).
-    - [ ] Remediation guidance (output encoding, CSP, input validation).
+**Triage & Reporting**
+  - [x] Update triage prompt to classify:
+    - [x] XSS type (reflected, stored, DOM).
+    - [x] Context (attribute, body, JS).
+  - [x] Standard XSS report template (v1):
+    - [x] Reproduction steps with payload and automated Dalfox evidence when available.
+    - [x] Impact narrative for XSS in the generic template.
+    - [x] Remediation guidance (output encoding, CSP, input validation) via existing helper.
 - **Profiles / Modes**
   - [ ] Add `--profile xss-heavy` mode in `agentic_runner.py` focusing on:
-    - [ ] ZAP XSS rules and Dalfox validation.
+    - [ ] Heavier XSS checks and Dalfox validation.
     - [ ] UI-heavy hosts or paths from scope.
 
 ---
@@ -94,7 +100,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 - **Discovery**
   - [ ] Extend `host_profile` to capture:
     - [ ] Candidate admin or internal endpoints (`/admin`, `/internal`, etc.).
-    [ ] Object/tenant identifiers (project IDs, org IDs).
+    - [ ] Object/tenant identifiers (project IDs, org IDs).
   - [ ] Define `access_model.yaml` (or similar) to describe:
     - [ ] Roles (user, admin, support, etc.).
     - [ ] Sample credentials or tokens.
@@ -224,7 +230,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - [ ] Extend `program_run_<ts>.json` to record:
     - [ ] Modules/profiles executed.
     - [ ] Per-step runtime, errors, and status.
-  - [ ] Define scan orders per profile (ZAP → recon → validators → triage).
+  - [ ] Define scan orders per profile (recon → validators → triage).
 - **Unified MCP API Surface**
   - [ ] Ensure each module has:
     - [ ] `/mcp/run_<module>` endpoint with clear request/response schema.
@@ -232,8 +238,8 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 - **Triage Schema & Templates**
   - [ ] Standardize triage JSON:
     - [x] Add static MITRE mapping (`mitre` field) for common bug classes (XSS, SQLi, BAC, SSRF, etc.).
-    - [ ] Normalize `validation.*` blocks for Dalfox/SQLi/BAC/SSRF with consistent keys.
-    - [ ] Add top-level `validation_status` + `validation_engine`/`evidence_refs` per finding.
+    - [x] Normalize `validation.*` blocks for Dalfox (and initial SQLi/SSRF) with consistent keys.
+    - [x] Add top-level `validation_status` + `validation_engine` per finding, plus per-engine summaries.
   - [ ] Move Markdown rendering to templates under `templates/` for reuse.
 - **Testing & CI**
   - [ ] Add tests per module (unit + small integration tests with mocked targets).

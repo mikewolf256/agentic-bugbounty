@@ -30,6 +30,9 @@ MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000")
 
 SYSTEM_PROMPT = """You are a senior web security engineer and bug bounty triager.
 Return STRICT JSON with keys: title, cvss_vector, cvss_score, summary, repro, impact, remediation, cwe, confidence, recommended_bounty_usd.
+Additionally, when the issue appears to be XSS-like (cross-site scripting), also include:
+- xss_type: one of ["reflected","stored","dom"]
+- xss_context: one of ["attribute","html_body","script_block","other"].
 Be conservative. If low-value/noisy, confidence="low", recommended_bounty_usd=0. No leaked-credential validation or SE."""
 USER_TMPL = """Program scope:
 {scope}
@@ -455,6 +458,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             t.setdefault("validation", {})
             t["validation"]["dalfox"] = {
                 "engine_result": "skipped_not_applicable",
+                "validation_confidence": "low",
                 "raw_output": "",
                 "cmd": None,
             }
@@ -495,6 +499,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 t.setdefault("validation", {})
                 t["validation"]["dalfox"] = {
                     "engine_result": "skipped_not_xss_or_low_confidence",
+                    "validation_confidence": "low",
                     "raw_output": "",
                     "cmd": None,
                     "endpoint": None,
@@ -506,6 +511,9 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 if url:
                     confirmed, evidence = run_dalfox_check(url, param)
                     t.setdefault("validation", {})
+                    # annotate raw Dalfox evidence with validation metadata
+                    evidence["engine_result"] = "confirmed" if confirmed else evidence.get("engine_result") or "ran"
+                    evidence["validation_confidence"] = "high" if confirmed else "medium"
                     t["validation"]["dalfox"] = evidence
                     t["validation"]["dalfox_confirmed"] = confirmed
         except Exception as e:
@@ -609,10 +617,50 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             # SSRF planning is best-effort; ignore errors.
             pass
 
-        # === Derive overall validation_status per finding ===
+        # === Simple XSS classification (type + context heuristics) ===
+        try:
+            title_txt = (t.get("title") or "").lower()
+            summary_txt = (t.get("summary") or "").lower()
+            evidence_txt = str((f.get("evidence") or f.get("otherinfo") or "")).lower()
+
+            is_xss_like = (
+                "xss" in title_txt
+                or "cross-site scripting" in title_txt
+                or "xss" in summary_txt
+                or "cross-site scripting" in summary_txt
+            )
+
+            xss_type = None
+            if is_xss_like:
+                if "stored xss" in title_txt or "stored" in summary_txt:
+                    xss_type = "stored"
+                elif "dom" in title_txt or "dom-based" in title_txt or "dom" in summary_txt:
+                    xss_type = "dom"
+                else:
+                    xss_type = "reflected"
+
+            xss_context = None
+            if is_xss_like:
+                if "<script" in evidence_txt:
+                    xss_context = "script_block"
+                elif "onload=" in evidence_txt or "onclick=" in evidence_txt or "onerror=" in evidence_txt:
+                    xss_context = "attribute"
+                else:
+                    xss_context = "html_body"
+
+            if xss_type:
+                t["xss_type"] = xss_type
+            if xss_context:
+                t["xss_context"] = xss_context
+        except Exception:
+            # XSS classification is best-effort and non-fatal
+            pass
+
+        # === Derive overall validation_status and per-engine summary ===
         v = t.get("validation") or {}
-        engines = []
-        results = []
+        engines: list[str] = []
+        results: list[str] = []
+        per_engine_summaries: list[str] = []
         for eng_name, eng_data in v.items():
             if not isinstance(eng_data, dict):
                 continue
@@ -620,6 +668,21 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             res = str(eng_data.get("engine_result") or "").lower()
             if res:
                 results.append(res)
+
+            # Build a human-readable per-engine line when useful
+            pieces: list[str] = []
+            if res:
+                pieces.append(f"result={res}")
+            conf = str(eng_data.get("validation_confidence") or "").lower()
+            if conf:
+                pieces.append(f"confidence={conf}")
+            # include a very small hint if present (e.g., dbms or payload)
+            if "dbms" in eng_data:
+                pieces.append(f"dbms={eng_data.get('dbms')}")
+            if "payload" in eng_data:
+                pieces.append("payload_present")
+            if pieces:
+                per_engine_summaries.append(f"- {eng_name}: " + ", ".join(pieces))
 
         status = "unknown"
         if results:
@@ -635,6 +698,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         # Always expose validation_status/validation_engines for downstream consumers
         t["validation_status"] = status
         t["validation_engines"] = sorted(engines) if engines else []
+        t["validation_per_engine"] = per_engine_summaries
         # === end SQLi validation ===
 
         triaged.append(t)
@@ -663,6 +727,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             engines_str = ", ".join(map(str, validation_engines))
         else:
             engines_str = "none"
+        per_engine_lines = t.get("validation_per_engine") or []
 
         mitre = t.get("mitre") or {}
         mitre_line = "None"
@@ -690,11 +755,26 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 **Confidence:** {t.get('confidence','low')}
 **Suggested bounty (USD):** ${t.get('recommended_bounty_usd',0)}
 
+"""
+
+        xss_type = t.get("xss_type")
+        xss_context = t.get("xss_context")
+        if xss_type:
+            body += f"**XSS classification:** Type: {xss_type}; Context: {xss_context or 'unknown'}\n\n"
+
+        body += f"""
+
 ## Summary
 {t.get('summary','')}
 
 ## Validation & MITRE Context
 **Validation:** Status: {validation_status}; Engines: {engines_str}
+"""
+
+        if per_engine_lines:
+            body += "\n" + "\n".join(per_engine_lines) + "\n"
+
+        body += f"""
 **MITRE ATT&CK:** {mitre_line}
 
 ## Steps to reproduce

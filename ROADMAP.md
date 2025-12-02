@@ -4,27 +4,35 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## Now / Next / Later
+## Now / Next / Later (Unified View)
 
-- **Now (immediate P0 focus)**
+- **Now – P0: Core Findings + Evidence Automation**
   - Core MCP + runner pipeline, host profiling, and host deltas implemented and tested (`P0.0`).
+  - ZAP scanning orchestration via MCP, multi-host scan orchestration, and host history.
+  - Dedupe + pre-filtering of findings (skip noisy/low-CVSS issues) before LLM triage.
   - XSS + Dalfox behavior tightened to XSS-only, medium+ confidence with clean triage/Markdown (`P0.1`).
-  - SQLi validation wired via `/mcp/run_sqlmap` and triage integration (`P0.2`).
-  - BAC v1 (`/mcp/run_bac_checks` + config + basic vertical/IDOR checks) and SSRF v1 (`/mcp/run_ssrf_checks` + triage stub) in place (`P0.3`, `P0.4`).
-  - **Katana + Nuclei web recon wired via MCP `/mcp/run_katana_nuclei` and helper script (`P0.0`, `P0.1`, `P0.2`).**
-- **Next (once core scans feel stable)**
-  - Deepen BAC logic (richer IDOR/role-diff coverage) and SSRF validation (real callback correlation) (`P0.3`, `P0.4`).
-  - Expand secrets/cloud/misconfig coverage (`P0.5`, `P0.6`).
-  - Standardize triage schema + Markdown templates; extend MITRE mapping usage (`P0.8`, `P4.1`).
-  - **Integrate `/mcp/run_katana_nuclei` into `full-scan` and auto-triage its findings.**
-- **Later (red-team & platform)**
-  - ATT&CK Navigator export and exec PDF reporting (`P4.2`, `P4.3`).
-  - Red-team simulation mode with attack graphs and high-value-path scoring (`P4.5`).
-  - Continuous ASM, multi-tenancy, and client-facing portal (`P0.9`).
+  - SQLi validation wired via `/mcp/run_sqlmap` and triage + Markdown integration (`P0.2`).
+  - BAC v1 (`/mcp/run_bac_checks` + config + basic vertical/IDOR checks) and SSRF v1 (`/mcp/run_ssrf_checks`) enriched with engine metadata in triage and Markdown (`P0.3`, `P0.4`).
+  - Katana + Nuclei web recon wired via MCP `/mcp/run_katana_nuclei` and helper script (`P0.0`, `P0.1`, `P0.2`).
+  - JS miner for endpoints/keys (MCP `/mcp/run_js_miner` + background job) and reflection detector for XSS candidates.
+  - Backup hunter (HTTP-based, via `/mcp/run_backup_hunt`) for common backup/config file exposures, with hits surfaced in `host_profile.web.backups`.
+  - Artifact hygiene + structured outputs (triage JSONs, Markdown reports, `program_run_*.json`).
+- **Next – P1: Authenticated Testing + High-ROI Expansions**
+  - ZAP Auth Context + API tokens for authenticated spidering and scanning.
+  - ffuf/sqlmap authenticated mode (reuse auth contexts, session cookies, or tokens).
+  - Deeper business logic checks (IDOR, BOLA, mass assignment) building on BAC v1.
+  - Nuclei curated recon/attack template sets for high-signal coverage.
+  - Interactsh (or equivalent) for OOB payloads and SSRF/callback correlation.
+  - Secrets detection + redaction pipeline (beyond basic regex/entropy checks).
+- **Later – P2–P5: Intelligence, Scale, Red-Team, Platform**
+  - **P2 – Intelligence + RAG memory:** vector DB of past findings, pattern recognition on repeats, RAG-assisted second-stage scanning, and LLM-assisted payload mutation.
+  - **P3 – Distributed worker cluster:** Redis/Kafka work queue, K8s worker pods with autoscaling, job templates for ZAP/ffuf/sqlmap/nuclei, and per-scan isolation.
+  - **P4 – Red team / ASM mode:** Wayback machine URI mining, JS/source-map harvesting, technology fingerprinting, attack-path graph building, MITRE ATT&CK JSON export, and red-team report templates.
+  - **P5 – Commercial features:** tenant onboarding, one-click scanning portal, automated evidence-to-report pipeline (PDF/MD), billing and usage metering.
 
 ---
 
-## P0.0 – Core Pipeline (Done / Ongoing Polish)
+## P0.0 – Core Pipeline (P0 – Done / Ongoing Polish)
 
 - **MCP + Runner foundation**
   - [x] FastAPI MCP server in `mcp_zap_server.py` with core integration.
@@ -43,7 +51,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.1 – XSS (Reflected, Stored, DOM)
+## P0.1 – XSS (Reflected, Stored, DOM) – P0
 
 - **Discovery**
   - [ ] Extend `host_profile` to track:
@@ -71,7 +79,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.2 – SQL Injection (SQLi)
+## P0.2 – SQL Injection (SQLi) – P0
 
 - **Discovery**
   - [ ] Enhance recon to flag endpoints with:
@@ -84,18 +92,18 @@ This roadmap tracks planned capabilities for the current P0 program across seven
     - [x] Write `sqlmap_<host>_<ts>` output directory under `OUTPUT_DIR/`.
   - [x] Wire `agentic_runner.py` triage to:
     - [x] Trigger `/mcp/run_sqlmap` for suspected SQLi findings (medium+ confidence, SQLi-like).
-    - [ ] Parse results into `dbms`, `vulnerable_params`, `dumped_data_summary`.
+    - [x] Parse results into `dbms`, `vulnerable_params`, `dumped_data_summary` and surface them in triage/Markdown (`SQLmap Validation Details`).
 - **Triage & Reporting**
-  - [ ] SQLi-specific triage prompts and Markdown template:
-    - [ ] DBMS detected and exploitation method (boolean, time-based, UNION).
-    - [ ] Example vulnerable request and parameter.
-    - [ ] Data access capability and impact.
+  - [x] SQLi-specific reporting improvements (v1):
+    - [x] DBMS and vulnerable parameter summary in validation metadata.
+    - [x] SQLmap validation section in Markdown showing engine result, DBMS, vulnerable params, and dump summary when present.
+    - [ ] Optional future: deeper SQLi triage prompt describing exploitation method and data access impact.
 - **Profiles / Modes**
   - [ ] Add `--profile sqli-heavy` focused on identifier parameters and search endpoints.
 
 ---
 
-## P0.3 – Broken Access Control (BAC)
+## P0.3 – Broken Access Control (BAC) – P0/P1
 
 - **Discovery**
   - [ ] Extend `host_profile` to capture:
@@ -127,7 +135,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.4 – SSRF
+## P0.4 – SSRF – P0/P1
 
 - **Discovery**
   - [ ] Recon enhancements to identify SSRF candidates:
@@ -152,7 +160,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.5 – Secrets, Sensitive Data & Info Disclosure
+## P0.5 – Secrets, Sensitive Data & Info Disclosure – P0/P1
 
 - **Discovery**
   - [ ] Extend cloud/secret scanners to:
@@ -176,7 +184,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.6 – Misconfig & Cloud Storage Surface
+## P0.6 – Misconfig & Cloud Storage Surface – P1
 
 - **Discovery**
   - [ ] Build out cloud storage recon:
@@ -203,7 +211,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.7 – Outdated Components & Dependency Issues
+## P0.7 – Outdated Components & Dependency Issues – P2/P4
 
 - **Discovery**
   - [ ] Implement `/mcp/run_component_scan` endpoint:
@@ -224,7 +232,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.8 – Cross-Cutting: Orchestration, UX, and Testing
+## P0.8 – Cross-Cutting: Orchestration, UX, and Testing – P0/P2
 
 - **Orchestration & Telemetry**
   - [ ] Extend `program_run_<ts>.json` to record:
@@ -289,7 +297,7 @@ This roadmap tracks planned capabilities for the current P0 program across seven
 
 ---
 
-## P0.9 – Continuous ASM & Multi-Tenancy
+## P0.9 – Continuous ASM & Multi-Tenancy – P4/P5
 
 - **Scheduling & Automation**
   - [ ] Add scheduler for recurring scans (daily/weekly) with persisted job configs.

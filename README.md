@@ -30,7 +30,7 @@ This project is designed to:
 │ ZAP Spider / Active Scan       → Collects findings        │
 │ Dedupe & Noise Filter          → Drops low-value alerts   │
 │ AI Triage (OpenAI / GPT-4o)    → Summarizes & scores CVSS │
-│ Dalfox Validator               → Confirms XSS findings    │
+│ Dalfox / SQLmap / BAC / SSRF  → Validates key bug classes │
 │ Markdown Report Generator      → Produces human reports   │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -40,8 +40,9 @@ This project is designed to:
 2. **Scanning:** ZAP or other tools crawl each target and export findings.  
 3. **Pre-processing:** `mcp_helpers/dedupe.py` removes noise and deduplicates results.  
 4. **AI triage:** Only meaningful findings are passed to the LLM for contextual scoring, impact, and bounty estimation.  
-5. **Validation:** Tools like **Dalfox** re-check XSS findings to confirm proof.  
-6. **Reporting:** Results are written as structured JSON + Markdown vulnerability reports.
+5. **Validation:** Tools like **Dalfox** (XSS), **sqlmap** (SQLi), and MCP-powered **BAC/SSRF checks** re-validate high-value findings.  
+6. **Recon & Enrichment:** Katana+Nuclei web recon, JS miner, and backup hunter jobs enrich the surface map for each host.  
+7. **Reporting:** Results are written as structured JSON + Markdown vulnerability reports.
 
 ---
 
@@ -52,6 +53,8 @@ This project is designed to:
 | **Smart Pre-Filter** | Removes redundant and low-value scanner noise before AI triage — saving up to 90% token cost. |
 | **CVSS & Focus Filtering** | Keeps only findings with estimated CVSS ≥ 6.0 or high-impact keywords (XSS, SQLi, SSRF, Auth Bypass…). |
 | **Dalfox Validation** | Runs automatic confirmation of reflected XSS vectors via the Dalfox engine. |
+| **SQLi / BAC / SSRF Validation** | Uses MCP endpoints (`/mcp/run_sqlmap`, `/mcp/run_bac_checks`, `/mcp/run_ssrf_checks`) to validate SQL injection, broken access control, and SSRF candidates, surfacing engine results in Markdown. |
+| **JS Miner & Backup Hunter** | Background jobs (via MCP) crawl JavaScript and common backup/config paths; results are wired into host profiles and full-scan summaries. |
 | **Evidence Stubbing** | Always writes artifacts, even on “0 issue” scans, for full traceability. |
 | **AI-Based Triage** | Summarizes findings, assigns CVSS vectors, and estimates bounty value. |
 | **Modular Control Plane (MCP)** | Provides API endpoints to start scans, triage, or check scope compliance. |

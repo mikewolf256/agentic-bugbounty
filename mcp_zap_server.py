@@ -141,6 +141,10 @@ class SqlmapRequest(BaseModel):
     data: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
 
+class SsrfChecksRequest(BaseModel):
+    target: str  # full URL the application will fetch from
+    param: Optional[str] = None  # query/body parameter carrying the URL, if applicable
+
 class NucleiRequest(BaseModel):
     target: str
     templates: Optional[List[str]] = None
@@ -290,25 +294,131 @@ def _enforce_scope(host_or_url: str) -> str:
         raise HTTPException(status_code=400, detail=f"Target {normalize_target(host_or_url)} not in scope.")
     return normalize_target(host_or_url)
 
-# ---------- (cloud recon, host_profile, host_delta, nuclei, ffuf, sqlmap, js_miner, etc.) ----------
-# NOTE: These sections are unchanged from your latest version; I keep them intact.
-# For brevity, they are not re-commented here; they are exactly as in your last file
-# up to and including:
-# - /mcp/run_cloud_recon
-# - _score_host_risk_from_profile
-# - _load_bac_config_for_host
-# - _host_history_path / _load_host_profile_snapshot / _save_host_profile_snapshot
-# - /mcp/run_bac_checks
-# - /mcp/run_nuclei
-# - /mcp/validate_poc_with_nuclei
-# - /mcp/interactsh_new
-# - /mcp/run_ssrf_checks
-# - /mcp/export_report
-# - /mcp/host_profile
-# - /mcp/prioritize_host
-# - /mcp/host_delta
-# - /mcp/run_js_miner, /mcp/run_reflector, /mcp/run_backup_hunt, /mcp/job
-# - generate_h1_markdown / shorten / impact_guess_from_name / remediation_guess_from_name
+
+# ---------- background job helpers ----------
+
+def _spawn_job(cmd_argv: List[str], job_kind: str, artifact_dir: str) -> str:
+    """Spawn a background job and track it in JOB_STORE.
+
+    This is intentionally simple: it runs the given command in a thread,
+    captures stdout/stderr to files in ``artifact_dir``, and records
+    basic status so callers can poll via /mcp/job/{id}.
+    """
+
+    os.makedirs(artifact_dir, exist_ok=True)
+
+    job_id = str(uuid4())
+    stdout_path = os.path.join(artifact_dir, f"{job_id}.out.log")
+    stderr_path = os.path.join(artifact_dir, f"{job_id}.err.log")
+
+    JOB_STORE[job_id] = {
+        "id": job_id,
+        "kind": job_kind,
+        "cmd": cmd_argv,
+        "artifact_dir": artifact_dir,
+        "status": "queued",
+        "stdout": stdout_path,
+        "stderr": stderr_path,
+        "returncode": None,
+    }
+
+    def _runner():
+        JOB_STORE[job_id]["status"] = "running"
+        try:
+            with open(stdout_path, "w", encoding="utf-8") as so, open(
+                stderr_path, "w", encoding="utf-8"
+            ) as se:
+                proc = subprocess.run(
+                    cmd_argv,
+                    cwd=os.path.dirname(__file__),
+                    stdout=so,
+                    stderr=se,
+                    text=True,
+                )
+            JOB_STORE[job_id]["returncode"] = proc.returncode
+            JOB_STORE[job_id]["status"] = "finished" if proc.returncode == 0 else "error"
+        except Exception as e:
+            JOB_STORE[job_id]["status"] = "error"
+            JOB_STORE[job_id]["error"] = str(e)
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+
+    return job_id
+
+@app.post("/mcp/run_js_miner")
+def run_js_miner(body: Dict[str, Any]):
+    """Kick off a JS/config miner job for a given base URL.
+
+    This is a thin MCP wrapper around ``tools/js_miner.py`` that
+    enforces scope, spawns a background job, and returns a job id
+    plus the artifact directory where results will be written.
+    """
+
+    base_url = body.get("base_url") or body.get("url")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="Missing 'base_url' in request body.")
+
+    host = _enforce_scope(base_url)
+
+    artifact_dir = os.path.join(ARTIFACTS_DIR, "js_miner", host)
+
+    script_path = os.path.join(os.path.dirname(__file__), "tools", "js_miner.py")
+    if not os.path.exists(script_path):
+        raise HTTPException(status_code=500, detail=f"js_miner.py not found at {script_path}")
+
+    cmd = [
+        sys.executable,
+        script_path,
+        "--base-url",
+        base_url,
+        "--output-dir",
+        artifact_dir,
+    ]
+
+    job_id = _spawn_job(cmd, job_kind="js_miner", artifact_dir=artifact_dir)
+    return {"job_id": job_id, "artifact_dir": artifact_dir}
+
+
+@app.post("/mcp/run_backup_hunt")
+def run_backup_hunt(body: Dict[str, Any]):
+    """Kick off a backup/VCS file hunter for a given base URL.
+
+    This runs tools/backup_hunt.py in the background against a single
+    base URL, looking for common backup/config artifacts.
+    """
+
+    base_url = body.get("base_url") or body.get("url")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="Missing 'base_url' in request body.")
+
+    host = _enforce_scope(base_url)
+
+    artifact_dir = os.path.join(ARTIFACTS_DIR, "backup_hunt", host)
+
+    script_path = os.path.join(os.path.dirname(__file__), "tools", "backup_hunt.py")
+    if not os.path.exists(script_path):
+        raise HTTPException(status_code=500, detail=f"backup_hunt.py not found at {script_path}")
+
+    cmd = [
+        sys.executable,
+        script_path,
+        "--base-url",
+        base_url,
+        "--output-dir",
+        artifact_dir,
+    ]
+
+    job_id = _spawn_job(cmd, job_kind="backup_hunt", artifact_dir=artifact_dir)
+    return {"job_id": job_id, "artifact_dir": artifact_dir}
+
+
+@app.get("/mcp/job/{job_id}")
+def get_job(job_id: str):
+    job = JOB_STORE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 # ---------- Katana + Nuclei MCP endpoint ----------
 
@@ -434,6 +544,29 @@ def host_profile(req: CloudReconRequest):
 
     if api_endpoints:
         profile["web"]["api_endpoints"] = api_endpoints
+
+    # --- Backup hunter ingestion ---
+    backup_dir = os.path.join(ARTIFACTS_DIR, "backup_hunt", host)
+    backups_exposed: list[Dict[str, Any]] = []
+    if os.path.isdir(backup_dir):
+        for fname in os.listdir(backup_dir):
+            if not fname.endswith("_results.json") and not fname.endswith("backup_hunt_results.json"):
+                continue
+            fpath = os.path.join(backup_dir, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                continue
+            for hit in data.get("hits", []) or []:
+                if isinstance(hit, dict):
+                    backups_exposed.append(hit)
+
+    if backups_exposed:
+        profile.setdefault("web", {})["backups"] = {
+            "count": len(backups_exposed),
+            "samples": backups_exposed[:20],
+        }
 
     # Save snapshot
     _save_host_profile_snapshot(host, profile)

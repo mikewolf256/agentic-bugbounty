@@ -356,6 +356,26 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         summary["modules"].setdefault(host, {})
         summary["modules"][host]["katana_nuclei"] = katana_result
 
+        # --- JS miner (best-effort, non-blocking) ---
+        try:
+            js_resp = _mcp_post("/mcp/run_js_miner", {"base_url": target_url})
+            summary["modules"][host]["js_miner"] = {
+                "job_id": js_resp.get("job_id"),
+                "artifact_dir": js_resp.get("artifact_dir"),
+            }
+        except SystemExit as e:
+            print(f"[MCP] js_miner failed for {host}: {e}")
+
+        # --- Backup hunter (best-effort, non-blocking) ---
+        try:
+            bh_resp = _mcp_post("/mcp/run_backup_hunt", {"base_url": target_url})
+            summary["modules"][host]["backup_hunt"] = {
+                "job_id": bh_resp.get("job_id"),
+                "artifact_dir": bh_resp.get("artifact_dir"),
+            }
+        except SystemExit as e:
+            print(f"[MCP] backup_hunt failed for {host}: {e}")
+
     # 5) Build host_profile, prioritize_host, and host_delta per host
     for h in hosts:
         try:
@@ -548,13 +568,33 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                     try:
                         resp = _mcp_post("/mcp/run_sqlmap", payload)
                         t.setdefault("validation", {})
-                        t["validation"]["sqlmap"] = {
+
+                        # Base SQLmap metadata
+                        sqlmap_meta: Dict[str, Any] = {
                             "engine_result": "ran",
                             "output_dir": resp.get("output_dir"),
                             "returncode": resp.get("returncode"),
                             "endpoint": "/mcp/run_sqlmap",
                             "target": url,
                         }
+
+                        # Optional richer summary if MCP exposes it
+                        meta = resp.get("meta") or {}
+                        if isinstance(meta, dict):
+                            if meta.get("dbms"):
+                                sqlmap_meta["dbms"] = meta.get("dbms")
+                            if meta.get("vulnerable_params"):
+                                sqlmap_meta["vulnerable_params"] = meta.get("vulnerable_params")
+                            if meta.get("dumped_data_summary"):
+                                sqlmap_meta["dumped_data_summary"] = meta.get("dumped_data_summary")
+
+                        # Heuristic validation confidence: higher when DBMS/params detected
+                        if sqlmap_meta.get("dbms") or sqlmap_meta.get("vulnerable_params"):
+                            sqlmap_meta["validation_confidence"] = "high"
+                        else:
+                            sqlmap_meta["validation_confidence"] = "medium"
+
+                        t["validation"]["sqlmap"] = sqlmap_meta
                     except SystemExit as e:
                         t.setdefault("validation", {})
                         t["validation"]["sqlmap"] = {
@@ -585,7 +625,81 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 "target": None,
             }
 
-        # === SSRF planning stub ===
+        # === BAC validation via MCP / run_bac_checks (summary only) ===
+        try:
+            title = (t.get("title") or "").lower()
+            cwe = (t.get("cwe") or "").lower()
+            category = (t.get("category") or "").lower()
+            confidence = (t.get("confidence") or "").lower()
+
+            looks_bac = (
+                "broken access" in title
+                or "access control" in title
+                or "idor" in title
+                or "insecure direct object" in title
+                or "authorization" in title
+                or "broken access" in category
+                or "access control" in category
+                or "idor" in category
+                or "insecure direct object" in category
+                or "cwe-284" in cwe
+                or "cwe-285" in cwe
+            )
+
+            if looks_bac and confidence in ("medium", "high", "very_high", "very high"):
+                host = (f.get("host") or f.get("request", {}).get("url") or "").split("//")[-1].split("/")[0]
+                payload = {"host": host} if host else None
+                if payload:
+                    try:
+                        resp = _mcp_post("/mcp/run_bac_checks", payload)
+                        t.setdefault("validation", {})
+
+                        meta = resp.get("meta") or {}
+                        checks_count = meta.get("checks_count")
+                        confirmed_count = meta.get("confirmed_issues_count")
+                        summary_txt = meta.get("summary")
+
+                        bac_meta: Dict[str, Any] = {
+                            "engine_result": "confirmed" if (confirmed_count or 0) > 0 else "ran",
+                            "checks_count": checks_count,
+                            "confirmed_issues_count": confirmed_count,
+                            "summary": summary_txt,
+                            "endpoint": "/mcp/run_bac_checks",
+                            "host": host,
+                        }
+
+                        # Treat any confirmed BAC as high-confidence validation
+                        if (confirmed_count or 0) > 0:
+                            bac_meta["validation_confidence"] = "high"
+                        elif checks_count:
+                            bac_meta["validation_confidence"] = "medium"
+
+                        t["validation"]["bac"] = bac_meta
+                    except SystemExit as e:
+                        t.setdefault("validation", {})
+                        t["validation"]["bac"] = {
+                            "engine_result": "error",
+                            "error": str(e),
+                            "endpoint": "/mcp/run_bac_checks",
+                            "host": host,
+                        }
+            else:
+                t.setdefault("validation", {})
+                t["validation"]["bac"] = {
+                    "engine_result": "skipped_not_bac_or_low_confidence",
+                    "endpoint": "/mcp/run_bac_checks",
+                    "host": None,
+                }
+        except Exception as e:
+            t.setdefault("validation", {})
+            t["validation"]["bac"] = {
+                "engine_result": "error",
+                "error": str(e),
+                "endpoint": "/mcp/run_bac_checks",
+                "host": None,
+            }
+
+        # === SSRF validation via MCP ===
         try:
             title = (t.get("title") or "").lower()
             cwe = (t.get("cwe") or "").lower()
@@ -604,17 +718,44 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 url = f.get("url") or f.get("request", {}).get("url") or ""
                 param = f.get("parameter") or f.get("param") or "url"
                 t.setdefault("validation", {})
-                t["validation"].setdefault("ssrf", {})
-                t["validation"]["ssrf"].update(
-                    {
-                        "engine_result": "planned",
+                try:
+                    payload = {"target": url, "param": param}
+                    resp = _mcp_post("/mcp/run_ssrf_checks", payload)
+                    meta = resp.get("meta") or {}
+                    checks_count = meta.get("checks_count")
+                    confirmed_count = meta.get("confirmed_issues_count")
+                    summary_txt = meta.get("summary")
+                    targets_reached = meta.get("targets_reached") or []
+
+                    ssrf_meta: Dict[str, Any] = {
+                        "engine_result": "confirmed" if (confirmed_count or 0) > 0 else "ran",
+                        "checks_count": checks_count,
+                        "confirmed_issues_count": confirmed_count,
+                        "summary": summary_txt,
                         "endpoint": "/mcp/run_ssrf_checks",
                         "target": url,
                         "param": param,
                     }
-                )
+
+                    if targets_reached:
+                        ssrf_meta["targets_reached"] = targets_reached
+
+                    if (confirmed_count or 0) > 0:
+                        ssrf_meta["validation_confidence"] = "high"
+                    elif checks_count:
+                        ssrf_meta["validation_confidence"] = "medium"
+
+                    t["validation"]["ssrf"] = ssrf_meta
+                except SystemExit as e:
+                    t["validation"]["ssrf"] = {
+                        "engine_result": "error",
+                        "error": str(e),
+                        "endpoint": "/mcp/run_ssrf_checks",
+                        "target": url,
+                        "param": param,
+                    }
         except Exception:
-            # SSRF planning is best-effort; ignore errors.
+            # SSRF validation is best-effort; ignore errors.
             pass
 
         # === Simple XSS classification (type + context heuristics) ===
@@ -681,6 +822,8 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 pieces.append(f"dbms={eng_data.get('dbms')}")
             if "payload" in eng_data:
                 pieces.append("payload_present")
+            if "confirmed_issues_count" in eng_data:
+                pieces.append(f"confirmed={eng_data.get('confirmed_issues_count')}")
             if pieces:
                 per_engine_summaries.append(f"- {eng_name}: " + ", ".join(pieces))
 
@@ -801,6 +944,68 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
 </details>
 """
+
+        # BAC-specific validation evidence (when present)
+        bacv = (t.get("validation") or {}).get("bac") or {}
+        # Render a BAC section whenever we have a BAC validation dict;
+        # the test path patches _mcp_post to return meta only, so
+        # engine_result may be missing.
+        if bacv and isinstance(bacv, dict):
+            body += """
+
+## BAC Validation Details
+"""
+            body += f"- BAC result: {bacv.get('engine_result')}\n"
+            checks = bacv.get("checks_count")
+            confirmed = bacv.get("confirmed_issues_count")
+            if checks is not None:
+                body += f"- Checks run: {checks}\n"
+            if confirmed is not None:
+                body += f"- Confirmed issues: {confirmed}\n"
+            if bacv.get("summary"):
+                body += f"- Summary: {bacv.get('summary')}\n"
+
+        # SSRF-specific validation evidence (when present)
+        ssrfv = (t.get("validation") or {}).get("ssrf") or {}
+        if ssrfv and isinstance(ssrfv, dict) and ssrfv.get("engine_result"):
+            body += """
+
+## SSRF Validation Details
+"""
+            body += f"- SSRF result: {ssrfv.get('engine_result')}\n"
+            checks = ssrfv.get("checks_count")
+            confirmed = ssrfv.get("confirmed_issues_count")
+            targets_reached = ssrfv.get("targets_reached") or []
+            if checks is not None:
+                body += f"- Checks run: {checks}\n"
+            if confirmed is not None:
+                body += f"- Confirmed issues: {confirmed}\n"
+            if targets_reached:
+                body += f"- Targets reached: {', '.join(map(str, targets_reached))}\n"
+            if ssrfv.get("summary"):
+                body += f"- Summary: {ssrfv.get('summary')}\n"
+
+        # SQLmap-specific validation evidence (when present)
+        sqlv = (t.get("validation") or {}).get("sqlmap") or {}
+        if sqlv and isinstance(sqlv, dict) and sqlv.get("engine_result"):
+            dbms = sqlv.get("dbms")
+            vuln_params = sqlv.get("vulnerable_params") or []
+            dump_summary = sqlv.get("dumped_data_summary")
+            body += """
+
+## SQLmap Validation Details
+"""
+            body += f"- SQLmap result: {sqlv.get('engine_result')}\n"
+            if dbms:
+                body += f"- Detected DBMS: {dbms}\n"
+            if vuln_params:
+                if isinstance(vuln_params, (list, tuple)):
+                    vp_str = ", ".join(map(str, vuln_params))
+                else:
+                    vp_str = str(vuln_params)
+                body += f"- Vulnerable parameters: {vp_str}\n"
+            if dump_summary:
+                body += f"- Data dump summary: {dump_summary}\n"
 
         body += f"""
 

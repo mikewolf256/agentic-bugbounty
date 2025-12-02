@@ -1,43 +1,70 @@
 #!/usr/bin/env python3
-import argparse, os, json, time, subprocess
-from pathlib import Path
-from utils.artifact import write_artifact
+import argparse
+import json
+import os
+from typing import List, Dict, Any
 
-DEFAULT_WORDLIST = 'wordlists/backup_files.txt'
+import requests
 
-def run_ffuf(target, wordlist, outdir, threads=10, rate=1):
-    Path(outdir).mkdir(parents=True, exist_ok=True)
-    output_file = os.path.join(outdir, f'ffuf_{int(time.time())}.json')
-    cmd = ['ffuf','-u', f'{target}/FUZZ', '-w', wordlist, '-of','json','-o', output_file, '-t', str(threads), '-p', str(rate)]
-    print('Running:', ' '.join(cmd))
+
+COMMON_BACKUP_PATHS: List[str] = [
+    "index.php.bak",
+    "index.php~",
+    "index.html.bak",
+    "index.html~",
+    "config.php.bak",
+    "config.php~",
+    ".env",
+    "backup.zip",
+    "backup.tar.gz",
+    "db.sql",
+    "database.sql",
+    "dump.sql",
+    ".git/config",
+    ".svn/entries",
+]
+
+
+def probe_url(url: str, timeout: int = 10) -> Dict[str, Any]:
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        meta = {'cmd': ' '.join(cmd), 'returncode': p.returncode, 'stdout': p.stdout[:2000], 'stderr': p.stderr[:2000]}
-        write_artifact(output_file, text=(open(output_file).read() if os.path.exists(output_file) else p.stdout), meta=meta)
-        return output_file, meta
-    except FileNotFoundError:
-        # ffuf not installed fallback: try common paths
-        results = []
-        commons = ['.git/index','.env','backup.tar.gz','backup.zip','wp-config.php.bak','database.sql.gz']
-        for c in commons:
-            url = f'{target.rstrip("/")}/{c}'
-            results.append({'path': c, 'url': url, 'status': 'skipped-ffuf'})
-        out = os.path.join(outdir, 'ffuf_fallback.json')
-        write_artifact(out, text=json.dumps(results, indent=2), meta={'cmd':'fallback','note':'ffuf missing'})
-        return out, {'cmd':'fallback'}
+        r = requests.get(url, timeout=timeout, allow_redirects=True)
+        return {
+            "url": url,
+            "status": r.status_code,
+            "length": int(r.headers.get("content-length") or len(r.content)),
+        }
+    except Exception as e:
+        return {"url": url, "error": str(e)}
 
-def run(target, wordlist, output):
-    outdir = output
-    Path(outdir).mkdir(parents=True, exist_ok=True)
-    wf = wordlist or DEFAULT_WORDLIST
-    outpath, meta = run_ffuf(target.rstrip('/'), wf, outdir)
-    print('Wrote', outpath)
-    return outpath
 
-if __name__ == '__main__':
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--target', required=True)
-    ap.add_argument('--wordlist', default=None)
-    ap.add_argument('--output', required=True)
-    args = ap.parse_args()
-    run(args.target, args.wordlist, args.output)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Simple backup/VCS hunter")
+    parser.add_argument("--base-url", required=True, help="Base URL to probe (e.g. https://target/app)")
+    parser.add_argument("--output-dir", required=True, help="Directory to write hunt results into")
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    base = args.base_url.rstrip("/")
+
+    hits: List[Dict[str, Any]] = []
+    for rel in COMMON_BACKUP_PATHS:
+        target = f"{base}/{rel}"
+        info = probe_url(target)
+        # Treat non-404/400 responses without errors as interesting
+        if info.get("error") is None and info.get("status") not in (400, 404):
+            hits.append(info)
+
+    out = {
+        "base_url": args.base_url,
+        "wordlist_size": len(COMMON_BACKUP_PATHS),
+        "hits": hits,
+    }
+
+    out_path = os.path.join(args.output_dir, "backup_hunt_results.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=2)
+
+
+if __name__ == "__main__":
+    main()

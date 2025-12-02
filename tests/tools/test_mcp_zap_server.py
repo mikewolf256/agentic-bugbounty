@@ -6,6 +6,8 @@ import shutil
 import tempfile
 from typing import Dict, Any, List
 
+from unittest import mock
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -321,6 +323,32 @@ def test_run_js_miner_in_scope(tmp_path, monkeypatch):
     assert "https://example.com/app" in cmd_argv
 
 
+def test_run_backup_hunt_in_scope(tmp_path, monkeypatch):
+    """/mcp/run_backup_hunt should enforce scope and call _spawn_job with the right args."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    with mock.patch("mcp_zap_server._spawn_job", return_value="job-456") as mock_spawn:
+        body = {"base_url": "https://example.com"}
+        resp = client.post("/mcp/run_backup_hunt", json=body)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["job_id"] == "job-456"
+        assert "artifact_dir" in data
+
+    mock_spawn.assert_called_once()
+    args, kwargs = mock_spawn.call_args
+    cmd_argv = args[0]
+    job_kind = kwargs.get("job_kind")
+    assert job_kind == "backup_hunt"
+    assert "tools/backup_hunt.py" in cmd_argv
+    assert "--base-url" in cmd_argv
+    assert "https://example.com" in cmd_argv
+
+
 def test_run_nuclei_in_scope_success(tmp_path, monkeypatch):
     """/mcp/run_nuclei should enforce scope and execute nuclei with JSONL output."""
 
@@ -374,6 +402,54 @@ def test_run_nuclei_in_scope_success(tmp_path, monkeypatch):
         assert len(findings) == 2
         assert any(f.get("template-id") == "test-template" for f in findings)
         assert any("raw" in f for f in findings)
+
+
+def test_host_profile_ingests_backup_hunt_results(tmp_path, monkeypatch):
+    """host_profile should surface backups found by backup_hunt under web.backups."""
+
+    # Point OUTPUT_DIR and ARTIFACTS_DIR at a temp location
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+    mcp_zap_server.ARTIFACTS_DIR = os.path.join(str(tmp_path), "artifacts")
+    os.makedirs(mcp_zap_server.ARTIFACTS_DIR, exist_ok=True)
+
+    client = TestClient(mcp_zap_server.app)
+
+    # Configure minimal scope for example.com
+    scope_payload = {
+        "program_name": "unit-test-program",
+        "primary_targets": ["example.com"],
+        "secondary_targets": [],
+        "rules": {},
+    }
+    r = client.post("/mcp/set_scope", json=scope_payload)
+    assert r.status_code == 200
+
+    host = "example.com"
+    backup_dir = os.path.join(mcp_zap_server.ARTIFACTS_DIR, "backup_hunt", host)
+    os.makedirs(backup_dir, exist_ok=True)
+
+    sample_results = {
+        "base_url": "https://example.com",
+        "wordlist_size": 3,
+        "hits": [
+            {"url": "https://example.com/.env", "status": 200, "length": 123},
+            {"url": "https://example.com/backup.zip", "status": 403, "length": 456},
+        ],
+    }
+    with open(os.path.join(backup_dir, "backup_hunt_results.json"), "w", encoding="utf-8") as fh:
+        json.dump(sample_results, fh)
+
+    resp = client.post("/mcp/host_profile", json={"host": host})
+    assert resp.status_code == 200
+    profile = resp.json()
+
+    backups = profile.get("web", {}).get("backups") or {}
+    assert backups.get("count") == 2
+    samples = backups.get("samples") or []
+    urls = {s.get("url") for s in samples}
+    assert "https://example.com/.env" in urls
+    assert "https://example.com/backup.zip" in urls
 
 
 def test_run_nuclei_rejects_out_of_scope(tmp_path, monkeypatch):

@@ -30,6 +30,12 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - **P4 – Red team / ASM mode:** Wayback machine URI mining, JS/source-map harvesting, technology fingerprinting, attack-path graph building, MITRE ATT&CK JSON export, and red-team report templates.
   - **P5 – Commercial features:** tenant onboarding, one-click scanning portal, automated evidence-to-report pipeline (PDF/MD), billing and usage metering.
 
+  - **P2/P3 – Training & Lab Harness:**
+    - Build a small library of dockerized vulnerable labs (reflected XSS, IDOR/BOLA, backup/config leaks, hard-coded JS secrets, SSRF) with `lab_metadata.json` describing expected findings.
+    - Add a lab runner script that spins up a lab, sets MCP scope, runs ZAP + helpers, then triages findings via `agentic_runner.py` and scores detection/report quality against `expected_findings`.
+    - Use lab runs as regression tests for the agentic pipeline ("can we still detect XSS/IDOR/backup leaks end-to-end?").
+    - Index high-quality public bug bounty reports and lab walkthroughs in a RAG store (tagged by bug_type/CWE/surface) to assist triage and report generation without immediate fine-tuning.
+
 ---
 
 ## P0.0 – Core Pipeline (P0 – Done / Ongoing Polish)
@@ -254,6 +260,31 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - [ ] Provide a `make` or `task` target to:
     - [ ] Run a minimal sample scan.
     - [ ] Generate example reports for each major category.
+
+---
+
+## P2.9 – Training & Lab Harness – P2/P3
+
+- **Bug Taxonomy & RAG Index (P2)**
+  - [ ] Collect and normalize a small corpus of public, high-quality bug bounty writeups and lab walkthroughs into a structured schema (bug_type, CWE, attack_surface, pattern, impact).
+  - [ ] Build a vector index for these documents (e.g., Chroma/Weaviate) keyed by bug_type/CWE/surface for retrieval-augmented triage and report generation.
+  - [ ] Wire triage to optionally pull 3–5 similar historical cases per finding (by CWE/bug_type) to improve payload suggestions, impact narratives, and remediation text.
+
+- **Dockerized Labs as Eval Harness (P2/P3)**
+  - [ ] Create a small set of dockerized vulnerable labs with `lab_metadata.json` describing expected bugs:
+    - [ ] Reflected XSS (basic patterns: reflected query param, error-page reflection).
+    - [ ] IDOR/BOLA-style broken access control on an API.
+    - [ ] Backup/config/VCS exposure (e.g., `/.git/`, `/backup.zip`, `.env`).
+    - [ ] JS hard-coded secrets/config endpoints.
+    - [ ] SSRF endpoint with internal/metadata reachability.
+  - [ ] Implement a `tools/lab_runner.py` (or similar) that:
+    - [ ] Starts/stops a given lab (docker-compose).
+    - [ ] Sets MCP scope to the lab host and runs the standard scan + triage pipeline.
+    - [ ] Compares triaged findings to `expected_findings` and writes a compact JSON score (detected, report_quality, cvss_error).
+  - [ ] Integrate lab runs into CI as a non-blocking "capability health" check for core bug classes.
+
+- **Future Fine-Tuning (P3+)**
+  - [ ] Once enough lab + real-world data exists, evaluate training a small, specialized model for `(scanner_output + traces + RAG snippets) → structured bug report JSON` while respecting platform TOS and data governance.
 
 ---
 

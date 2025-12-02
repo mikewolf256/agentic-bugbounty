@@ -266,6 +266,12 @@ def wait_for_mcp_ready(max_wait: int = 30) -> None:
     raise SystemExit(f"MCP server not ready at {MCP_SERVER_URL} after {max_wait}s")
 
 
+def _run_katana_stage(mcp_base_url: str, target_url: str) -> dict:
+    payload = {"target": target_url}
+    resp = requests.post(f"{mcp_base_url}/mcp/run_katana_nuclei", json=payload, timeout=600)
+    resp.raise_for_status()
+    return resp.json()
+
 def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     """Orchestrate a full scan pipeline via the MCP server.
 
@@ -273,11 +279,15 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     - Call /mcp/set_scope with the provided scope.json
     - For each in-scope host, start a ZAP scan (basic) and poll until done
     - Optionally run nuclei recon for each host
+    - Run Katana+Nuclei web recon per host
     - Build host_profile, prioritize_host, and host_delta for each host
     - Return a summary object with per-host metadata and artifact paths
     """
 
     wait_for_mcp_ready()
+
+    # container for overall run summary (including modules like katana_nuclei)
+    summary: Dict[str, Any] = {"scope": scope}
 
     # 1) Set scope
     _mcp_post("/mcp/set_scope", scope)
@@ -329,6 +339,20 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         except SystemExit as e:
             print(f"[MCP] cloud recon failed for {h}: {e}")
 
+    # --- NEW: Katana + Nuclei web recon stage ---
+    for host in hosts:
+        target_url = f"http://{host}"
+        # Katana/Nuclei recon
+        try:
+            katana_result = _run_katana_stage(MCP_SERVER_URL, target_url)
+        except Exception as e:
+            katana_result = {"error": str(e)}
+
+        # stash in full-scan summary structure under modules
+        summary.setdefault("modules", {})
+        summary["modules"].setdefault(host, {})
+        summary["modules"][host]["katana_nuclei"] = katana_result
+
     # 5) Build host_profile, prioritize_host, and host_delta per host
     for h in hosts:
         try:
@@ -358,11 +382,9 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    return {
-        "scope": scope,
-        "hosts": summary_hosts,
-        "zap_scans": zap_scans,
-    }
+    summary["hosts"] = summary_hosts
+    summary["zap_scans"] = zap_scans
+    return summary
 
 
 # ==== Triage helpers ====
@@ -760,3 +782,28 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+def _load_katana_nuclei_findings(output_dir: str, host: str) -> list[dict]:
+    # simple heuristic: pick latest katana_nuclei_* file for that host
+    files = [
+        f for f in os.listdir(output_dir)
+        if f.startswith("katana_nuclei_") and host.replace(":", "_") in f
+    ]
+    if not files:
+        return []
+    files.sort()
+    path = os.path.join(output_dir, files[-1])
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    return data.get("nuclei_findings", []) or []
+
+def gather_findings_for_triage(host: str, output_dir: str) -> list[dict]:
+    findings: list[dict] = []
+
+    # ...existing sources (cloud, zap, sqlmap, bac, ssrf, etc.)...
+
+    # --- NEW: nuclei findings from Katana run ---
+    nuclei_from_katana = _load_katana_nuclei_findings(output_dir, host)
+    findings.extend(nuclei_from_katana)
+
+    return findings

@@ -402,6 +402,8 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 "host_profile": profile,
                 "prioritization": prio,
                 "delta": delta,
+                # Compact view of JS-derived secrets from host_profile (if any)
+                "js_secrets": (profile.get("web", {}) or {}).get("js_secrets"),
             }
         )
 

@@ -295,6 +295,22 @@ def _enforce_scope(host_or_url: str) -> str:
     return normalize_target(host_or_url)
 
 
+@app.post("/mcp/set_auth")
+def set_auth(cfg: AuthConfig):
+    """Register per-host auth configuration (currently header-based).
+
+    This enforces that the host is within the current scope and stores
+    auth configs in-memory for use by ZAP header scripting and
+    host_profile auth surface.
+    """
+
+    host = _enforce_scope(cfg.host)
+    AUTH_CONFIGS[host] = AuthConfig(host=host, type=cfg.type, headers=cfg.headers)
+    # Refresh the ZAP header script so new auth takes effect
+    ensure_zap_header_script()
+    return {"status": "ok", "host": host}
+
+
 # ---------- background job helpers ----------
 
 def _spawn_job(cmd_argv: List[str], job_kind: str, artifact_dir: str) -> str:
@@ -566,6 +582,113 @@ def host_profile(req: CloudReconRequest):
         profile.setdefault("web", {})["backups"] = {
             "count": len(backups_exposed),
             "samples": backups_exposed[:20],
+        }
+
+    # --- Auth surface ingestion (without exposing secrets) ---
+    auth_cfg = AUTH_CONFIGS.get(host)
+    if auth_cfg is not None:
+        header_names = sorted(list(auth_cfg.headers.keys()))
+        vals_lower = " ".join(str(v).lower() for v in auth_cfg.headers.values())
+        has_bearer = "bearer " in vals_lower
+        has_api_key_style = any(
+            k.lower() in {"api-key", "x-api-key", "x-api-key-id", "authorization"}
+            for k in header_names
+        )
+        profile.setdefault("web", {})["auth"] = {
+            "type": auth_cfg.type,
+            "header_names": header_names,
+            "has_bearer": has_bearer,
+            "has_api_key_style": has_api_key_style,
+        }
+
+    # --- JS miner (creds.json) ingestion with classification + redaction ---
+    def _classify_js_secret(snippet: str) -> tuple[str, str, str]:
+        """Return (kind, confidence, redacted_snippet) for a JS secret candidate."""
+        s = snippet or ""
+
+        # JWT-like: header.payload.signature
+        parts = s.split(".")
+        if len(parts) == 3 and all(parts):
+            red = f"{parts[0]}.[redacted].[redacted]"
+            return "jwt", "high", red
+
+        lower = s.lower()
+
+        # API key style
+        if any(k in lower for k in ["api_key", "apikey", "x-api-key"]):
+            # show only prefix + masked tail
+            prefix = s[:6]
+            suffix = s[-4:] if len(s) > 10 else ""
+            red = f"{prefix}****{suffix}" if suffix else f"{prefix}****"
+            return "api_key", "high", red
+
+        # Bearer token
+        if lower.startswith("bearer "):
+            token = s.split(" ", 1)[1] if " " in s else ""
+            if token:
+                prefix = token[:4]
+                suffix = token[-4:] if len(token) > 10 else ""
+                red_token = f"{prefix}****{suffix}" if suffix else f"{prefix}****"
+                return "bearer_token", "high", f"Bearer {red_token}"
+
+        # Basic credential user:pass
+        if ":" in s and s.count(":") == 1:
+            user, pwd = s.split(":", 1)
+            if user and pwd and len(pwd) >= 4:
+                return "basic_credential", "medium", f"{user}:****"
+
+        # Fallback: generic secret with partial redaction
+        if len(s) > 12:
+            prefix = s[:4]
+            suffix = s[-4:]
+            red = f"{prefix}****{suffix}"
+        else:
+            red = s[:4] + "****"
+        # Rough confidence heuristic: longer/more complex strings treated as medium
+        has_digit = any(c.isdigit() for c in s)
+        has_upper = any(c.isupper() for c in s)
+        has_lower = any(c.islower() for c in s)
+        complexity = sum([has_digit, has_upper, has_lower])
+        conf = "medium" if len(s) > 16 and complexity >= 2 else "low"
+        return "generic_secret", conf, red
+
+    js_dir = os.path.join(ARTIFACTS_DIR, "js_miner", host)
+    js_creds: list[Dict[str, Any]] = []
+    if os.path.isdir(js_dir):
+        for root, _dirs, files in os.walk(js_dir):
+            for fname in files:
+                if fname != "creds.json":
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                except Exception:
+                    continue
+                if isinstance(data, list):
+                    for entry in data:
+                        if not isinstance(entry, dict):
+                            continue
+                        context = entry.get("context")
+                        raw_snippet = entry.get("snippet") or ""
+                        kind, confidence, redacted = _classify_js_secret(str(raw_snippet))
+                        js_creds.append({
+                            "context": context,
+                            "snippet": redacted,
+                            "kind": kind,
+                            "confidence": confidence,
+                        })
+
+    if js_creds:
+        by_kind: Dict[str, int] = {}
+        for e in js_creds:
+            k = e.get("kind") or "unknown"
+            by_kind[k] = by_kind.get(k, 0) + 1
+
+        profile.setdefault("web", {})["js_secrets"] = {
+            "count": len(js_creds),
+            "by_kind": by_kind,
+            "samples": js_creds[:20],
         }
 
     # Save snapshot

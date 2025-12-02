@@ -242,6 +242,49 @@ def test_set_auth_requires_in_scope_host(tmp_path, monkeypatch):
     assert "not in scope" in resp.json().get("detail", "")
 
 
+def test_host_profile_includes_auth_surface(tmp_path, monkeypatch):
+    """host_profile should expose auth surface without leaking header values."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+    mcp_zap_server.ARTIFACTS_DIR = os.path.join(str(tmp_path), "artifacts")
+    os.makedirs(mcp_zap_server.ARTIFACTS_DIR, exist_ok=True)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    # Register auth config for example.com
+    body = {
+        "host": "example.com",
+        "type": "header",
+        "headers": {
+            "Authorization": "Bearer verysecrettoken",
+            "X-API-Key": "abc123",
+        },
+    }
+    resp = client.post("/mcp/set_auth", json=body)
+    assert resp.status_code == 200
+
+    # Build host_profile and ensure auth summary is present
+    resp = client.post("/mcp/host_profile", json={"host": "https://example.com"})
+    assert resp.status_code == 200
+    profile = resp.json()
+
+    auth = profile.get("web", {}).get("auth") or {}
+    assert auth.get("type") == "header"
+    header_names = auth.get("header_names") or []
+    assert "Authorization" in header_names
+    assert "X-API-Key" in header_names
+
+    assert auth.get("has_bearer") is True
+    assert auth.get("has_api_key_style") is True
+
+    # Ensure raw values are not surfaced anywhere in the auth summary
+    auth_str = json.dumps(auth)
+    assert "verysecrettoken" not in auth_str
+    assert "abc123" not in auth_str
+
+
 def test_start_auth_scan_requires_auth_config(tmp_path, monkeypatch):
     """/mcp/start_auth_scan should fail if no auth config exists for a target host."""
 
@@ -450,6 +493,52 @@ def test_host_profile_ingests_backup_hunt_results(tmp_path, monkeypatch):
     urls = {s.get("url") for s in samples}
     assert "https://example.com/.env" in urls
     assert "https://example.com/backup.zip" in urls
+
+
+def test_host_profile_ingests_js_miner_creds(tmp_path, monkeypatch):
+    """host_profile should surface JS miner creds.json under web.js_secrets."""
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    mcp_zap_server.OUTPUT_DIR = str(tmp_path)
+    mcp_zap_server.ARTIFACTS_DIR = os.path.join(str(tmp_path), "artifacts")
+    os.makedirs(mcp_zap_server.ARTIFACTS_DIR, exist_ok=True)
+
+    client = TestClient(mcp_zap_server.app)
+    _set_minimal_scope(client)
+
+    host = "example.com"
+    js_dir = os.path.join(mcp_zap_server.ARTIFACTS_DIR, "js_miner", host)
+    os.makedirs(js_dir, exist_ok=True)
+
+    creds = [
+        {"context": "https://example.com/static/app.js", "snippet": "API_KEY_ABC123"},
+        {"context": "https://example.com/static/vendor.js", "snippet": "secret_token_456"},
+    ]
+    with open(os.path.join(js_dir, "creds.json"), "w", encoding="utf-8") as fh:
+        json.dump(creds, fh)
+
+    resp = client.post("/mcp/host_profile", json={"host": host})
+    assert resp.status_code == 200
+    profile = resp.json()
+
+    js_secrets = profile.get("web", {}).get("js_secrets") or {}
+    assert js_secrets.get("count") == 2
+    # by_kind should reflect classified types
+    by_kind = js_secrets.get("by_kind") or {}
+    assert by_kind.get("api_key") >= 1 or by_kind.get("generic_secret") >= 1
+
+    samples = js_secrets.get("samples") or []
+    # Ensure context is preserved and snippets are redacted, not raw
+    contexts = {s.get("context") for s in samples}
+    assert "https://example.com/static/app.js" in contexts
+    assert "https://example.com/static/vendor.js" in contexts
+
+    for s in samples:
+        assert isinstance(s.get("snippet"), str)
+        assert "API_KEY_ABC123" not in s.get("snippet")
+        assert "secret_token_456" not in s.get("snippet")
+        assert s.get("kind") in {"api_key", "generic_secret", "jwt", "bearer_token", "basic_credential"}
+        assert s.get("confidence") in {"high", "medium", "low"}
 
 
 def test_run_nuclei_rejects_out_of_scope(tmp_path, monkeypatch):

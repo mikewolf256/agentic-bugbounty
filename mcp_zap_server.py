@@ -18,7 +18,8 @@ Features:
 - /mcp/job/{id}          -> query background job status/results
 - /mcp/run_katana_nuclei -> Katana + Nuclei web recon wrapper
 - /mcp/run_katana_auth   -> Dev-mode authenticated Katana via browser session
-- /mcp/run_fingerprints  -> WhatWeb-style technology fingerprinting
+- /mcp/run_fingerprints  -> WhatWeb-style technology fingerprinting (local binary)
+- /mcp/run_whatweb       -> WhatWeb fingerprinting via Docker with JSON output
 - /mcp/run_api_recon     -> lightweight API surface probing
 - /mcp/triage_nuclei_templates -> AI-driven template selection based on host_profile
 - /mcp/run_targeted_nuclei     -> Run Nuclei with AI-selected templates
@@ -56,6 +57,9 @@ def normalize_target(t: str) -> str:
 
 H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
 MAX_REQ_PER_SEC = float(os.environ.get("MAX_REQ_PER_SEC", "3.0"))
+
+# Docker network for running external tool containers (katana, whatweb, etc.)
+DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "agentic-bugbounty_lab_network")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(BASE_DIR, "output_zap"))
@@ -228,6 +232,17 @@ class TargetedNucleiResult(BaseModel):
     findings_count: int
     findings_file: str
     templates_used: int
+
+
+class WhatWebRequest(BaseModel):
+    target: str  # Full URL to fingerprint
+
+
+class WhatWebResult(BaseModel):
+    target: str
+    output_file: str
+    technologies: List[str]
+    raw_plugins: Dict[str, Any]
 
 
 # ---------- in-memory stores ----------
@@ -564,13 +579,70 @@ def run_katana_auth(req: KatanaAuthRequest):
     )
 
 
+def _run_whatweb_internal(target: str) -> Optional[Dict[str, Any]]:
+    """Internal helper to run WhatWeb via Docker and return parsed results.
+    
+    Used by both /mcp/run_fingerprints and auto-trigger in host_profile.
+    Returns dict with 'technologies' list and 'plugins' dict, or None on failure.
+    """
+    cmd = [
+        "docker", "run", "--rm",
+        "--network", DOCKER_NETWORK,
+        "morningstar/whatweb:latest",
+        "-v",
+        target,
+    ]
+    
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as e:
+        print(f"[WHATWEB] Error running Docker: {e}", file=sys.stderr)
+        return None
+    
+    if proc.returncode != 0:
+        print(f"[WHATWEB] Non-zero exit: {proc.stderr or proc.stdout}", file=sys.stderr)
+    
+    # Parse technologies from output
+    technologies: List[str] = []
+    plugins: Dict[str, Any] = {}
+    
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(" ")
+        if not parts:
+            continue
+        for token in parts[1:]:
+            if "[" in token and "]" in token:
+                tech = token.split("[", 1)[0]
+                if tech:
+                    technologies.append(tech)
+                    # Extract version if present
+                    version_part = token.split("[", 1)[1].rstrip("]")
+                    if version_part:
+                        plugins[tech] = {"version": version_part}
+    
+    return {
+        "technologies": technologies,
+        "plugins": plugins,
+        "raw_output": proc.stdout,
+    }
+
+
 @app.post("/mcp/run_fingerprints", response_model=FingerprintResult)
 def run_fingerprints(req: FingerprintRequest):
-    """Run basic technology fingerprinting using WhatWeb (or similar).
+    """Run basic technology fingerprinting using WhatWeb via Docker.
 
-    This uses a configurable FINGERPRINT_BIN (default "whatweb") and writes
-    raw output under ARTIFACTS_DIR/fingerprints/<host>/, then parses a simple
-    technology list when possible.
+    Runs WhatWeb in a Docker container connected to DOCKER_NETWORK,
+    writes raw output under ARTIFACTS_DIR/fingerprints/<host>/, then 
+    parses a simple technology list when possible.
     """
 
     target = _enforce_scope(req.target)
@@ -583,9 +655,14 @@ def run_fingerprints(req: FingerprintRequest):
     out_name = f"whatweb_{ts}.txt"
     out_path = os.path.join(base_dir, out_name)
 
-    fp_bin = os.environ.get("FINGERPRINT_BIN", "whatweb")
-
-    cmd = [fp_bin, "-v", target]
+    # Use Docker to run whatweb, connected to the lab network
+    cmd = [
+        "docker", "run", "--rm",
+        "--network", DOCKER_NETWORK,
+        "morningstar/whatweb:latest",
+        "-v",
+        target,
+    ]
 
     rate_limit_wait()
     try:
@@ -597,7 +674,7 @@ def run_fingerprints(req: FingerprintRequest):
             timeout=300,
         )
     except FileNotFoundError:
-        raise HTTPException(status_code=500, detail=f"Fingerprinting binary not found: {fp_bin}")
+        raise HTTPException(status_code=500, detail="Docker not found - required for WhatWeb fingerprinting")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error running fingerprints: {e}")
 
@@ -638,6 +715,117 @@ def run_fingerprints(req: FingerprintRequest):
         technologies=sorted(sorted(set(technologies))),
     )
 
+
+@app.post("/mcp/run_whatweb", response_model=WhatWebResult)
+def run_whatweb(req: WhatWebRequest):
+    """Run WhatWeb fingerprinting via Docker with structured JSON output.
+
+    This endpoint runs WhatWeb in a Docker container and parses the JSON output
+    to extract technology fingerprints. Results are stored in artifacts/fingerprints/<host>/
+    and can be consumed by host_profile and AI triage.
+    """
+    # Validate target is in scope and get normalized hostname
+    validated_host = _enforce_scope(req.target)
+
+    # Reconstruct a safe URL using only the validated hostname
+    # This prevents parser differential attacks where req.target could bypass scope
+    parsed = urlparse(req.target)
+    scheme = parsed.scheme or "http"
+    # Use validated_host (not parsed.netloc) to ensure we scan what we validated
+    safe_target = f"{scheme}://{validated_host}"
+    if parsed.port and parsed.port not in (80, 443):
+        safe_target = f"{scheme}://{validated_host}:{parsed.port}"
+
+    host_key = validated_host.replace("://", "_").replace("/", "_")
+    base_dir = os.path.join(ARTIFACTS_DIR, "fingerprints", host_key)
+    os.makedirs(base_dir, exist_ok=True)
+
+    ts = int(time.time())
+    out_name = f"whatweb_{ts}.json"
+    out_path = os.path.join(base_dir, out_name)
+
+    # Run WhatWeb via Docker with JSON output
+    # Use safe_target (reconstructed from validated components) to prevent scope bypass
+    cmd = [
+        "docker", "run", "--rm", "--network", DOCKER_NETWORK,
+        "morningstar/whatweb:latest",
+        "-a", "3",  # Aggression level 3 (stealthy)
+        "--log-json=-",  # JSON output to stdout
+        safe_target,
+    ]
+
+    print(f"[WHATWEB] Running: {' '.join(cmd)}", file=sys.stderr)
+
+    rate_limit_wait()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="Docker not found - required for WhatWeb")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="WhatWeb timed out after 5 minutes")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running WhatWeb: {e}")
+
+    # Parse JSON output - WhatWeb outputs one JSON object per line
+    technologies: List[str] = []
+    raw_plugins: Dict[str, Any] = {}
+
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            # WhatWeb JSON structure: {"target": "...", "http_status": 200, "plugins": {...}}
+            plugins = data.get("plugins", {}) or {}
+            for plugin_name, plugin_data in plugins.items():
+                technologies.append(plugin_name)
+                # Store version info if available
+                if isinstance(plugin_data, dict):
+                    version = plugin_data.get("version")
+                    if version:
+                        raw_plugins[plugin_name] = {"version": version}
+                    else:
+                        raw_plugins[plugin_name] = plugin_data
+                else:
+                    raw_plugins[plugin_name] = {"detected": True}
+        except json.JSONDecodeError:
+            continue
+
+    # Store structured result
+    result_data = {
+        "target": safe_target,  # Use validated target, not raw user input
+        "timestamp": ts,
+        "technologies": sorted(set(technologies)),
+        "plugins": raw_plugins,
+        "raw_stdout": proc.stdout,
+        "raw_stderr": proc.stderr,
+        "exit_code": proc.returncode,
+    }
+
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result_data, fh, indent=2)
+
+    if proc.returncode != 0 and not technologies:
+        raise HTTPException(
+            status_code=500,
+            detail=f"WhatWeb failed (exit {proc.returncode}): {proc.stderr[:500]}",
+        )
+
+    return WhatWebResult(
+        target=safe_target,  # Return the validated/safe target, not raw user input
+        output_file=out_path,
+        technologies=sorted(set(technologies)),
+        raw_plugins=raw_plugins,
+    )
+
+
 @app.post("/mcp/host_profile")
 def host_profile(req: CloudReconRequest):
     """
@@ -670,6 +858,10 @@ def host_profile(req: CloudReconRequest):
             with open(kpath, "r", encoding="utf-8") as fh:
                 kdata = json.load(fh)
         except Exception:
+            continue
+
+        # Skip if not a dict (e.g., old format files that are arrays)
+        if not isinstance(kdata, dict):
             continue
 
         target = kdata.get("target", "") or ""
@@ -726,34 +918,72 @@ def host_profile(req: CloudReconRequest):
         }
 
     # --- Fingerprinting ingestion (WhatWeb/compatible) ---
+    # Auto-trigger WhatWeb if no recent fingerprint data exists (within 24 hours)
     fp_base = os.path.join(ARTIFACTS_DIR, "fingerprints", host.replace("://", "_").replace("/", "_"))
     fp_tech: List[str] = []
+    fp_plugins: Dict[str, Any] = {}
+    fp_stale = True  # Assume stale until we find recent data
+    
     if os.path.isdir(fp_base):
-        files = [f for f in os.listdir(fp_base) if f.startswith("whatweb_")]
-        files.sort()
-        if files:
-            latest = os.path.join(fp_base, files[-1])
+        # Prefer JSON files (new format), fall back to txt (old format)
+        json_files = sorted([f for f in os.listdir(fp_base) if f.startswith("whatweb_") and f.endswith(".json")])
+        txt_files = sorted([f for f in os.listdir(fp_base) if f.startswith("whatweb_") and f.endswith(".txt")])
+        
+        # Try JSON format first (new /mcp/run_whatweb output)
+        if json_files:
+            latest = os.path.join(fp_base, json_files[-1])
+            try:
+                with open(latest, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                fp_tech = data.get("technologies", []) or []
+                fp_plugins = data.get("plugins", {}) or {}
+                # Check freshness (24 hours)
+                file_ts = data.get("timestamp", 0)
+                if time.time() - file_ts < 86400:
+                    fp_stale = False
+            except Exception:
+                pass
+        
+        # Fall back to txt format (old /mcp/run_fingerprints output)
+        if not fp_tech and txt_files:
+            latest = os.path.join(fp_base, txt_files[-1])
             try:
                 with open(latest, "r", encoding="utf-8") as fh:
                     text = fh.read()
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split(" ")
+                    for token in parts[1:]:
+                        if "[" in token and "]" in token:
+                            tech = token.split("[", 1)[0]
+                            if tech:
+                                fp_tech.append(tech)
+                # Check file age for freshness
+                file_mtime = os.path.getmtime(latest)
+                if time.time() - file_mtime < 86400:
+                    fp_stale = False
             except Exception:
-                text = ""
-            for line in text.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split(" ")
-                if not parts:
-                    continue
-                for token in parts[1:]:
-                    if "[" in token and "]" in token:
-                        tech = token.split("[", 1)[0]
-                        if tech:
-                            fp_tech.append(tech)
+                pass
+    
+    # Auto-trigger WhatWeb if data is stale or missing
+    if fp_stale and all_urls:
+        # Use the first URL as target for fingerprinting
+        target_url = all_urls[0] if all_urls else f"http://{host}"
+        try:
+            print(f"[HOST_PROFILE] Auto-triggering WhatWeb for {target_url}", file=sys.stderr)
+            whatweb_result = _run_whatweb_internal(target_url)
+            if whatweb_result:
+                fp_tech = whatweb_result.get("technologies", [])
+                fp_plugins = whatweb_result.get("plugins", {})
+        except Exception as e:
+            print(f"[HOST_PROFILE] WhatWeb auto-trigger failed: {e}", file=sys.stderr)
 
     if fp_tech:
         profile.setdefault("web", {})["fingerprints"] = {
             "technologies": sorted(set(fp_tech)),
+            "plugins": fp_plugins,
         }
 
     # --- Backup hunter ingestion ---

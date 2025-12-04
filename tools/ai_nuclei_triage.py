@@ -227,6 +227,78 @@ def extract_technologies(host_profile: Dict[str, Any]) -> List[str]:
     return list(set(techs))
 
 
+def extract_technologies_with_versions(host_profile: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """Extract technologies with version info and confidence levels.
+    
+    Returns dict mapping tech name to:
+    - version: detected version string (if any)
+    - confidence: "confirmed" (WhatWeb), "detected" (Nuclei), "inferred" (URL patterns)
+    - source: where the tech was detected
+    """
+    techs: Dict[str, Dict[str, Any]] = {}
+    
+    web = host_profile.get("web", {}) or {}
+    fingerprints = web.get("fingerprints", {}) or {}
+    
+    # WhatWeb fingerprints (highest confidence)
+    tech_list = fingerprints.get("technologies", []) or []
+    plugins = fingerprints.get("plugins", {}) or {}
+    
+    for tech in tech_list:
+        if isinstance(tech, str):
+            tech_lower = tech.lower()
+            version = None
+            if tech_lower in plugins:
+                plugin_data = plugins[tech_lower]
+                if isinstance(plugin_data, dict):
+                    version = plugin_data.get("version")
+            techs[tech_lower] = {
+                "version": version,
+                "confidence": "confirmed",
+                "source": "whatweb",
+            }
+    
+    # Nuclei findings (medium confidence)
+    nuclei_findings = host_profile.get("nuclei_findings", []) or []
+    for finding in nuclei_findings:
+        if isinstance(finding, dict):
+            template_id = finding.get("template-id", "") or finding.get("templateID", "")
+            if template_id:
+                parts = template_id.lower().split("-")
+                if parts:
+                    tech_name = parts[0]
+                    if tech_name not in techs:
+                        techs[tech_name] = {
+                            "version": None,
+                            "confidence": "detected",
+                            "source": "nuclei",
+                        }
+    
+    # URL-based inference (lower confidence)
+    urls = web.get("urls", []) or []
+    url_tech_patterns = {
+        "wordpress": ["/wp-", "/wordpress/", "wp-content", "wp-admin"],
+        "drupal": ["/drupal/", "/sites/default/", "/node/"],
+        "joomla": ["/joomla/", "/administrator/"],
+        "graphql": ["/graphql"],
+        "jenkins": ["/jenkins/", "/job/", "/build/"],
+        "gitlab": ["/gitlab/", "/-/"],
+    }
+    
+    for url in urls:
+        url_lower = url.lower()
+        for tech, patterns in url_tech_patterns.items():
+            if any(p in url_lower for p in patterns):
+                if tech not in techs:
+                    techs[tech] = {
+                        "version": None,
+                        "confidence": "inferred",
+                        "source": "url_pattern",
+                    }
+    
+    return techs
+
+
 def extract_attack_surface(host_profile: Dict[str, Any]) -> Dict[str, Any]:
     """Analyze host_profile to determine attack surface characteristics."""
     surface: Dict[str, Any] = {
@@ -283,46 +355,77 @@ def extract_attack_surface(host_profile: Dict[str, Any]) -> Dict[str, Any]:
 def build_static_template_selection(
     technologies: List[str],
     attack_surface: Dict[str, Any],
+    tech_details: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Build a template selection using static rules (fallback when no LLM)."""
-    templates: List[str] = []
-    tags: List[str] = []
+    """Build a template selection using static rules (fallback when no LLM).
     
-    # Technology-based selection
+    Args:
+        technologies: List of detected technology names
+        attack_surface: Dict with attack surface characteristics
+        tech_details: Optional dict with version info and confidence levels
+    """
+    # Priority order for templates: confirmed > detected > inferred
+    priority_templates: List[str] = []  # Confirmed techs (highest priority)
+    standard_templates: List[str] = []  # Detected/inferred techs
+    tags: List[str] = []
+    reasoning_parts: List[str] = []
+    
+    tech_details = tech_details or {}
+    
+    # Technology-based selection with confidence weighting
     for tech in technologies:
         tech_lower = tech.lower()
+        tech_info = tech_details.get(tech_lower, {})
+        confidence = tech_info.get("confidence", "inferred")
+        version = tech_info.get("version")
+        
         for key, paths in TEMPLATE_CATEGORIES.items():
             if key in tech_lower or tech_lower in key:
-                templates.extend(paths)
+                if confidence == "confirmed":
+                    # Confirmed techs get priority
+                    priority_templates.extend(paths)
+                    if version:
+                        reasoning_parts.append(f"{key} v{version} (confirmed)")
+                    else:
+                        reasoning_parts.append(f"{key} (confirmed)")
+                else:
+                    standard_templates.extend(paths)
                 tags.append(key)
     
     # Attack surface based selection
     if attack_surface.get("has_api"):
-        templates.extend(ATTACK_SURFACE_TEMPLATES["api"])
+        standard_templates.extend(ATTACK_SURFACE_TEMPLATES["api"])
         tags.append("api")
     
     if attack_surface.get("has_graphql"):
-        templates.append("http/vulnerabilities/graphql/")
+        priority_templates.append("http/vulnerabilities/graphql/")
         tags.append("graphql")
     
     if attack_surface.get("has_auth_endpoints"):
-        templates.extend(ATTACK_SURFACE_TEMPLATES["auth"])
+        standard_templates.extend(ATTACK_SURFACE_TEMPLATES["auth"])
         tags.append("login")
     
     if attack_surface.get("has_admin_panel"):
-        templates.extend(ATTACK_SURFACE_TEMPLATES["exposed_panels"])
+        standard_templates.extend(ATTACK_SURFACE_TEMPLATES["exposed_panels"])
         tags.append("panel")
     
     if attack_surface.get("has_exposed_config"):
-        templates.extend(ATTACK_SURFACE_TEMPLATES["secrets"])
+        priority_templates.extend(ATTACK_SURFACE_TEMPLATES["secrets"])
         tags.append("exposure")
     
-    # Deduplicate
-    templates = list(set(templates))
-    tags = list(set(tags))
+    # Combine templates: priority first, then standard, deduplicated
+    seen = set()
+    final_templates: List[str] = []
+    for tmpl in priority_templates + standard_templates:
+        if tmpl not in seen:
+            seen.add(tmpl)
+            final_templates.append(tmpl)
+    
+    # Deduplicate tags
+    tags = list(dict.fromkeys(tags))
     
     # Default to recon if nothing specific detected
-    if not templates:
+    if not final_templates:
         return {
             "mode": "recon",
             "templates": [
@@ -337,13 +440,19 @@ def build_static_template_selection(
             "reasoning": "No specific technologies detected; running broad recon templates.",
         }
     
+    # Build reasoning string
+    if reasoning_parts:
+        reasoning = f"Targeting confirmed techs: {', '.join(reasoning_parts[:5])}"
+    else:
+        reasoning = f"Static selection based on detected techs: {', '.join(technologies[:5])}"
+    
     return {
         "mode": "targeted",
-        "templates": templates[:20],  # Limit to avoid overwhelming scans
+        "templates": final_templates[:25],  # Slightly higher limit for confirmed techs
         "tags": tags[:10],
         "exclude_tags": ["dos"],
         "severity_filter": ["critical", "high", "medium"],
-        "reasoning": f"Static selection based on detected techs: {', '.join(technologies[:5])}",
+        "reasoning": reasoning,
     }
 
 
@@ -359,12 +468,23 @@ def triage_templates(host_profile: Dict[str, Any], use_llm: bool = True) -> Dict
         Dict with mode, templates, tags, exclude_tags, severity_filter, reasoning
     """
     technologies = extract_technologies(host_profile)
+    tech_details = extract_technologies_with_versions(host_profile)
     attack_surface = extract_attack_surface(host_profile)
     
-    # Enrich host_profile summary for LLM
+    # Enrich host_profile summary for LLM (include version info)
+    tech_summary = []
+    for tech, info in tech_details.items():
+        version = info.get("version")
+        confidence = info.get("confidence", "unknown")
+        if version:
+            tech_summary.append(f"{tech} v{version} ({confidence})")
+        else:
+            tech_summary.append(f"{tech} ({confidence})")
+    
     summary = {
         "host": host_profile.get("host"),
         "technologies": technologies,
+        "technologies_detailed": tech_summary,
         "attack_surface": attack_surface,
         "url_count": attack_surface["url_count"],
         "api_endpoint_count": attack_surface["api_endpoint_count"],
@@ -373,7 +493,7 @@ def triage_templates(host_profile: Dict[str, Any], use_llm: bool = True) -> Dict
     
     if not use_llm or not OPENAI_API_KEY:
         print("[TRIAGE] Using static template selection (no LLM)", file=sys.stderr)
-        return build_static_template_selection(technologies, attack_surface)
+        return build_static_template_selection(technologies, attack_surface, tech_details)
     
     try:
         messages = [
@@ -409,7 +529,7 @@ def triage_templates(host_profile: Dict[str, Any], use_llm: bool = True) -> Dict
         
     except Exception as e:
         print(f"[TRIAGE] LLM triage failed: {e}, falling back to static", file=sys.stderr)
-        return build_static_template_selection(technologies, attack_surface)
+        return build_static_template_selection(technologies, attack_surface, tech_details)
 
 
 def main():

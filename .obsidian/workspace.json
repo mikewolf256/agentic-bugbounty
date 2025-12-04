@@ -186,6 +186,8 @@
   },
   "active": "027b5ca3fff01ab0",
   "lastOpenFiles": [
+    "MCP_ANALYSIS_REPORT.md",
+    "tests/test_mcp_lab_simulation.py",
     "output_zap/program_run_1764819741.json",
     "tools/ai_nuclei_triage.py",
     "output_zap/katana_nuclei_httpbin.json",
@@ -196,8 +198,6 @@
     "output_zap/cloud_findings_localhost:3000__Cloud_storage_surface_detected.md",
     "output_zap/program_run_1764810693.json",
     "tools/katana_wrapper.py",
-    "tests/tools/katana_wrapper.py",
-    "Dockerfile.katana-wrapper",
     "output_zap/cloud_findings_juice-shop:3000__Cloud_storage_surface_detected.md",
     "ROADMAP.md",
     "nuclei-templates-main/http/osint/user-enumeration/README.md",

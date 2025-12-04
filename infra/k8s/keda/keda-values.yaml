@@ -1,0 +1,50 @@
+# Helm values for KEDA installation
+# Usage: helm install keda kedacore/keda --namespace keda -f keda-values.yaml
+
+serviceAccount:
+  create: false  # We create it manually with IRSA annotation
+  name: keda-operator
+
+operator:
+  replicaCount: 1
+  
+metricsServer:
+  replicaCount: 1
+
+# Resource limits
+resources:
+  operator:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  metricsApiServer:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Enable Prometheus metrics
+prometheus:
+  operator:
+    enabled: true
+  metricServer:
+    enabled: true
+
+# Pod disruption budget
+podDisruptionBudget:
+  operator:
+    minAvailable: 1
+  metricServer:
+    minAvailable: 1
+
+# Logging
+logging:
+  operator:
+    level: info
+    format: console
+

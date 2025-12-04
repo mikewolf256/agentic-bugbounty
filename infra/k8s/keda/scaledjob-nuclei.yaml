@@ -1,0 +1,75 @@
+# KEDA ScaledJob for Nuclei scanning
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: nuclei-worker
+  namespace: scan-workers
+  labels:
+    app.kubernetes.io/name: nuclei-worker
+    app.kubernetes.io/component: scan-worker
+spec:
+  jobTargetRef:
+    parallelism: 1
+    completions: 1
+    backoffLimit: 2
+    ttlSecondsAfterFinished: 300
+    activeDeadlineSeconds: 1800  # 30 min max runtime
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/name: nuclei-worker
+          app.kubernetes.io/component: scan-worker
+      spec:
+        serviceAccountName: scan-worker
+        restartPolicy: Never
+        containers:
+          - name: nuclei
+            image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/agentic-bugbounty/nuclei-worker:latest
+            imagePullPolicy: Always
+            env:
+              - name: AWS_REGION
+                value: "${AWS_REGION}"
+              - name: SQS_QUEUE_URL
+                value: "${SQS_QUEUE_URL}"
+              - name: S3_BUCKET
+                value: "${S3_BUCKET}"
+              - name: RESULTS_QUEUE_URL
+                value: "${RESULTS_QUEUE_URL}"
+            resources:
+              requests:
+                cpu: 500m
+                memory: 1Gi
+              limits:
+                cpu: 2000m
+                memory: 4Gi
+            volumeMounts:
+              - name: nuclei-templates
+                mountPath: /root/nuclei-templates
+        volumes:
+          - name: nuclei-templates
+            emptyDir: {}
+        initContainers:
+          - name: fetch-templates
+            image: alpine/git:latest
+            command:
+              - sh
+              - -c
+              - |
+                git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git /templates
+            volumeMounts:
+              - name: nuclei-templates
+                mountPath: /templates
+  
+  pollingInterval: 30
+  cooldownPeriod: 120
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  
+  triggers:
+    - type: aws-sqs-queue
+      metadata:
+        queueURL: ${SQS_QUEUE_URL}
+        queueLength: "1"
+        awsRegion: ${AWS_REGION}
+        identityOwner: operator
+

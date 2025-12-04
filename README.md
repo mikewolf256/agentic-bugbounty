@@ -60,6 +60,7 @@ This project is designed to:
 | **Modular Control Plane (MCP)** | Provides API endpoints to start scans, triage, or check scope compliance. |
 | **Token-Efficient Design** | Filters findings *before* LLM inference to cut costs and scale affordably. |
 | **RAG Knowledge Base** | Semantic search over 8k+ historical HackerOne reports for context-aware triage. |
+| **Distributed Execution** | Scale-to-zero AWS workers via EKS/KEDA — only pay when scanning. |
 | **HackerOne Integration** | Auto-import program scopes, bounty ranges, and rules directly from HackerOne. |
 
 ---
@@ -292,6 +293,36 @@ When RAG is enabled, the triage flow automatically:
 
 ---
 
+## ☁️ Distributed Infrastructure (AWS/Kubernetes)
+
+For production workloads, scan tools can run on-demand in AWS using Kubernetes with KEDA (Kubernetes Event-Driven Autoscaling). This enables **scale-to-zero** — you only pay for compute when jobs are running.
+
+```
+MCP Server → SQS Queue → EKS/KEDA → Worker Pods (scale 0→N) → S3 Results
+```
+
+**Key Benefits:**
+- **Cost efficient**: Pods scale to zero when idle ($0/hour when not scanning)
+- **Auto-scaling**: KEDA automatically spins up workers based on queue depth
+- **Parallel execution**: Run 10+ scans concurrently
+- **Isolated**: Each scan runs in a fresh container
+
+**Quick Start:**
+```bash
+# Enable distributed mode
+export DISTRIBUTED_MODE=true
+export SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/xxx/scan-jobs
+export S3_BUCKET=my-scan-results
+
+# Same API - jobs now go to AWS workers
+curl -X POST http://localhost:8000/mcp/run_whatweb \
+  -d '{"target": "http://example.com"}'
+```
+
+📖 **Full setup guide:** [Distributed Infrastructure Guide](docs/DISTRIBUTED_INFRASTRUCTURE.md)
+
+---
+
 ## 🚀 Roadmap
 
 ### ✅ Phase 1 — Core Automation (In Progress)
@@ -308,10 +339,10 @@ When RAG is enabled, the triage flow automatically:
 - [ ] Cookie/session isolation between jobs  
 
 ### ☁️ Phase 3 — Scaling & Agentic Cluster
-- [ ] Containerized workers per scan (Docker/Kubernetes)  
+- [x] Containerized workers per scan (Docker/Kubernetes) — [See Distributed Infrastructure Guide](docs/DISTRIBUTED_INFRASTRUCTURE.md)
 - [x] AI agent to fetch live bounty scopes (HackerOne/BBP)  
-- [ ] Job queue (Redis/Kafka) dispatch to workers  
-- [ ] Centralized results dashboard + S3 artifact storage  
+- [x] Job queue (SQS) dispatch to workers — [See Distributed Infrastructure Guide](docs/DISTRIBUTED_INFRASTRUCTURE.md)
+- [x] Centralized results dashboard + S3 artifact storage  
 
 ### 🧠 Phase 4 — Autonomous Analyst
 - [x] RAG-based training on previous findings for pattern recognition  

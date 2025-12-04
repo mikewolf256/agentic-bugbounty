@@ -178,7 +178,7 @@ def run_whatweb(hosts: list[str]) -> dict[str, dict[str, Any]]:
         cmd = [
             "docker", "run", "--rm",
             "--network", DOCKER_NETWORK,
-            "cyberwatch/whatweb",
+            "bberastegui/whatweb",
             "-a", "3",
             "--log-json=-",
             host,

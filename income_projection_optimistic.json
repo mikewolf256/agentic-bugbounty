@@ -1,0 +1,42 @@
+{
+  "monthly_operations": {
+    "total_scans": 600,
+    "raw_findings": 9000.0,
+    "pre_filtered_findings": 1350.0,
+    "high_confidence_findings": 540.0,
+    "validated_findings": 323.99999999999994,
+    "accepted_findings": 106.92
+  },
+  "delta_efficiency": {
+    "delta_efficiency": 0.3,
+    "new_findings_rate": 0.3,
+    "note": "Delta checking focuses on new endpoints/changes, improving signal-to-noise ratio"
+  },
+  "monthly_income": {
+    "low_severity": {
+      "count": 21.384,
+      "income": 4276.8
+    },
+    "medium_severity": {
+      "count": 42.768,
+      "income": 21384.0
+    },
+    "high_severity": {
+      "count": 32.076,
+      "income": 64152.0
+    },
+    "critical_severity": {
+      "count": 10.692,
+      "income": 53460.0
+    },
+    "total_income": 143272.8
+  },
+  "monthly_costs": {
+    "llm_cost": 2.6999999999999997,
+    "container_cost": 150.0,
+    "storage_cost": 10.0,
+    "total_cost": 162.7
+  },
+  "net_income": 143110.09999999998,
+  "roi_percentage": 87959.49600491702
+}

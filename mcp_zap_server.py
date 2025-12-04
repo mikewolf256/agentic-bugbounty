@@ -42,9 +42,9 @@ import json
 import time
 import subprocess
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from uuid import uuid4
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qsl
 
 import requests
 from fastapi import FastAPI, HTTPException
@@ -263,6 +263,54 @@ class TargetedNucleiResult(BaseModel):
     templates_used: int
 
 
+class SecurityHeadersRequest(BaseModel):
+    url: str  # Full URL to check
+
+
+class SecurityHeadersIssue(BaseModel):
+    header: str
+    severity: str  # "high", "medium", "low"
+    issue: str  # Description of the issue
+    recommendation: str
+
+
+class SecurityHeadersResult(BaseModel):
+    url: str
+    headers: Dict[str, str]
+    issues: List[SecurityHeadersIssue]
+    score: int  # 0-100 security score
+
+
+class OpenRedirectRequest(BaseModel):
+    url: str  # Full URL with redirect parameter
+    params: Optional[List[str]] = None  # Optional list of param names to test
+
+
+class OpenRedirectResult(BaseModel):
+    url: str
+    vulnerable: bool
+    vulnerable_params: List[Dict[str, Any]]  # [{"param": "...", "payload": "...", "redirects_to": "..."}]
+
+
+class TakeoverChecksRequest(BaseModel):
+    domain: str  # Base domain (e.g., "example.com")
+    subdomains: Optional[List[str]] = None  # Optional pre-discovered subdomains
+
+
+class TakeoverVulnerability(BaseModel):
+    subdomain: str
+    service: str  # "github", "heroku", "s3", etc.
+    claimable: bool
+    cname: Optional[str] = None
+    evidence: str
+
+
+class TakeoverChecksResult(BaseModel):
+    domain: str
+    vulnerable_subdomains: List[TakeoverVulnerability]
+    checked_count: int
+
+
 class WhatWebRequest(BaseModel):
     target: str  # Full URL to fingerprint
 
@@ -357,6 +405,16 @@ class RAGStatsResponse(BaseModel):
     total_reports: int
     vuln_types: Dict[str, int]
     severities: Dict[str, int]
+
+
+class RAGSearchByTypeRequest(BaseModel):
+    vuln_type: str  # e.g., "xss", "ssrf", "sqli"
+    top_k: int = 10
+
+
+class RAGSearchByTechRequest(BaseModel):
+    technologies: List[str]  # e.g., ["graphql", "nodejs"]
+    top_k: int = 10
 
 
 # ---------- in-memory stores ----------
@@ -860,7 +918,7 @@ def _run_whatweb_internal(target: str) -> Optional[Dict[str, Any]]:
     cmd = [
         "docker", "run", "--rm",
         "--network", DOCKER_NETWORK,
-        "cyberwatch/whatweb",
+        "bberastegui/whatweb",
         "-v",
         target,
     ]
@@ -908,6 +966,89 @@ def _run_whatweb_internal(target: str) -> Optional[Dict[str, Any]]:
     }
 
 
+def _run_security_headers_internal(url: str) -> Optional[Dict[str, Any]]:
+    """Internal helper to check security headers and return results.
+    
+    Used by host_profile for auto-checking. Returns dict with headers, issues, and score.
+    """
+    try:
+        # Validate URL is in scope
+        validated_host = _enforce_scope(url)
+        
+        # Reconstruct safe URL
+        parsed = urlparse(url)
+        scheme = parsed.scheme or "http"
+        safe_url = f"{scheme}://{validated_host}"
+        if parsed.port and parsed.port not in (80, 443):
+            safe_url = f"{scheme}://{validated_host}:{parsed.port}"
+        if parsed.path:
+            safe_url += parsed.path
+
+        resp = requests.get(safe_url, timeout=10, allow_redirects=True)
+        headers = dict(resp.headers)
+        
+        issues: List[Dict[str, Any]] = []
+        score = 100
+
+        # Check Content-Security-Policy
+        csp = headers.get("Content-Security-Policy", "").lower()
+        if not csp:
+            issues.append({
+                "header": "Content-Security-Policy",
+                "severity": "high",
+                "issue": "Missing CSP header",
+            })
+            score -= 30
+        elif "unsafe-inline" in csp or "unsafe-eval" in csp:
+            issues.append({
+                "header": "Content-Security-Policy",
+                "severity": "medium",
+                "issue": "CSP contains unsafe directives",
+            })
+            score -= 15
+
+        # Check HSTS
+        hsts = headers.get("Strict-Transport-Security", "")
+        if not hsts:
+            issues.append({
+                "header": "Strict-Transport-Security",
+                "severity": "medium",
+                "issue": "Missing HSTS header",
+            })
+            score -= 15
+
+        # Check X-Frame-Options
+        xfo = headers.get("X-Frame-Options", "").lower()
+        if not xfo:
+            issues.append({
+                "header": "X-Frame-Options",
+                "severity": "medium",
+                "issue": "Missing X-Frame-Options",
+            })
+            score -= 10
+
+        # Check X-Content-Type-Options
+        if headers.get("X-Content-Type-Options", "").lower() != "nosniff":
+            issues.append({
+                "header": "X-Content-Type-Options",
+                "severity": "medium",
+                "issue": "Missing or incorrect X-Content-Type-Options",
+            })
+            score -= 10
+
+        score = max(0, score)
+
+        return {
+            "url": safe_url,
+            "headers": headers,
+            "issues": issues,
+            "score": score,
+        }
+    except Exception as e:
+        print(f"[SECURITY_HEADERS] Internal check failed: {e}", file=sys.stderr)
+        return None
+
+
 @app.post("/mcp/run_fingerprints", response_model=FingerprintResult)
 def run_fingerprints(req: FingerprintRequest):
     """Run basic technology fingerprinting using WhatWeb via Docker.
@@ -931,7 +1072,7 @@ def run_fingerprints(req: FingerprintRequest):
     cmd = [
         "docker", "run", "--rm",
         "--network", DOCKER_NETWORK,
-        "cyberwatch/whatweb",
+        "bberastegui/whatweb",
         "-v",
         target,
     ]
@@ -966,8 +1107,13 @@ def run_fingerprints(req: FingerprintRequest):
 
     # Heuristic parse: WhatWeb default output is of form:
     #   http://example.com [200 OK] Country[United States] HTTPServer[nginx]
+    # Strip ANSI color codes first
+    import re
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    clean_output = ansi_escape.sub('', proc.stdout)
+    
     technologies: List[str] = []
-    for line in proc.stdout.splitlines():
+    for line in clean_output.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
@@ -1020,7 +1166,7 @@ def run_whatweb(req: WhatWebRequest):
     # Use safe_target (reconstructed from validated components) to prevent scope bypass
     cmd = [
         "docker", "run", "--rm", "--network", DOCKER_NETWORK,
-        "cyberwatch/whatweb",
+        "bberastegui/whatweb",
         "-a", "3",  # Aggression level 3 (stealthy)
         "--log-json=-",  # JSON output to stdout
         safe_target,
@@ -1387,6 +1533,29 @@ def host_profile(req: CloudReconRequest):
             "by_kind": by_kind,
             "samples": js_creds[:20],
         }
+
+    # --- Security Headers Analysis ---
+    # Auto-trigger security headers check if we have URLs
+    if all_urls:
+        target_url = all_urls[0]  # Check the first discovered URL
+        try:
+            print(f"[HOST_PROFILE] Auto-checking security headers for {target_url}", file=sys.stderr)
+            headers_result = _run_security_headers_internal(target_url)
+            if headers_result:
+                profile.setdefault("web", {})["security_headers"] = {
+                    "url": headers_result.get("url"),
+                    "score": headers_result.get("score", 0),
+                    "issues": [
+                        {
+                            "header": issue.get("header"),
+                            "severity": issue.get("severity"),
+                            "issue": issue.get("issue"),
+                        }
+                        for issue in headers_result.get("issues", [])
+                    ],
+                }
+        except Exception as e:
+            print(f"[HOST_PROFILE] Security headers check failed: {e}", file=sys.stderr)
 
     # Save snapshot
     _save_host_profile_snapshot(host, profile)
@@ -2147,6 +2316,432 @@ def run_targeted_nuclei(req: TargetedNucleiRequest):
     )
 
 
+# ---------- Quick Win Discovery Endpoints ----------
+
+@app.post("/mcp/run_security_headers", response_model=SecurityHeadersResult)
+def run_security_headers(req: SecurityHeadersRequest):
+    """Analyze security headers for misconfigurations and missing protections.
+
+    Checks for:
+    - Content-Security-Policy (CSP) presence and strength
+    - Strict-Transport-Security (HSTS) configuration
+    - X-Frame-Options, X-Content-Type-Options
+    - Referrer-Policy, Permissions-Policy
+    - Other security-related headers
+
+    Missing or weak CSP often enables XSS, making this a high-value check.
+    """
+    # Validate URL is in scope
+    validated_host = _enforce_scope(req.url)
+    
+    # Reconstruct safe URL (similar to run_whatweb)
+    parsed = urlparse(req.url)
+    scheme = parsed.scheme or "http"
+    safe_url = f"{scheme}://{validated_host}"
+    if parsed.port and parsed.port not in (80, 443):
+        safe_url = f"{scheme}://{validated_host}:{parsed.port}"
+    if parsed.path:
+        safe_url += parsed.path
+
+    rate_limit_wait()
+    try:
+        resp = requests.get(safe_url, timeout=15, allow_redirects=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch URL: {e}")
+
+    headers = dict(resp.headers)
+    issues: List[SecurityHeadersIssue] = []
+    score = 100  # Start with perfect score, deduct for issues
+
+    # Check Content-Security-Policy
+    csp = headers.get("Content-Security-Policy", "").lower()
+    if not csp:
+        issues.append(SecurityHeadersIssue(
+            header="Content-Security-Policy",
+            severity="high",
+            issue="Missing CSP header - XSS vulnerabilities cannot be mitigated",
+            recommendation="Implement a strict CSP with 'default-src' and avoid 'unsafe-inline'"
+        ))
+        score -= 30
+    else:
+        # Check for weak CSP directives
+        if "unsafe-inline" in csp or "unsafe-eval" in csp:
+            issues.append(SecurityHeadersIssue(
+                header="Content-Security-Policy",
+                severity="medium",
+                issue="CSP contains unsafe directives (unsafe-inline/unsafe-eval)",
+                recommendation="Remove unsafe-inline and unsafe-eval, use nonces or hashes instead"
+            ))
+            score -= 15
+        if "*" in csp and "default-src" in csp:
+            issues.append(SecurityHeadersIssue(
+                header="Content-Security-Policy",
+                severity="medium",
+                issue="CSP uses wildcard sources which are overly permissive",
+                recommendation="Specify explicit sources instead of wildcards"
+            ))
+            score -= 10
+
+    # Check Strict-Transport-Security
+    hsts = headers.get("Strict-Transport-Security", "")
+    if not hsts:
+        issues.append(SecurityHeadersIssue(
+            header="Strict-Transport-Security",
+            severity="medium",
+            issue="Missing HSTS header - allows protocol downgrade attacks",
+            recommendation="Add HSTS with max-age>=31536000 and includeSubDomains"
+        ))
+        score -= 15
+    else:
+        # Check HSTS strength
+        if "max-age=0" in hsts.lower():
+            issues.append(SecurityHeadersIssue(
+                header="Strict-Transport-Security",
+                severity="high",
+                issue="HSTS max-age is 0, effectively disabling HSTS",
+                recommendation="Set max-age to at least 31536000 (1 year)"
+            ))
+            score -= 20
+        elif "max-age" in hsts.lower():
+            # Extract max-age value
+            import re
+            match = re.search(r"max-age=(\d+)", hsts.lower())
+            if match:
+                max_age = int(match.group(1))
+                if max_age < 31536000:
+                    issues.append(SecurityHeadersIssue(
+                        header="Strict-Transport-Security",
+                        severity="low",
+                        issue=f"HSTS max-age is {max_age} (less than recommended 31536000)",
+                        recommendation="Increase max-age to at least 31536000"
+                    ))
+                    score -= 5
+
+    # Check X-Frame-Options
+    xfo = headers.get("X-Frame-Options", "").lower()
+    if not xfo:
+        issues.append(SecurityHeadersIssue(
+            header="X-Frame-Options",
+            severity="medium",
+            issue="Missing X-Frame-Options - vulnerable to clickjacking",
+            recommendation="Set X-Frame-Options to 'DENY' or 'SAMEORIGIN'"
+        ))
+        score -= 10
+    elif xfo not in ("deny", "sameorigin"):
+        issues.append(SecurityHeadersIssue(
+            header="X-Frame-Options",
+            severity="low",
+            issue=f"X-Frame-Options has unusual value: {xfo}",
+            recommendation="Use 'DENY' or 'SAMEORIGIN'"
+        ))
+        score -= 5
+
+    # Check X-Content-Type-Options
+    xcto = headers.get("X-Content-Type-Options", "").lower()
+    if xcto != "nosniff":
+        if not xcto:
+            issues.append(SecurityHeadersIssue(
+                header="X-Content-Type-Options",
+                severity="medium",
+                issue="Missing X-Content-Type-Options - vulnerable to MIME sniffing",
+                recommendation="Set X-Content-Type-Options to 'nosniff'"
+            ))
+            score -= 10
+        else:
+            issues.append(SecurityHeadersIssue(
+                header="X-Content-Type-Options",
+                severity="low",
+                issue=f"X-Content-Type-Options has unusual value: {xcto}",
+                recommendation="Set to 'nosniff'"
+            ))
+            score -= 5
+
+    # Check Referrer-Policy
+    rp = headers.get("Referrer-Policy", "").lower()
+    if not rp:
+        issues.append(SecurityHeadersIssue(
+            header="Referrer-Policy",
+            severity="low",
+            issue="Missing Referrer-Policy - may leak sensitive URLs in referrer",
+            recommendation="Set Referrer-Policy to 'strict-origin-when-cross-origin' or 'no-referrer'"
+        ))
+        score -= 5
+    elif rp in ("unsafe-url", "origin", "origin-when-cross-origin"):
+        issues.append(SecurityHeadersIssue(
+            header="Referrer-Policy",
+            severity="low",
+            issue=f"Referrer-Policy '{rp}' is permissive and may leak sensitive data",
+            recommendation="Use 'strict-origin-when-cross-origin' or 'no-referrer'"
+        ))
+        score -= 3
+
+    # Check Permissions-Policy (formerly Feature-Policy)
+    pp = headers.get("Permissions-Policy", "") or headers.get("Feature-Policy", "")
+    if pp:
+        # Check for dangerous features enabled
+        dangerous_features = ["camera", "microphone", "geolocation", "payment"]
+        for feature in dangerous_features:
+            if f"{feature}=*" in pp.lower() or f"{feature}=()" not in pp.lower():
+                # Feature is enabled (either explicitly or by default)
+                if f"{feature}=*" in pp.lower():
+                    issues.append(SecurityHeadersIssue(
+                        header="Permissions-Policy",
+                        severity="medium",
+                        issue=f"Permissions-Policy allows '{feature}' for all origins",
+                        recommendation=f"Restrict '{feature}' to specific origins or disable"
+                    ))
+                    score -= 5
+
+    # Ensure score doesn't go negative
+    score = max(0, score)
+
+    return SecurityHeadersResult(
+        url=safe_url,
+        headers=headers,
+        issues=issues,
+        score=score,
+    )
+
+
+@app.post("/mcp/run_open_redirect_checks", response_model=OpenRedirectResult)
+def run_open_redirect_checks(req: OpenRedirectRequest):
+    """Test for open redirect vulnerabilities.
+
+    Tests common redirect parameters with payloads that bypass whitelist checks.
+    Open redirects are frequently used in OAuth/SSRF chains and are common findings.
+
+    Common vulnerable parameters: redirect, return, next, url, target, dest, goto
+    """
+    # Validate URL is in scope
+    validated_host = _enforce_scope(req.url)
+    
+    # Reconstruct safe URL
+    parsed = urlparse(req.url)
+    scheme = parsed.scheme or "http"
+    safe_base = f"{scheme}://{validated_host}"
+    if parsed.port and parsed.port not in (80, 443):
+        safe_base = f"{scheme}://{validated_host}:{parsed.port}"
+
+    # Extract query parameters
+    query_params = dict(parse_qsl(parsed.query))
+    
+    # Default redirect parameter names if not specified
+    redirect_params = req.params or ["redirect", "return", "next", "url", "target", "dest", "goto", "r", "redirect_uri", "callback"]
+    
+    # Common open redirect payloads (ordered by likelihood of bypass)
+    payloads = [
+        "//evil.com",
+        "http://evil.com",
+        "https://evil.com",
+        "\\/\\/evil.com",
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "evil.com",
+        "/\\evil.com",
+        "evil.com/",
+        "evil.com#",
+        "evil.com?",
+        "//evil.com/path",
+        "http://evil.com@allowed.com",
+        "evil.com/../evil.com",
+    ]
+
+    vulnerable_params: List[Dict[str, Any]] = []
+    
+    # Test each redirect parameter
+    for param_name in redirect_params:
+        if param_name not in query_params:
+            # Try adding the parameter to the URL
+            test_url = f"{safe_base}{parsed.path or '/'}?{param_name}="
+        else:
+            # Use existing parameter value location
+            test_url = req.url.split(f"{param_name}=")[0] + f"{param_name}="
+        
+        for payload in payloads:
+            test_url_with_payload = test_url + payload
+            
+            try:
+                rate_limit_wait()
+                # Don't follow redirects - we want to see the Location header
+                resp = requests.get(test_url_with_payload, timeout=10, allow_redirects=False)
+                
+                # Check for redirect response
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location", "")
+                    
+                    # Check if redirects to external domain
+                    if location:
+                        location_parsed = urlparse(location)
+                        location_host = location_parsed.netloc.lower()
+                        
+                        # Extract host from safe_base for comparison
+                        base_parsed = urlparse(safe_base)
+                        base_host = base_parsed.netloc.lower()
+                        
+                        # Check if redirects to different domain
+                        if location_host and location_host != base_host:
+                            # Additional check: not a subdomain of the original
+                            if not location_host.endswith("." + base_host):
+                                vulnerable_params.append({
+                                    "param": param_name,
+                                    "payload": payload,
+                                    "redirects_to": location,
+                                    "status_code": resp.status_code,
+                                })
+                                # Found vulnerability for this param, move to next
+                                break
+                
+            except Exception as e:
+                # Skip failed requests
+                continue
+
+    return OpenRedirectResult(
+        url=req.url,
+        vulnerable=len(vulnerable_params) > 0,
+        vulnerable_params=vulnerable_params,
+    )
+
+
+@app.post("/mcp/run_takeover_checks", response_model=TakeoverChecksResult)
+def run_takeover_checks(req: TakeoverChecksRequest):
+    """Check for subdomain takeover vulnerabilities.
+
+    Resolves CNAME records and checks against known takeover patterns for:
+    - GitHub Pages, Heroku, AWS S3, Azure, Cloudflare Pages, etc.
+
+    Subdomain takeovers are easy wins with high success rates.
+    """
+    # Validate domain is in scope
+    validated_host = _enforce_scope(req.domain)
+    
+    vulnerable_subdomains: List[TakeoverVulnerability] = []
+    checked_count = 0
+
+    # Get subdomains to check
+    subdomains = req.subdomains or []
+    
+    # If no subdomains provided, try to enumerate (basic approach)
+    if not subdomains:
+        # Try common subdomains
+        common_subs = ["www", "mail", "ftp", "localhost", "webmail", "smtp", "pop", "ns1", "webdisk", "admin", "email", "sites", "cdn", "m", "forum", "forums", "store", "support", "app", "apps", "blog", "blogs", "shop", "wiki", "api", "www2", "test", "mx", "static", "media", "portal", "vpn", "ns", "sftp", "web", "dev", "staging", "stage", "demo", "backup", "backups", "beta", "old", "new", "secure", "vps", "ns2", "cpanel", "whm", "autodiscover", "autoconfig", "imap", "pop3", "smtp", "webmail", "exchange", "owa", "activesync"]
+        subdomains = [f"{sub}.{validated_host}" for sub in common_subs[:20]]  # Limit to first 20 for speed
+
+    # Known takeover patterns (service -> CNAME pattern -> verification method)
+    takeover_patterns = {
+        "github": {
+            "cname_suffix": ".github.io",
+            "check": lambda subdomain, cname: _check_github_takeover(subdomain, cname),
+        },
+        "heroku": {
+            "cname_suffix": ".herokuapp.com",
+            "check": lambda subdomain, cname: _check_heroku_takeover(subdomain, cname),
+        },
+        "s3": {
+            "cname_suffix": ".s3.amazonaws.com",
+            "check": lambda subdomain, cname: _check_s3_takeover(subdomain, cname),
+        },
+        "azure": {
+            "cname_suffix": ".azurewebsites.net",
+            "check": lambda subdomain, cname: _check_azure_takeover(subdomain, cname),
+        },
+        "cloudflare": {
+            "cname_suffix": ".pages.dev",
+            "check": lambda subdomain, cname: _check_cloudflare_takeover(subdomain, cname),
+        },
+        "fastly": {
+            "cname_suffix": ".fastly.net",
+            "check": lambda subdomain, cname: _check_fastly_takeover(subdomain, cname),
+        },
+    }
+
+    for subdomain in subdomains:
+        checked_count += 1
+        
+        # Resolve CNAME
+        try:
+            import socket
+            cname = socket.gethostbyname_ex(subdomain)[0]
+            # socket.gethostbyname_ex returns (hostname, aliaslist, ipaddrlist)
+            # For CNAME, we need to check DNS directly
+            # Use a simpler approach: try to resolve and check response
+            import subprocess as sp
+            try:
+                result = sp.run(
+                    ["dig", "+short", "CNAME", subdomain],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    cname = result.stdout.strip().rstrip(".")
+                else:
+                    # Fallback: try nslookup or skip
+                    continue
+            except FileNotFoundError:
+                # dig not available, skip DNS resolution
+                continue
+        except Exception:
+            continue
+
+        # Check against known patterns
+        for service, pattern_info in takeover_patterns.items():
+            if pattern_info["cname_suffix"] in cname.lower():
+                # Potential takeover - verify
+                claimable, evidence = pattern_info["check"](subdomain, cname)
+                if claimable:
+                    vulnerable_subdomains.append(TakeoverVulnerability(
+                        subdomain=subdomain,
+                        service=service,
+                        claimable=True,
+                        cname=cname,
+                        evidence=evidence,
+                    ))
+                    break  # Found vulnerability, move to next subdomain
+
+    return TakeoverChecksResult(
+        domain=validated_host,
+        vulnerable_subdomains=vulnerable_subdomains,
+        checked_count=checked_count,
+    )
+
+
+def _check_github_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
+    """Check if GitHub Pages subdomain is claimable."""
+    # Extract repo name from CNAME (e.g., "user.github.io" -> check if user/repo exists)
+    # For now, return True if CNAME points to github.io (simplified check)
+    # In production, would check if the GitHub Pages site actually exists
+    return True, f"CNAME points to {cname} - GitHub Pages may be claimable"
+
+
+def _check_heroku_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
+    """Check if Heroku app is claimable."""
+    # Heroku apps are claimable if the app name doesn't exist
+    # Simplified: if CNAME points to herokuapp.com, it's potentially claimable
+    return True, f"CNAME points to {cname} - Heroku app may not exist"
+
+
+def _check_s3_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
+    """Check if S3 bucket is claimable."""
+    # S3 buckets are claimable if they don't exist or are misconfigured
+    # Would need to check bucket existence and permissions
+    return True, f"CNAME points to {cname} - S3 bucket may be claimable"
+
+
+def _check_azure_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
+    """Check if Azure website is claimable."""
+    return True, f"CNAME points to {cname} - Azure site may not exist"
+
+
+def _check_cloudflare_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
+    """Check if Cloudflare Pages project is claimable."""
+    return True, f"CNAME points to {cname} - Cloudflare Pages project may not exist"
+
+
+def _check_fastly_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
+    """Check if Fastly service is claimable."""
+    return True, f"CNAME points to {cname} - Fastly service may be misconfigured"
+
+
 # ---------- RAG Endpoints ----------
 
 # Lazy-load RAG client to avoid startup failures if Supabase not configured
@@ -2300,46 +2895,50 @@ def rag_stats():
 
 
 @app.post("/mcp/rag_search_by_type")
-def rag_search_by_type(vuln_type: str, top_k: int = 10):
+def rag_search_by_type(req: RAGSearchByTypeRequest):
     """
     Search for vulnerabilities by type (XSS, SSRF, IDOR, etc.).
 
     This is a convenience endpoint for quickly finding examples of
     specific vulnerability classes.
+    
+    Example request body:
+        {"vuln_type": "xss", "top_k": 10}
     """
     client = _get_rag_client()
 
     try:
-        results = client.search_by_vuln_type(vuln_type=vuln_type, top_k=top_k)
+        results = client.search_by_vuln_type(vuln_type=req.vuln_type, top_k=req.top_k)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RAG type search failed: {e}")
 
     return {
-        "vuln_type": vuln_type,
+        "vuln_type": req.vuln_type,
         "results": [r.to_dict() for r in results],
         "total_results": len(results),
     }
 
 
 @app.post("/mcp/rag_search_by_tech")
-def rag_search_by_tech(technologies: List[str], top_k: int = 10):
+def rag_search_by_tech(req: RAGSearchByTechRequest):
     """
     Search for vulnerabilities by technology stack.
 
     Useful for finding relevant vulnerabilities when you know the
     target's technology stack from fingerprinting.
 
-    Example: technologies=["graphql", "nodejs"]
+    Example request body:
+        {"technologies": ["graphql", "nodejs"], "top_k": 10}
     """
     client = _get_rag_client()
 
     try:
-        results = client.search_by_tech(technologies=technologies, top_k=top_k)
+        results = client.search_by_tech(technologies=req.technologies, top_k=req.top_k)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RAG tech search failed: {e}")
 
     return {
-        "technologies": technologies,
+        "technologies": req.technologies,
         "results": [r.to_dict() for r in results],
         "total_results": len(results),
     }

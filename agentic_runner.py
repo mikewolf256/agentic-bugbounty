@@ -626,11 +626,95 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e:
                 print(f"[AI-TRIAGE] Error for {h}: {e}")
 
+        # --- NEW: Open Redirect Checks ---
+        # Check discovered URLs for redirect parameters
+        open_redirect_results: Dict[str, Any] = {}
+        if profile:
+            web = profile.get("web", {}) or {}
+            urls = web.get("urls", []) or []
+            
+            # Common redirect parameter names
+            redirect_params = ["redirect", "return", "next", "url", "target", "dest", "goto", "r", "redirect_uri", "callback"]
+            
+            # Find URLs with redirect-like parameters
+            redirect_urls = []
+            for url in urls[:20]:  # Limit to first 20 URLs for performance
+                from urllib.parse import urlparse, parse_qsl
+                parsed = urlparse(url)
+                params = dict(parse_qsl(parsed.query))
+                for param in redirect_params:
+                    if param in params:
+                        redirect_urls.append(url)
+                        break
+            
+            # Test each URL with redirect params
+            if redirect_urls:
+                try:
+                    print(f"[OPEN_REDIRECT] Testing {len(redirect_urls)} URLs for open redirect vulnerabilities...")
+                    for test_url in redirect_urls[:10]:  # Limit to 10 for performance
+                        try:
+                            redirect_result = _mcp_post("/mcp/run_open_redirect_checks", {
+                                "url": test_url,
+                            })
+                            if redirect_result.get("vulnerable"):
+                                open_redirect_results[test_url] = redirect_result
+                                print(f"[OPEN_REDIRECT] Found vulnerable: {test_url}")
+                        except Exception as e:
+                            continue
+                except Exception as e:
+                    print(f"[OPEN_REDIRECT] Error checking redirects: {e}")
+
+        # --- NEW: Subdomain Takeover Checks ---
+        # Run subdomain enumeration and takeover checks (recon phase)
+        takeover_results: Dict[str, Any] = {}
+        if "recon" in phases:
+            try:
+                # Extract base domain from host
+                base_domain = h.split("://")[-1].split("/")[0].split(":")[0]
+                # Remove www. prefix if present
+                if base_domain.startswith("www."):
+                    base_domain = base_domain[4:]
+                
+                print(f"[TAKEOVER] Checking subdomain takeovers for {base_domain}...")
+                
+                # Enumerate subdomains (best-effort)
+                subdomains = []
+                try:
+                    script_path = os.path.join(os.path.dirname(__file__), "tools", "subdomain_enum.py")
+                    if os.path.exists(script_path):
+                        proc = subprocess.run(
+                            [sys.executable, script_path, "--domain", base_domain],
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                        )
+                        if proc.returncode == 0:
+                            subdomains = [s.strip() for s in proc.stdout.splitlines() if s.strip()]
+                except Exception as e:
+                    print(f"[TAKEOVER] Subdomain enum failed: {e}")
+                
+                # Run takeover checks
+                if subdomains or True:  # Always try even without enum (uses common subs)
+                    takeover_result = _mcp_post("/mcp/run_takeover_checks", {
+                        "domain": base_domain,
+                        "subdomains": subdomains[:50] if subdomains else None,  # Limit to 50
+                    })
+                    takeover_results = takeover_result
+                    if takeover_result.get("vulnerable_subdomains"):
+                        print(f"[TAKEOVER] Found {len(takeover_result['vulnerable_subdomains'])} vulnerable subdomains")
+            except Exception as e:
+                print(f"[TAKEOVER] Error: {e}")
+
         # Store AI triage results in modules
         summary.setdefault("modules", {})
         summary["modules"].setdefault(h, {})
         summary["modules"][h]["ai_triage"] = ai_triage_result
         summary["modules"][h]["targeted_nuclei"] = targeted_nuclei_result
+        summary["modules"][h]["open_redirect"] = {
+            "vulnerable_count": len(open_redirect_results),
+            "results": open_redirect_results,
+        }
+        summary["modules"][h]["takeover"] = takeover_results
 
         summary_hosts.append(
             {

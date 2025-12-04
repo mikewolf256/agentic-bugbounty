@@ -27,12 +27,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md",
+                "file": "INCOME_PROJECTION_SUMMARY.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected"
+              "title": "INCOME_PROJECTION_SUMMARY"
             }
           }
         ],
@@ -186,17 +186,20 @@
   },
   "active": "027b5ca3fff01ab0",
   "lastOpenFiles": [
-    "venv/bin/activate.fish",
-    "venv/bin/activate.csh",
-    "venv/bin/activate",
-    "venv/bin/Activate.ps1",
-    "venv/bin/pip3.11",
-    "venv/bin/pip3",
-    "venv/bin/pip",
-    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/packages/backports/__pycache__/makefile.cpython-311.pyc",
-    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/packages/backports/__pycache__/__init__.cpython-311.pyc",
-    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/contrib/_securetransport/__pycache__/low_level.cpython-311.pyc",
-    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/contrib/_securetransport/__pycache__/__init__.cpython-311.pyc",
+    "docs/DISTRIBUTED_INFRASTRUCTURE.md",
+    "output_zap/test_reports/mcp_lab_report_20251203_222625.json",
+    "output_zap/test_reports/mcp_lab_report_20251203_222625.md",
+    "output_zap/nuclei_recon_idor_auth_5000_1764825970.json",
+    "output_zap/ssrf_checks_idor_auth_5000_1764825970.json",
+    "output_zap/bac_checks_idor_auth_5000_1764825968.json",
+    "output_zap/artifacts/fingerprints/idor_auth:5000/whatweb_1764825963.txt",
+    "output_zap/artifacts/js_miner/idor_auth:5000/4d04d89c-3e83-4637-be48-30b6beec6ca2.err.log",
+    "output_zap/artifacts/js_miner/idor_auth:5000/4d04d89c-3e83-4637-be48-30b6beec6ca2.out.log",
+    "output_zap/artifacts/backup_hunt/idor_auth:5000/b3772bad-d324-4640-b674-f5d74de70817.err.log",
+    "output_zap/artifacts/backup_hunt/idor_auth:5000/b3772bad-d324-4640-b674-f5d74de70817.out.log",
+    "output_zap/host_history/idor_auth_5000_1764825860.json",
+    "infra/README.md",
+    "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md",
     "MCP_ANALYSIS_REPORT.md",
     "output_zap/cloud_findings_localhost:3000__Cloud_storage_surface_detected.md",
     "output_zap/cloud_findings_juice-shop:3000__Cloud_storage_surface_detected.md",
@@ -219,9 +222,6 @@
     "nuclei-templates-main/README.md",
     "nuclei-templates-main/PULL_REQUEST_TEMPLATE.md",
     "nuclei-templates-main/LICENSE.md",
-    "nuclei-templates-main/CONTRIBUTING.md",
-    "nuclei-templates-main/CODE_OF_CONDUCT.md",
-    "output_zap/cloud_findings_localhost:3000__Cloud_Storage_Surface_Detected.md",
-    "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md"
+    "nuclei-templates-main/CONTRIBUTING.md"
   ]
 }

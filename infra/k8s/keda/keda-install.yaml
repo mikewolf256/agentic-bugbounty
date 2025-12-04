@@ -1,0 +1,56 @@
+# KEDA Installation for EKS
+# This file bootstraps KEDA in the cluster
+#
+# Installation steps:
+# 1. helm repo add kedacore https://kedacore.github.io/charts
+# 2. helm repo update
+# 3. kubectl create namespace keda
+# 4. kubectl apply -f keda-install.yaml
+# 5. helm install keda kedacore/keda --namespace keda -f keda-values.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keda
+  labels:
+    app.kubernetes.io/name: keda
+    app.kubernetes.io/component: operator
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: scan-workers
+  labels:
+    app.kubernetes.io/name: scan-workers
+    app.kubernetes.io/component: workers
+
+---
+# Service account for KEDA operator with IRSA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: keda-operator
+  namespace: keda
+  annotations:
+    # Replace with actual ARN from terraform output
+    eks.amazonaws.com/role-arn: ${KEDA_ROLE_ARN}
+  labels:
+    app.kubernetes.io/name: keda
+    app.kubernetes.io/component: operator
+
+---
+# Service account for scan workers with IRSA
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scan-worker
+  namespace: scan-workers
+  annotations:
+    # Replace with actual ARN from terraform output
+    eks.amazonaws.com/role-arn: ${WORKER_ROLE_ARN}
+  labels:
+    app.kubernetes.io/name: scan-worker
+    app.kubernetes.io/component: scan-worker
+

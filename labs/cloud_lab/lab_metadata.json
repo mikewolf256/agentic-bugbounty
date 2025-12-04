@@ -1,0 +1,76 @@
+{
+  "name": "cloud_lab",
+  "description": "Cloud metadata endpoints and storage misconfigurations - AWS/GCP/Azure metadata, S3 buckets, IAM credentials",
+  "base_url": "http://cloud_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "cloud",
+      "subtype": "metadata_exposure",
+      "cwe": "CWE-200",
+      "description": "AWS metadata endpoint accessible",
+      "endpoint": "/latest/meta-data/",
+      "parameter": null
+    },
+    {
+      "type": "cloud",
+      "subtype": "iam_exposure",
+      "cwe": "CWE-200",
+      "description": "AWS IAM credentials exposed via metadata",
+      "endpoint": "/latest/meta-data/iam/security-credentials/test-role",
+      "parameter": null
+    },
+    {
+      "type": "cloud",
+      "subtype": "metadata_exposure",
+      "cwe": "CWE-200",
+      "description": "GCP metadata endpoint accessible",
+      "endpoint": "/computeMetadata/v1/",
+      "parameter": null
+    },
+    {
+      "type": "cloud",
+      "subtype": "token_exposure",
+      "cwe": "CWE-200",
+      "description": "GCP access token exposed",
+      "endpoint": "/computeMetadata/v1/instance/service-accounts/default/token",
+      "parameter": null
+    },
+    {
+      "type": "cloud",
+      "subtype": "metadata_exposure",
+      "cwe": "CWE-200",
+      "description": "Azure metadata endpoint accessible",
+      "endpoint": "/metadata/instance",
+      "parameter": null
+    },
+    {
+      "type": "cloud",
+      "subtype": "storage_misconfiguration",
+      "cwe": "CWE-284",
+      "description": "S3 bucket publicly accessible",
+      "endpoint": "/s3/bucket",
+      "parameter": null
+    },
+    {
+      "type": "ssrf",
+      "subtype": "cloud_metadata",
+      "cwe": "CWE-918",
+      "description": "SSRF to cloud metadata via /fetch endpoint",
+      "endpoint": "/fetch",
+      "parameter": "url"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/latest/meta-data/", "method": "GET", "description": "AWS metadata root"},
+    {"path": "/latest/meta-data/iam/security-credentials/", "method": "GET", "description": "AWS IAM roles"},
+    {"path": "/latest/meta-data/iam/security-credentials/<role>", "method": "GET", "description": "AWS IAM credentials (vulnerable)"},
+    {"path": "/computeMetadata/v1/", "method": "GET", "description": "GCP metadata root"},
+    {"path": "/computeMetadata/v1/instance/service-accounts/default/token", "method": "GET", "description": "GCP access token (vulnerable)"},
+    {"path": "/metadata/instance", "method": "GET", "description": "Azure metadata (vulnerable)"},
+    {"path": "/s3/bucket", "method": "GET", "description": "S3 bucket (vulnerable)"},
+    {"path": "/fetch", "method": "GET", "description": "SSRF endpoint for testing"}
+  ]
+}
+

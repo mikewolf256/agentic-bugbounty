@@ -63,7 +63,7 @@ export LOCAL_K8S_MODE=true
 python ../tools/multi_scope_runner.py --scopes-dir ../scopes/ --max-concurrent 3
 ```
 
-📖 **Full guide:** [Local K8s Setup Guide](../docs/LOCAL_K8S_SETUP.md)  
+📖 **Full guide:** [Local K8s Setup Guide](../docs/LOCAL_K8S_SETUP.md)
 📖 **Multi-scope guide:** [Multi-Scope K8s Scanning](../docs/MULTI_SCOPE_K8S.md)
 
 ### AWS EKS Setup (Production)

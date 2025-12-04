@@ -1,0 +1,65 @@
+{
+  "name": "xxe_lab",
+  "description": "XXE (XML External Entity) vulnerabilities - external entity injection, file inclusion, SSRF",
+  "base_url": "http://xxe_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "xxe",
+      "subtype": "external_entity",
+      "cwe": "CWE-611",
+      "description": "External entity injection via XML parser",
+      "endpoint": "/parse",
+      "parameter": "xml"
+    },
+    {
+      "type": "xxe",
+      "subtype": "file_inclusion",
+      "cwe": "CWE-611",
+      "description": "Local file inclusion via XXE (/etc/passwd)",
+      "endpoint": "/parse",
+      "parameter": "xml"
+    },
+    {
+      "type": "xxe",
+      "subtype": "oob",
+      "cwe": "CWE-611",
+      "description": "Out-of-band XXE via external entity callback",
+      "endpoint": "/parse",
+      "parameter": "xml"
+    },
+    {
+      "type": "xxe",
+      "subtype": "ssrf",
+      "cwe": "CWE-918",
+      "description": "SSRF via XXE external entity",
+      "endpoint": "/parse",
+      "parameter": "xml"
+    },
+    {
+      "type": "xxe",
+      "subtype": "file_upload",
+      "cwe": "CWE-611",
+      "description": "XXE via file upload endpoint",
+      "endpoint": "/upload",
+      "parameter": "file"
+    },
+    {
+      "type": "xxe",
+      "subtype": "api",
+      "cwe": "CWE-611",
+      "description": "XXE in API endpoint",
+      "endpoint": "/api/xml",
+      "parameter": "body"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/parse", "method": "GET", "description": "XML parser form"},
+    {"path": "/parse", "method": "POST", "description": "Vulnerable XML parser"},
+    {"path": "/upload", "method": "GET", "description": "File upload form"},
+    {"path": "/upload", "method": "POST", "description": "Vulnerable file upload"},
+    {"path": "/api/xml", "method": "POST", "description": "API XML parser"}
+  ]
+}
+

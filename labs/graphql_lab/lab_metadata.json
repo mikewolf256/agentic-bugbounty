@@ -1,0 +1,46 @@
+{
+  "name": "graphql_lab",
+  "description": "GraphQL vulnerabilities - introspection enabled, depth DoS, complexity issues",
+  "base_url": "http://graphql_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "graphql",
+      "subtype": "introspection",
+      "cwe": "CWE-200",
+      "description": "GraphQL introspection enabled",
+      "endpoint": "/graphql",
+      "parameter": null
+    },
+    {
+      "type": "graphql",
+      "subtype": "depth_dos",
+      "cwe": "CWE-400",
+      "description": "Depth-based DoS - no query depth limits",
+      "endpoint": "/graphql",
+      "parameter": null
+    },
+    {
+      "type": "graphql",
+      "subtype": "complexity",
+      "cwe": "CWE-400",
+      "description": "Query complexity issues - no complexity limits",
+      "endpoint": "/graphql",
+      "parameter": null
+    },
+    {
+      "type": "graphql",
+      "subtype": "recursive",
+      "cwe": "CWE-400",
+      "description": "Recursive queries allowed without limits",
+      "endpoint": "/graphql",
+      "parameter": null
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/graphql", "method": "GET", "description": "GraphQL Playground (GraphiQL)"},
+    {"path": "/graphql", "method": "POST", "description": "GraphQL endpoint (vulnerable)"}
+  ]
+}
+

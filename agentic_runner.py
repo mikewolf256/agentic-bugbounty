@@ -555,11 +555,11 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 except SystemExit as e:
                     print(f"[MCP] nuclei recon failed for {h}: {e}")
     else:
-        for h in hosts:
-            try:
-                _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
-            except SystemExit as e:
-                print(f"[MCP] nuclei recon failed for {h}: {e}")
+    for h in hosts:
+        try:
+            _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
+        except SystemExit as e:
+            print(f"[MCP] nuclei recon failed for {h}: {e}")
 
     # 4b) Cloud recon per host (best-effort)
     for h in hosts:
@@ -593,10 +593,10 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         
         # Fall back to MCP if K8s didn't work
         if not katana_result:
-            try:
-                katana_result = _run_katana_stage(MCP_SERVER_URL, target_url)
-            except Exception as e:
-                katana_result = {"error": str(e)}
+        try:
+            katana_result = _run_katana_stage(MCP_SERVER_URL, target_url)
+        except Exception as e:
+            katana_result = {"error": str(e)}
 
         # stash in full-scan summary structure under modules
         summary.setdefault("modules", {})

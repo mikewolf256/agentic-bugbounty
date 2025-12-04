@@ -1684,7 +1684,8 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         triaged.sort(key=lambda x: float(x.get("cvss_score", 0) or 0), reverse=True)
         print(f"[IMPACT] Impact scoring failed, using CVSS: {e}", file=sys.stderr)
     
-    json.dump(triaged, open(triage_path, "w"), indent=2)
+    with open(triage_path, "w") as f:
+        json.dump(triaged, f, indent=2)
     print("[TRIAGE] Wrote", triage_path)
 
     # Markdown rendering

@@ -10,6 +10,18 @@ POLL_INTERVAL = int(os.environ.get("AGENT_POLL_INTERVAL", "8"))
 OUTDIR = "output_zap"
 os.makedirs(OUTDIR, exist_ok=True)
 
+# Try to import LocalExecutor for K8s mode
+try:
+    from tools.local_executor import LocalExecutor, is_local_k8s_mode
+    K8S_AVAILABLE = True
+except ImportError:
+    K8S_AVAILABLE = False
+    LocalExecutor = None
+
+def _is_local_k8s_mode() -> bool:
+    """Check if local K8s mode is enabled (reads env var at call time, not import time)"""
+    return os.environ.get("LOCAL_K8S_MODE", "false").lower() in ("true", "1", "yes") and K8S_AVAILABLE
+
 def call_mcp(path, method="GET", data=None):
     url = MCP_BASE.rstrip("/") + path
     if method == "GET":
@@ -67,6 +79,25 @@ def ffuf_discovery(host, wordlist=None):
     if not wordlist:
         return
     target = f"https://{host}/FUZZ"
+    
+    # Try K8s mode first if available (check at runtime, not import time)
+    # _is_local_k8s_mode() checks K8S_AVAILABLE (import success) and env var
+    # is_local_k8s_mode() checks REDIS_AVAILABLE and env var
+    # Both need to be true for K8s mode to work
+    if _is_local_k8s_mode() and is_local_k8s_mode():
+        try:
+            executor = LocalExecutor()
+            print(f"   ffuf discovery on {host} with {wordlist} (via K8s)")
+            # Note: ffuf may not be fully containerized yet, fall back to MCP
+            result = executor.submit_and_wait("ffuf", target, options={"wordlist": wordlist, "rate": 3})
+            if result:
+                with open(os.path.join(OUTDIR, f"ffuf_{host}.json"), "w") as fh:
+                    json.dump(result, fh, indent=2)
+                return
+        except Exception as e:
+            print(f"   ffuf K8s error: {e}, falling back to MCP")
+    
+    # Fall back to MCP
     body = {
         "target": target,
         "wordlist": wordlist,
@@ -116,6 +147,12 @@ if __name__ == "__main__":
     ap.add_argument("--scope", default="scope.json", help="path to scope.json")
     ap.add_argument("--no-secondary", action="store_true", help="scan only primary targets")
     ap.add_argument("--ffuf-wordlist", help="optional path to a (reasonable) wordlist")
+    ap.add_argument("--k8s-mode", action="store_true", help="enable K8s mode (requires LOCAL_K8S_MODE env var)")
     args = ap.parse_args()
+    
+    if args.k8s_mode:
+        os.environ["LOCAL_K8S_MODE"] = "true"
+        print("[SCOPE-RUNNER] K8s mode enabled")
+    
     run_scope(args.scope, include_secondary=not args.no_secondary, ffuf_wordlist=args.ffuf_wordlist)
 

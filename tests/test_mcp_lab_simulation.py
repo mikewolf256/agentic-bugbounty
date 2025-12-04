@@ -68,6 +68,35 @@ LABS = {
             "bac": [{"url": "/api/users/2", "requires_auth": True}],
         },
     },
+    "auth_scan_lab": {
+        "base_url": "http://localhost:5004",  # For test script health checks
+        "docker_url": "http://auth_scan_lab:5000",  # For MCP->lab (inside docker network)
+        "description": "Comprehensive auth vulnerability lab with 18 known vulnerabilities",
+        "expected_findings": {
+            "bac": [
+                {"url": "/api/users/3", "requires_auth": True, "vuln_id": "VULN-007"},
+                {"url": "/api/orders/3", "requires_auth": True, "vuln_id": "VULN-008"},
+                {"url": "/admin", "requires_auth": False, "vuln_id": "VULN-013"},
+                {"url": "/admin/users", "requires_auth": True, "vuln_id": "VULN-014"},
+            ],
+            "default_creds": {"username": "admin", "password": "admin", "vuln_id": "VULN-001"},
+            "jwt": {
+                "weak_secret": "secret123",
+                "accepts_none": True,
+                "vuln_ids": ["VULN-002", "VULN-003"]
+            },
+            "fingerprints": {"min_tech_count": 1, "expected_tech_substrings": ["Python", "Flask"]},
+            "sensitive_exposure": [
+                {"url": "/admin/config", "vuln_id": "VULN-015"},
+                {"url": "/api/internal/debug", "vuln_id": "VULN-016"},
+                {"url": "/robots.txt", "vuln_id": "VULN-017"},
+            ],
+        },
+        "auth": {
+            "quick_login": "/login/alice",
+            "credentials": {"username": "alice", "password": "alice123"},
+        },
+    },
 }
 
 

@@ -50,6 +50,19 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+# Optional imports for distributed/local execution
+try:
+    from tools.local_executor import LocalExecutor, is_local_k8s_mode
+    LOCAL_EXECUTOR_AVAILABLE = True
+except ImportError:
+    LOCAL_EXECUTOR_AVAILABLE = False
+
+try:
+    from tools.distributed_executor import DistributedExecutor, is_distributed_mode
+    DISTRIBUTED_EXECUTOR_AVAILABLE = True
+except ImportError:
+    DISTRIBUTED_EXECUTOR_AVAILABLE = False
+
 # ---------- helpers ----------
 
 def normalize_target(t: str) -> str:
@@ -1412,7 +1425,79 @@ def run_whatweb(req: WhatWebRequest):
     out_name = f"whatweb_{ts}.json"
     out_path = os.path.join(base_dir, out_name)
 
-    # Run WhatWeb via Docker with JSON output
+    # Check execution mode: Local K8s > AWS Distributed > Local Docker
+    if LOCAL_EXECUTOR_AVAILABLE and is_local_k8s_mode():
+        # Use local K8s workers
+        print(f"[WHATWEB] Using local K8s worker for {safe_target}", file=sys.stderr)
+        try:
+            executor = LocalExecutor()
+            result = executor.submit_and_wait("whatweb", safe_target, timeout=300)
+            if result:
+                # Convert worker result to WhatWebResult format
+                technologies = result.get("technologies", [])
+                raw_plugins = result.get("plugins", {})
+                result_data = {
+                    "target": safe_target,
+                    "timestamp": ts,
+                    "technologies": sorted(set(technologies)),
+                    "plugins": raw_plugins,
+                    "raw_stdout": result.get("raw_output", ""),
+                    "raw_stderr": result.get("stderr", ""),
+                    "exit_code": result.get("exit_code", 0),
+                }
+                with open(out_path, "w", encoding="utf-8") as fh:
+                    json.dump(result_data, fh, indent=2)
+                return WhatWebResult(
+                    target=safe_target,
+                    output_file=out_path,
+                    technologies=sorted(set(technologies)),
+                    raw_plugins=raw_plugins,
+                )
+            else:
+                raise HTTPException(status_code=500, detail="WhatWeb job timed out or failed in local K8s")
+        except HTTPException:
+            # Re-raise HTTPException immediately - don't suppress error responses
+            raise
+        except Exception as e:
+            print(f"[WHATWEB] Local K8s execution failed: {e}, falling back to Docker", file=sys.stderr)
+            # Fall through to Docker execution
+    elif DISTRIBUTED_EXECUTOR_AVAILABLE and is_distributed_mode():
+        # Use AWS distributed workers
+        print(f"[WHATWEB] Using AWS distributed worker for {safe_target}", file=sys.stderr)
+        try:
+            executor = DistributedExecutor()
+            result = executor.submit_and_wait("whatweb", safe_target, timeout=300)
+            if result:
+                # Convert worker result to WhatWebResult format
+                technologies = result.get("technologies", [])
+                raw_plugins = result.get("plugins", {})
+                result_data = {
+                    "target": safe_target,
+                    "timestamp": ts,
+                    "technologies": sorted(set(technologies)),
+                    "plugins": raw_plugins,
+                    "raw_stdout": result.get("raw_output", ""),
+                    "raw_stderr": result.get("stderr", ""),
+                    "exit_code": result.get("exit_code", 0),
+                }
+                with open(out_path, "w", encoding="utf-8") as fh:
+                    json.dump(result_data, fh, indent=2)
+                return WhatWebResult(
+                    target=safe_target,
+                    output_file=out_path,
+                    technologies=sorted(set(technologies)),
+                    raw_plugins=raw_plugins,
+                )
+            else:
+                raise HTTPException(status_code=500, detail="WhatWeb job timed out or failed in AWS")
+        except HTTPException:
+            # Re-raise HTTPException immediately - don't suppress error responses
+            raise
+        except Exception as e:
+            print(f"[WHATWEB] AWS distributed execution failed: {e}, falling back to Docker", file=sys.stderr)
+            # Fall through to Docker execution
+
+    # Default: Run WhatWeb via Docker (local execution)
     # Use safe_target (reconstructed from validated components) to prevent scope bypass
     cmd = [
         "docker", "run", "--rm", "--network", DOCKER_NETWORK,
@@ -1422,7 +1507,7 @@ def run_whatweb(req: WhatWebRequest):
         safe_target,
     ]
 
-    print(f"[WHATWEB] Running: {' '.join(cmd)}", file=sys.stderr)
+    print(f"[WHATWEB] Running via Docker: {' '.join(cmd)}", file=sys.stderr)
 
     rate_limit_wait()
     try:

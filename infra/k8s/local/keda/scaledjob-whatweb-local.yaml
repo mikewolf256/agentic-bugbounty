@@ -1,0 +1,79 @@
+# KEDA ScaledJob for WhatWeb fingerprinting (Local)
+# Automatically scales 0→N based on Redis list length
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: whatweb-worker
+  namespace: scan-workers
+  labels:
+    app.kubernetes.io/name: whatweb-worker
+    app.kubernetes.io/component: scan-worker
+spec:
+  # Job template
+  jobTargetRef:
+    parallelism: 1
+    completions: 1
+    backoffLimit: 2
+    ttlSecondsAfterFinished: 300  # Clean up completed jobs after 5 min
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/name: whatweb-worker
+          app.kubernetes.io/component: scan-worker
+      spec:
+        serviceAccountName: scan-worker
+        restartPolicy: Never
+        containers:
+          - name: whatweb
+            image: localhost:5001/agentic-bugbounty/whatweb-worker:latest
+            imagePullPolicy: IfNotPresent
+            env:
+              - name: WORKER_MODE
+                value: "local"
+              - name: REDIS_HOST
+                value: "redis.scan-workers.svc.cluster.local"
+              - name: REDIS_PORT
+                value: "6379"
+              - name: REDIS_QUEUE_NAME
+                value: "whatweb-jobs"
+              - name: RESULTS_QUEUE_NAME
+                value: "scan-results"
+              - name: RESULTS_PATH
+                value: "/mnt/scan-results"
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+            volumeMounts:
+              - name: scan-results
+                mountPath: /mnt/scan-results
+        volumes:
+          - name: scan-results
+            persistentVolumeClaim:
+              claimName: scan-results
+  
+  # Polling interval for Redis
+  pollingInterval: 15
+  
+  # Cooldown period before scaling down
+  cooldownPeriod: 60
+  
+  # Min/Max concurrent jobs
+  minReplicaCount: 0  # Scale to zero!
+  maxReplicaCount: 20
+  
+  # How many jobs to run per trigger activation
+  scalingStrategy:
+    strategy: default
+  
+  # Redis trigger
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.scan-workers.svc.cluster.local:6379
+        listName: whatweb-jobs
+        listLength: "1"  # Trigger when 1+ messages in queue
+

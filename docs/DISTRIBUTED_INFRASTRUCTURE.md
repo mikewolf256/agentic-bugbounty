@@ -2,6 +2,8 @@
 
 This guide explains how to run scan tools (WhatWeb, Nuclei, Katana, etc.) on-demand in AWS using Kubernetes with KEDA, enabling scale-to-zero for cost efficiency.
 
+**For local testing and development, see:** [Local K8s Setup Guide](LOCAL_K8S_SETUP.md)
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)

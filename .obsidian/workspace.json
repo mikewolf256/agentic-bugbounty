@@ -186,18 +186,19 @@
   },
   "active": "027b5ca3fff01ab0",
   "lastOpenFiles": [
+    "output_zap/jwt_checks_auth_scan_lab_5000_1764828324.json",
+    "output_zap/bac_checks_auth_scan_lab_5000_1764828323.json",
+    "output_zap/artifacts/fingerprints/auth_scan_lab:5000/whatweb_1764828314.txt",
+    "output_zap/auth_lab_validation_report.json",
+    "output_zap/bac_checks_auth_scan_lab_5000_1764827194.json",
+    "output_zap/artifacts/fingerprints/auth_scan_lab:5000/whatweb_1764827191.txt",
+    "output_zap/artifacts/fingerprints/auth_scan_lab:5000",
+    "tests/test_auth_lab_validation.py",
+    "labs/auth_scan_lab/lab_metadata.json",
+    "labs/auth_scan_lab/docker-compose.yml",
+    "labs/auth_scan_lab/Dockerfile",
     "docs/DISTRIBUTED_INFRASTRUCTURE.md",
-    "output_zap/test_reports/mcp_lab_report_20251203_222625.json",
     "output_zap/test_reports/mcp_lab_report_20251203_222625.md",
-    "output_zap/nuclei_recon_idor_auth_5000_1764825970.json",
-    "output_zap/ssrf_checks_idor_auth_5000_1764825970.json",
-    "output_zap/bac_checks_idor_auth_5000_1764825968.json",
-    "output_zap/artifacts/fingerprints/idor_auth:5000/whatweb_1764825963.txt",
-    "output_zap/artifacts/js_miner/idor_auth:5000/4d04d89c-3e83-4637-be48-30b6beec6ca2.err.log",
-    "output_zap/artifacts/js_miner/idor_auth:5000/4d04d89c-3e83-4637-be48-30b6beec6ca2.out.log",
-    "output_zap/artifacts/backup_hunt/idor_auth:5000/b3772bad-d324-4640-b674-f5d74de70817.err.log",
-    "output_zap/artifacts/backup_hunt/idor_auth:5000/b3772bad-d324-4640-b674-f5d74de70817.out.log",
-    "output_zap/host_history/idor_auth_5000_1764825860.json",
     "infra/README.md",
     "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md",
     "MCP_ANALYSIS_REPORT.md",
@@ -221,7 +222,6 @@
     "nuclei-templates-main/README_CN.md",
     "nuclei-templates-main/README.md",
     "nuclei-templates-main/PULL_REQUEST_TEMPLATE.md",
-    "nuclei-templates-main/LICENSE.md",
-    "nuclei-templates-main/CONTRIBUTING.md"
+    "nuclei-templates-main/LICENSE.md"
   ]
 }

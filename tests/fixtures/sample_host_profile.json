@@ -1,0 +1,40 @@
+{
+  "host": "example.com",
+  "created": 1234567890.0,
+  "web": {
+    "urls": [
+      "https://example.com/",
+      "https://example.com/search",
+      "https://example.com/api/users",
+      "https://example.com/api/users/1",
+      "https://example.com/admin"
+    ],
+    "api_endpoints": [
+      {
+        "path": "/api/users",
+        "method": "GET",
+        "description": "List users"
+      },
+      {
+        "path": "/api/users/{id}",
+        "method": "GET",
+        "description": "Get user by ID"
+      },
+      {
+        "path": "/api/users",
+        "method": "POST",
+        "description": "Create user"
+      }
+    ],
+    "fingerprints": {
+      "technologies": ["Python", "Flask", "nginx", "PostgreSQL"],
+      "plugins": {
+        "Flask": {
+          "version": "2.0.0"
+        }
+      }
+    }
+  },
+  "cloud": {}
+}
+

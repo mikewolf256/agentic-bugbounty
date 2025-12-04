@@ -1,0 +1,11 @@
+{
+  "id": "test-xss-1",
+  "name": "Reflected XSS in Search Parameter",
+  "url": "https://example.com/search?q=<script>alert(1)</script>",
+  "parameter": "q",
+  "risk": "High",
+  "category": "xss",
+  "cwe": "CWE-79",
+  "evidence": "<script>alert(1)</script>"
+}
+

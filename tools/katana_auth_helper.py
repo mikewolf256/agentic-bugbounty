@@ -54,6 +54,51 @@ def _auto_detect_chrome_devtools(port: int = 9222) -> Optional[str]:
     return None
 
 
+def _matches_domain(cookie_domain: str, target_domain: str) -> bool:
+    """Check if cookie domain matches target domain using proper domain matching.
+    
+    Cookie domain matching rules:
+    - Exact match: 'example.com' matches 'example.com' only
+    - Wildcard with leading dot: '.example.com' matches 'example.com' and all subdomains
+    - Subdomain match: '.example.com' matches 'www.example.com', 'api.example.com', etc.
+    
+    Args:
+        cookie_domain: Cookie domain (may start with '.' for wildcard)
+        target_domain: Target domain to match against
+    
+    Returns:
+        True if cookie domain matches target domain, False otherwise
+    """
+    if not cookie_domain or not target_domain:
+        return False
+    
+    # Normalize domains (lowercase, strip whitespace)
+    cookie_domain = cookie_domain.lower().strip()
+    target_domain = target_domain.lower().strip()
+    
+    # Remove leading dot for comparison (but remember if it was there)
+    cookie_has_dot = cookie_domain.startswith(".")
+    cookie_base = cookie_domain.lstrip(".")
+    target_base = target_domain
+    
+    # Exact match
+    if cookie_base == target_base:
+        return True
+    
+    # If cookie domain has leading dot, it's a wildcard for that domain and subdomains
+    if cookie_has_dot:
+        # Check if target is the base domain
+        if target_base == cookie_base:
+            return True
+        # Check if target is a subdomain of cookie domain
+        # e.g., '.example.com' should match 'www.example.com'
+        if target_base.endswith("." + cookie_base):
+            return True
+    
+    # If cookie domain doesn't have leading dot, only exact match (already checked above)
+    return False
+
+
 def _extract_cookies_from_devtools(ws_url: str, target_domain: str) -> List[Dict[str, Any]]:
     """Extract cookies from Chrome DevTools Protocol."""
     cookies = []
@@ -70,10 +115,10 @@ def _extract_cookies_from_devtools(ws_url: str, target_domain: str) -> List[Dict
         resp = requests.get(f"{http_endpoint}/json/cookies", timeout=5)
         if resp.status_code == 200:
             all_cookies = resp.json()
-            # Filter cookies for target domain
+            # Filter cookies for target domain using proper domain matching
             for cookie in all_cookies:
                 cookie_domain = cookie.get("domain", "")
-                if target_domain in cookie_domain or cookie_domain.lstrip(".") in target_domain:
+                if _matches_domain(cookie_domain, target_domain):
                     cookies.append({
                         "name": cookie.get("name", ""),
                         "value": cookie.get("value", ""),

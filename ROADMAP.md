@@ -8,6 +8,7 @@
 - [x] Local + K8s Execution Modes
 - [x] Scan Orchestration Controller
 - [x] Artifact Output Folder Standardization
+- [x] Local K8s cluster setup (kind + Redis) - [See Local K8s Setup Guide](docs/LOCAL_K8S_SETUP.md)
 
 ---
 

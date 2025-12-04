@@ -23,6 +23,11 @@ Features:
 - /mcp/run_api_recon     -> lightweight API surface probing
 - /mcp/triage_nuclei_templates -> AI-driven template selection based on host_profile
 - /mcp/run_targeted_nuclei     -> Run Nuclei with AI-selected templates
+- /mcp/rag_search              -> RAG semantic search for similar vulnerabilities
+- /mcp/rag_similar_vulns       -> Find similar vulns for a scanner finding
+- /mcp/rag_stats               -> Get RAG knowledge base statistics
+- /mcp/rag_search_by_type      -> Search by vulnerability type
+- /mcp/rag_search_by_tech      -> Search by technology stack
 
 Notes:
 - ffuf, sqlmap, nuclei, katana, interactsh-client must be in PATH where used.
@@ -204,6 +209,27 @@ class ApiReconResult(BaseModel):
     findings_file: str
 
 
+# ---------- BAC/SSRF/Nuclei Validation Models ----------
+
+class BacChecksResult(BaseModel):
+    host: str
+    meta: Dict[str, Any]
+
+
+class SsrfChecksResult(BaseModel):
+    target: str
+    param: Optional[str]
+    meta: Dict[str, Any]
+
+
+class NucleiScanResult(BaseModel):
+    target: str
+    findings_count: int
+    findings_file: str
+    mode: str
+    templates_used: List[str]
+
+
 class NucleiTriageRequest(BaseModel):
     host: str
     use_llm: bool = True  # Whether to use LLM for intelligent selection
@@ -243,6 +269,56 @@ class WhatWebResult(BaseModel):
     output_file: str
     technologies: List[str]
     raw_plugins: Dict[str, Any]
+
+
+# ---------- RAG Models ----------
+
+class RAGSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    min_similarity: float = 0.3
+    vuln_type: Optional[str] = None
+    severity: Optional[str] = None
+    technologies: Optional[List[str]] = None
+
+
+class RAGSearchResult(BaseModel):
+    report_id: str
+    title: str
+    vuln_type: str
+    severity: str
+    cwe: str
+    target_technology: List[str]
+    attack_vector: str
+    payload: str
+    impact: str
+    source_url: str
+    similarity: float
+
+
+class RAGSearchResponse(BaseModel):
+    query: str
+    results: List[RAGSearchResult]
+    total_results: int
+
+
+class RAGSimilarVulnsRequest(BaseModel):
+    finding: Dict[str, Any]  # Scanner finding to find similar vulns for
+    host_profile: Optional[Dict[str, Any]] = None  # Optional host profile for context
+    top_k: int = 5
+    min_similarity: float = 0.4
+
+
+class RAGSimilarVulnsResponse(BaseModel):
+    results: List[RAGSearchResult]
+    context_string: str  # Pre-formatted context for LLM injection
+    total_results: int
+
+
+class RAGStatsResponse(BaseModel):
+    total_reports: int
+    vuln_types: Dict[str, int]
+    severities: Dict[str, int]
 
 
 # ---------- in-memory stores ----------
@@ -588,7 +664,7 @@ def _run_whatweb_internal(target: str) -> Optional[Dict[str, Any]]:
     cmd = [
         "docker", "run", "--rm",
         "--network", DOCKER_NETWORK,
-        "morningstar/whatweb:latest",
+        "cyberwatch/whatweb",
         "-v",
         target,
     ]
@@ -659,7 +735,7 @@ def run_fingerprints(req: FingerprintRequest):
     cmd = [
         "docker", "run", "--rm",
         "--network", DOCKER_NETWORK,
-        "morningstar/whatweb:latest",
+        "cyberwatch/whatweb",
         "-v",
         target,
     ]
@@ -748,7 +824,7 @@ def run_whatweb(req: WhatWebRequest):
     # Use safe_target (reconstructed from validated components) to prevent scope bypass
     cmd = [
         "docker", "run", "--rm", "--network", DOCKER_NETWORK,
-        "morningstar/whatweb:latest",
+        "cyberwatch/whatweb",
         "-a", "3",  # Aggression level 3 (stealthy)
         "--log-json=-",  # JSON output to stdout
         safe_target,
@@ -1255,6 +1331,429 @@ def run_api_recon(req: ApiReconRequest):
     )
 
 
+# ---------- BAC / SSRF / Nuclei Validation Endpoints ----------
+
+@app.post("/mcp/run_bac_checks", response_model=BacChecksResult)
+def run_bac_checks(req: BacChecksRequest):
+    """
+    Run Broken Access Control (BAC) / IDOR checks against a host.
+    
+    This endpoint:
+    1. Loads the host_profile to find API endpoints
+    2. Tests for horizontal privilege escalation (accessing other users' data)
+    3. Tests for vertical privilege escalation (accessing admin functions)
+    4. Returns a summary of findings
+    
+    The checks are lightweight and non-destructive - they only probe
+    for authorization issues without modifying data.
+    """
+    host = _enforce_scope(req.host)
+    
+    # Load host profile to get API endpoints
+    profile = _load_host_profile_snapshot(host, latest=True)
+    
+    checks_run = 0
+    confirmed_issues: List[Dict[str, Any]] = []
+    
+    # Get API endpoints from profile
+    web = (profile.get("web", {}) or {}) if profile else {}
+    api_endpoints = web.get("api_endpoints", []) or []
+    
+    # Also check authenticated endpoints if available
+    auth_katana = web.get("auth_katana", {}) or {}
+    auth_endpoints = auth_katana.get("api_endpoints", []) or []
+    
+    all_endpoints = api_endpoints + auth_endpoints
+    
+    # Common IDOR patterns to test
+    idor_patterns = [
+        # User ID patterns
+        (r"/users?/(\d+)", "user_id"),
+        (r"/account/(\d+)", "account_id"),
+        (r"/profile/(\d+)", "profile_id"),
+        (r"/api/v\d+/users?/(\d+)", "api_user_id"),
+        # Object ID patterns
+        (r"/orders?/(\d+)", "order_id"),
+        (r"/documents?/(\d+)", "document_id"),
+        (r"/files?/(\d+)", "file_id"),
+        (r"/messages?/(\d+)", "message_id"),
+        # UUID patterns
+        (r"/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})", "uuid"),
+    ]
+    
+    import re
+    
+    for ep in all_endpoints:
+        url = ep.get("url", "")
+        if not url:
+            continue
+        
+        # Check for IDOR-vulnerable URL patterns
+        for pattern, id_type in idor_patterns:
+            match = re.search(pattern, url, re.IGNORECASE)
+            if match:
+                original_id = match.group(1)
+                checks_run += 1
+                
+                # Try incrementing numeric IDs
+                if original_id.isdigit():
+                    test_id = str(int(original_id) + 1)
+                    test_url = url[:match.start(1)] + test_id + url[match.end(1):]
+                    
+                    try:
+                        rate_limit_wait()
+                        resp = requests.get(test_url, timeout=10)
+                        
+                        # Check if we got a successful response (potential IDOR)
+                        if resp.status_code == 200:
+                            confirmed_issues.append({
+                                "type": "potential_idor",
+                                "id_type": id_type,
+                                "original_url": url,
+                                "test_url": test_url,
+                                "status_code": resp.status_code,
+                                "confidence": "medium",
+                                "note": f"Accessed {id_type}={test_id} without apparent authorization check",
+                            })
+                        elif resp.status_code in (401, 403):
+                            # Authorization is working - good
+                            pass
+                    except Exception as e:
+                        # Connection error - skip
+                        pass
+                break  # Only test first matching pattern per URL
+    
+    # Check for admin endpoints accessible without auth
+    admin_patterns = ["/admin", "/dashboard", "/manage", "/config", "/settings"]
+    base_url = f"http://{host}" if "://" not in host else host
+    
+    for admin_path in admin_patterns:
+        test_url = base_url.rstrip("/") + admin_path
+        checks_run += 1
+        
+        try:
+            rate_limit_wait()
+            resp = requests.get(test_url, timeout=10)
+            
+            if resp.status_code == 200:
+                # Check if it looks like an actual admin page
+                content = resp.text.lower()
+                if any(kw in content for kw in ["admin", "dashboard", "management", "settings"]):
+                    confirmed_issues.append({
+                        "type": "exposed_admin",
+                        "url": test_url,
+                        "status_code": resp.status_code,
+                        "confidence": "high",
+                        "note": "Admin endpoint accessible without authentication",
+                    })
+        except Exception:
+            pass
+    
+    # Build summary
+    summary_parts = []
+    if confirmed_issues:
+        summary_parts.append(f"Found {len(confirmed_issues)} potential BAC issue(s)")
+        by_type = {}
+        for issue in confirmed_issues:
+            t = issue.get("type", "unknown")
+            by_type[t] = by_type.get(t, 0) + 1
+        summary_parts.append(f"Types: {by_type}")
+    else:
+        summary_parts.append("No BAC issues detected")
+    
+    summary = "; ".join(summary_parts)
+    
+    # Save results
+    ts = int(time.time())
+    out_name = f"bac_checks_{host.replace(':', '_')}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    results = {
+        "host": host,
+        "checks_run": checks_run,
+        "confirmed_issues": confirmed_issues,
+        "summary": summary,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(results, fh, indent=2)
+    
+    return BacChecksResult(
+        host=host,
+        meta={
+            "checks_count": checks_run,
+            "confirmed_issues_count": len(confirmed_issues),
+            "summary": summary,
+            "findings_file": out_path,
+            "issues": confirmed_issues[:10],  # Return first 10 for quick review
+        },
+    )
+
+
+@app.post("/mcp/run_ssrf_checks", response_model=SsrfChecksResult)
+def run_ssrf_checks(req: SsrfChecksRequest):
+    """
+    Run Server-Side Request Forgery (SSRF) checks against a target URL.
+    
+    This endpoint tests for SSRF vulnerabilities by:
+    1. Injecting internal IP addresses (127.0.0.1, localhost, etc.)
+    2. Testing cloud metadata endpoints (169.254.169.254)
+    3. Testing DNS rebinding indicators
+    4. Checking for response differences that indicate SSRF
+    
+    Note: For full SSRF detection, consider using Interactsh or similar
+    out-of-band detection services.
+    """
+    # Extract host from target URL for scope check
+    from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+    
+    parsed = urlparse(req.target)
+    host = parsed.netloc  # Keep port for scope check
+    _enforce_scope(host)
+    
+    checks_run = 0
+    confirmed_issues: List[Dict[str, Any]] = []
+    targets_reached: List[str] = []
+    
+    # SSRF test payloads
+    ssrf_payloads = [
+        # Localhost variants
+        ("http://127.0.0.1/", "localhost_ip"),
+        ("http://localhost/", "localhost_name"),
+        ("http://0.0.0.0/", "zero_ip"),
+        ("http://[::1]/", "ipv6_localhost"),
+        # Cloud metadata endpoints
+        ("http://169.254.169.254/latest/meta-data/", "aws_metadata"),
+        ("http://metadata.google.internal/", "gcp_metadata"),
+        ("http://169.254.169.254/metadata/instance", "azure_metadata"),
+        # Internal network ranges
+        ("http://10.0.0.1/", "internal_10"),
+        ("http://192.168.1.1/", "internal_192"),
+        ("http://172.16.0.1/", "internal_172"),
+        # Bypass techniques
+        ("http://127.0.0.1.nip.io/", "dns_rebind"),
+        ("http://0x7f000001/", "hex_ip"),
+        ("http://2130706433/", "decimal_ip"),
+    ]
+    
+    param = req.param or "url"
+    
+    # Parse the original URL to find where to inject
+    query_params = parse_qs(parsed.query, keep_blank_values=True)
+    
+    for payload, payload_type in ssrf_payloads:
+        checks_run += 1
+        
+        # Inject payload into the specified parameter
+        test_params = query_params.copy()
+        test_params[param] = [payload]
+        
+        new_query = urlencode(test_params, doseq=True)
+        test_url = urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.params,
+            new_query,
+            parsed.fragment,
+        ))
+        
+        try:
+            rate_limit_wait()
+            resp = requests.get(test_url, timeout=10, allow_redirects=False)
+            
+            # Analyze response for SSRF indicators
+            content = resp.text.lower()
+            
+            # Check for signs of successful SSRF
+            ssrf_indicators = [
+                # AWS metadata
+                "ami-id", "instance-id", "instance-type", "iam",
+                # Error messages revealing internal access
+                "connection refused", "no route to host",
+                # Internal service responses
+                "nginx", "apache", "localhost", "internal",
+            ]
+            
+            indicator_found = any(ind in content for ind in ssrf_indicators)
+            
+            # Different response size/time might indicate SSRF
+            if resp.status_code == 200 and indicator_found:
+                confirmed_issues.append({
+                    "type": "ssrf_" + payload_type,
+                    "payload": payload,
+                    "test_url": test_url,
+                    "status_code": resp.status_code,
+                    "confidence": "high" if "metadata" in payload_type else "medium",
+                    "response_snippet": content[:200],
+                })
+                targets_reached.append(payload_type)
+            elif resp.status_code in (200, 301, 302) and payload_type.startswith("internal"):
+                # Got a response from internal IP - potential SSRF
+                confirmed_issues.append({
+                    "type": "ssrf_" + payload_type,
+                    "payload": payload,
+                    "test_url": test_url,
+                    "status_code": resp.status_code,
+                    "confidence": "low",
+                    "note": "Response received from internal IP range",
+                })
+                targets_reached.append(payload_type)
+                
+        except requests.exceptions.Timeout:
+            # Timeout might indicate the server tried to reach an unreachable internal host
+            pass
+        except requests.exceptions.ConnectionError:
+            # Connection error is expected for most payloads
+            pass
+        except Exception as e:
+            # Other errors - skip
+            pass
+    
+    # Build summary
+    if confirmed_issues:
+        summary = f"Found {len(confirmed_issues)} potential SSRF issue(s). Targets reached: {', '.join(set(targets_reached))}"
+    else:
+        summary = f"No SSRF issues detected after {checks_run} checks"
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"ssrf_checks_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    results = {
+        "target": req.target,
+        "param": param,
+        "checks_run": checks_run,
+        "confirmed_issues": confirmed_issues,
+        "targets_reached": targets_reached,
+        "summary": summary,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(results, fh, indent=2)
+    
+    return SsrfChecksResult(
+        target=req.target,
+        param=param,
+        meta={
+            "checks_count": checks_run,
+            "confirmed_issues_count": len(confirmed_issues),
+            "summary": summary,
+            "targets_reached": targets_reached,
+            "findings_file": out_path,
+            "issues": confirmed_issues[:10],
+        },
+    )
+
+
+@app.post("/mcp/run_nuclei", response_model=NucleiScanResult)
+def run_nuclei(req: NucleiRequest):
+    """
+    Run Nuclei vulnerability scanner against a target.
+    
+    This endpoint provides a standalone Nuclei scan with configurable options:
+    - mode: "recon" (fast fingerprinting) or "full" (comprehensive scan)
+    - templates: specific template paths to use
+    - severity: filter by severity level
+    - tags: filter by nuclei tags
+    
+    Results are written to a JSONL file and a summary is returned.
+    """
+    host = _enforce_scope(req.target)
+    
+    nuclei_bin = os.environ.get("NUCLEI_BIN", "nuclei")
+    templates_dir = NUCLEI_TEMPLATES_DIR or os.path.expanduser("~/nuclei-templates")
+    
+    # Build nuclei command
+    cmd = [nuclei_bin, "-u", req.target]
+    
+    templates_used: List[str] = []
+    
+    # Handle mode
+    mode = req.mode or "recon"
+    
+    if req.templates:
+        # Use specified templates
+        for tmpl in req.templates:
+            abs_path = os.path.join(templates_dir, tmpl) if not os.path.isabs(tmpl) else tmpl
+            if os.path.exists(abs_path):
+                cmd.extend(["-t", abs_path])
+                templates_used.append(tmpl)
+    elif mode == "recon":
+        # Use recon-only templates (fast)
+        recon_templates = [
+            "http/technologies/",
+            "http/exposed-panels/",
+            "http/fingerprints/",
+            "ssl/",
+        ]
+        for tmpl in recon_templates:
+            abs_path = os.path.join(templates_dir, tmpl)
+            if os.path.exists(abs_path):
+                cmd.extend(["-t", abs_path])
+                templates_used.append(tmpl)
+    else:
+        # Full scan - use all templates
+        cmd.extend(["-t", templates_dir])
+        templates_used.append("all")
+    
+    # Add severity filter
+    if req.severity:
+        cmd.extend(["-severity", ",".join(req.severity)])
+    
+    # Add tags filter
+    if req.tags:
+        cmd.extend(["-tags", ",".join(req.tags)])
+    
+    # Output configuration
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"nuclei_{mode}_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    cmd.extend(["-jsonl", "-silent", "-o", out_path])
+    
+    print(f"[NUCLEI] Running: {' '.join(cmd)}", file=sys.stderr)
+    
+    rate_limit_wait()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=1800,  # 30 minute timeout
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Nuclei scan timed out (30 minutes)")
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail=f"Nuclei binary not found: {nuclei_bin}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running nuclei: {e}")
+    
+    # Count findings
+    findings_count = 0
+    if os.path.exists(out_path):
+        with open(out_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    findings_count += 1
+    else:
+        # Create empty file if no findings
+        with open(out_path, "w", encoding="utf-8") as fh:
+            pass
+    
+    return NucleiScanResult(
+        target=req.target,
+        findings_count=findings_count,
+        findings_file=out_path,
+        mode=mode,
+        templates_used=templates_used,
+    )
+
+
 # ---------- AI Nuclei Triage Endpoints ----------
 
 @app.post("/mcp/triage_nuclei_templates", response_model=NucleiTriageResult)
@@ -1450,6 +1949,204 @@ def run_targeted_nuclei(req: TargetedNucleiRequest):
         findings_file=out_path,
         templates_used=templates_used,
     )
+
+
+# ---------- RAG Endpoints ----------
+
+# Lazy-load RAG client to avoid startup failures if Supabase not configured
+_rag_client = None
+
+
+def _get_rag_client():
+    """Get or create RAG client instance."""
+    global _rag_client
+    if _rag_client is None:
+        try:
+            from tools.rag_client import RAGClient
+            _rag_client = RAGClient()
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"RAG service unavailable: {e}. Check SUPABASE_URL, SUPABASE_KEY, and OPENAI_API_KEY environment variables.",
+            )
+    return _rag_client
+
+
+@app.post("/mcp/rag_search", response_model=RAGSearchResponse)
+def rag_search(req: RAGSearchRequest):
+    """
+    Semantic search for similar vulnerabilities in the RAG knowledge base.
+
+    This endpoint allows the triage agent to search historical vulnerability
+    reports by natural language query, with optional filters.
+
+    Example queries:
+    - "SSRF vulnerability in image upload endpoint"
+    - "GraphQL introspection enabled"
+    - "JWT token manipulation leading to privilege escalation"
+    """
+    client = _get_rag_client()
+
+    try:
+        results = client.search(
+            query=req.query,
+            top_k=req.top_k,
+            min_similarity=req.min_similarity,
+            vuln_type=req.vuln_type,
+            severity=req.severity,
+            technologies=req.technologies,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG search failed: {e}")
+
+    # Convert to response format
+    search_results = [
+        RAGSearchResult(
+            report_id=r.report_id,
+            title=r.title,
+            vuln_type=r.vuln_type or "",
+            severity=r.severity or "",
+            cwe=r.cwe or "",
+            target_technology=r.target_technology or [],
+            attack_vector=r.attack_vector or "",
+            payload=r.payload or "",
+            impact=r.impact or "",
+            source_url=r.source_url or "",
+            similarity=r.similarity,
+        )
+        for r in results
+    ]
+
+    return RAGSearchResponse(
+        query=req.query,
+        results=search_results,
+        total_results=len(search_results),
+    )
+
+
+@app.post("/mcp/rag_similar_vulns", response_model=RAGSimilarVulnsResponse)
+def rag_similar_vulns(req: RAGSimilarVulnsRequest):
+    """
+    Find similar historical vulnerabilities for a scanner finding.
+
+    This endpoint takes a finding from Nuclei, ZAP, or other scanners
+    and returns similar historical reports from the RAG knowledge base,
+    along with a pre-formatted context string for LLM injection.
+
+    Use this during triage to provide historical context to the LLM.
+    """
+    client = _get_rag_client()
+
+    try:
+        results = client.search_similar_to_finding(
+            finding=req.finding,
+            top_k=req.top_k,
+            min_similarity=req.min_similarity,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG similar search failed: {e}")
+
+    # Generate context string for LLM injection
+    try:
+        context_string = client.get_context_for_triage(
+            finding=req.finding,
+            host_profile=req.host_profile,
+            max_examples=min(req.top_k, 3),
+        )
+    except Exception:
+        context_string = ""
+
+    # Convert to response format
+    search_results = [
+        RAGSearchResult(
+            report_id=r.report_id,
+            title=r.title,
+            vuln_type=r.vuln_type or "",
+            severity=r.severity or "",
+            cwe=r.cwe or "",
+            target_technology=r.target_technology or [],
+            attack_vector=r.attack_vector or "",
+            payload=r.payload or "",
+            impact=r.impact or "",
+            source_url=r.source_url or "",
+            similarity=r.similarity,
+        )
+        for r in results
+    ]
+
+    return RAGSimilarVulnsResponse(
+        results=search_results,
+        context_string=context_string,
+        total_results=len(search_results),
+    )
+
+
+@app.get("/mcp/rag_stats", response_model=RAGStatsResponse)
+def rag_stats():
+    """
+    Get statistics about the RAG knowledge base.
+
+    Returns counts of total reports, vulnerability types, and severities.
+    Useful for verifying the RAG database is populated and healthy.
+    """
+    client = _get_rag_client()
+
+    try:
+        stats = client.get_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get RAG stats: {e}")
+
+    return RAGStatsResponse(
+        total_reports=stats.get("total_reports", 0),
+        vuln_types=stats.get("vuln_types", {}),
+        severities=stats.get("severities", {}),
+    )
+
+
+@app.post("/mcp/rag_search_by_type")
+def rag_search_by_type(vuln_type: str, top_k: int = 10):
+    """
+    Search for vulnerabilities by type (XSS, SSRF, IDOR, etc.).
+
+    This is a convenience endpoint for quickly finding examples of
+    specific vulnerability classes.
+    """
+    client = _get_rag_client()
+
+    try:
+        results = client.search_by_vuln_type(vuln_type=vuln_type, top_k=top_k)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG type search failed: {e}")
+
+    return {
+        "vuln_type": vuln_type,
+        "results": [r.to_dict() for r in results],
+        "total_results": len(results),
+    }
+
+
+@app.post("/mcp/rag_search_by_tech")
+def rag_search_by_tech(technologies: List[str], top_k: int = 10):
+    """
+    Search for vulnerabilities by technology stack.
+
+    Useful for finding relevant vulnerabilities when you know the
+    target's technology stack from fingerprinting.
+
+    Example: technologies=["graphql", "nodejs"]
+    """
+    client = _get_rag_client()
+
+    try:
+        results = client.search_by_tech(technologies=technologies, top_k=top_k)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RAG tech search failed: {e}")
+
+    return {
+        "technologies": technologies,
+        "results": [r.to_dict() for r in results],
+        "total_results": len(results),
+    }
 
 
 # ---------- host history snapshots ----------

@@ -17,6 +17,10 @@ NUCLEI_TEMPLATES_DIR = os.environ.get(
 )
 NUCLEI_BIN = os.environ.get("NUCLEI_BIN", "nuclei")
 
+# Docker network for running katana/whatweb containers
+# When running MCP in Docker, this should be the compose network name
+DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "agentic-bugbounty_lab_network")
+
 # Recon-only template pack (relative to NUCLEI_TEMPLATES_DIR)
 RECON_TEMPLATE_DIRS = [
     "http/technologies/",
@@ -30,13 +34,18 @@ RECON_TEMPLATE_DIRS = [
 
 
 def run_katana(target: str, out_path: str) -> None:
-    """Run Katana via docker image and write JSONL results to out_path."""
+    """Run Katana via docker image and write JSONL results to out_path.
+    
+    Uses DOCKER_NETWORK env var to connect to the same network as target services.
+    When running in Docker compose, targets should use service names (e.g., http://xss_js_secrets:5000)
+    rather than localhost URLs.
+    """
     cmd = [
         "docker",
         "run",
         "--rm",
         "--network",
-        "host",  # sees host's localhost:ports
+        DOCKER_NETWORK,  # Connect to the same network as target services
         "projectdiscovery/katana:latest",
         "-u",
         target,
@@ -161,12 +170,15 @@ def run_whatweb(hosts: list[str]) -> dict[str, dict[str, Any]]:
     """
     Run whatweb via Docker for each host, return a dict:
       { host: { "plugins": [...], "raw": "<whatweb-json>" } }
+    
+    Uses DOCKER_NETWORK env var to connect to the same network as target services.
     """
     fingerprints: dict[str, dict[str, Any]] = {}
     for host in hosts:
         cmd = [
             "docker", "run", "--rm",
-            "morningstar/whatweb:latest",
+            "--network", DOCKER_NETWORK,
+            "cyberwatch/whatweb",
             "-a", "3",
             "--log-json=-",
             host,

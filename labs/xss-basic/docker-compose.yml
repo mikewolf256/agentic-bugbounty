@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  xss-basic:
+    build: .
+    ports:
+      - "9001:5000"
+    environment:
+      - FLASK_ENV=development
+    restart: unless-stopped
+

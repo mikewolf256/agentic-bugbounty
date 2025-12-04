@@ -2,8 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install Docker CLI for running katana/whatweb containers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip \
+ && curl -fsSL https://get.docker.com -o get-docker.sh \
+ && sh get-docker.sh \
+ && rm get-docker.sh \
  && rm -rf /var/lib/apt/lists/*
 
 COPY . /app
@@ -16,5 +20,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 ENV OUTPUT_DIR="/app/output_zap"
 ENV NUCLEI_TEMPLATES_DIR="/app/nuclei-templates"
+ENV DOCKER_NETWORK="agentic-bugbounty_lab_network"
 
 CMD ["uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8000"]

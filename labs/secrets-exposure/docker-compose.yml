@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  secrets-exposure:
+    build: .
+    ports:
+      - "9003:5000"
+    environment:
+      - FLASK_ENV=development
+    restart: unless-stopped
+

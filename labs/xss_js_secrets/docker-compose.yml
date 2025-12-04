@@ -1,12 +1,14 @@
-version: "3.8"
 services:
   xss_js_secrets:
     build: .
     ports:
       - "5001:5000"
     networks:
-      - labs_net
+      - lab_network
 
 networks:
-  labs_net:
-    driver: bridge
+  lab_network:
+    # Use external network when running from main docker-compose
+    # Falls back to creating local network when run standalone
+    name: agentic-bugbounty_lab_network
+    external: false

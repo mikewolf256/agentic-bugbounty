@@ -1,0 +1,33 @@
+# Recon-Only Profile
+# Fast reconnaissance without deep vulnerability scanning
+
+name: recon-only
+description: Quick reconnaissance - fingerprinting and URL discovery only
+
+# Nuclei configuration - only tech detection templates
+nuclei:
+  tags: [tech, fingerprint, detect]
+  exclude_tags: [dos, fuzz, vuln, cve, exploit]
+  severity: [info, low]
+  rate_limit: 200  # Faster rate for recon
+
+# No validators for recon-only
+validators: []
+
+# Skip all validation modules
+skip_modules:
+  - dalfox
+  - sqlmap
+  - ssrf
+  - bac
+
+# AI triage settings
+ai_triage:
+  enabled: true
+  use_llm: false  # Static rules only for speed
+  confidence_threshold: medium
+
+# Scan phases - recon only
+phases:
+  - recon       # Katana + fingerprinting
+

@@ -33,14 +33,18 @@ from urllib.parse import urljoin
 import requests
 
 # Configuration
-MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:8100")
+MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:8000")
 OUTPUT_DIR = Path(__file__).parent.parent / "output_zap" / "test_reports"
+
+# Use Docker service names for MCP->lab communication (when MCP runs in Docker)
+# Use localhost URLs for test script->lab communication (running outside Docker)
+USE_DOCKER_URLS = os.environ.get("USE_DOCKER_URLS", "true").lower() in ("1", "true", "yes")
 
 # Lab configurations - these map to actual lab ports when running locally
 LABS = {
     "xss_js_secrets": {
-        "base_url": "http://localhost:5001",
-        "docker_url": "http://xss_js_secrets:5000",  # When inside docker network
+        "base_url": "http://localhost:5001",  # For test script health checks
+        "docker_url": "http://xss_js_secrets:5000",  # For MCP->lab (inside docker network)
         "description": "Reflected XSS in /search?q= and JS-exposed secrets in config.js",
         "expected_findings": {
             "xss": [{"url": "/search?q=<script>alert(1)</script>", "param": "q"}],
@@ -48,8 +52,8 @@ LABS = {
         },
     },
     "backup_leaks_fingerprint": {
-        "base_url": "http://localhost:8080",
-        "docker_url": "http://backup_leaks_fingerprint:80",
+        "base_url": "http://localhost:5003",  # For test script health checks
+        "docker_url": "http://backup_leaks_fingerprint:80",  # For MCP->lab (inside docker network)
         "description": "Exposes backup-like config and .git data; PHP over Apache",
         "expected_findings": {
             "backups": ["/config.php.bak", "/.git/HEAD"],
@@ -57,8 +61,8 @@ LABS = {
         },
     },
     "idor_auth": {
-        "base_url": "http://localhost:5002",
-        "docker_url": "http://idor_auth:5000",
+        "base_url": "http://localhost:5002",  # For test script health checks
+        "docker_url": "http://idor_auth:5000",  # For MCP->lab (inside docker network)
         "description": "Simple bearer-token auth plus IDOR on /api/users/<id>",
         "expected_findings": {
             "bac": [{"url": "/api/users/2", "requires_auth": True}],
@@ -104,7 +108,8 @@ class MCPLabSimulator:
         """POST to MCP endpoint, return (response_json, error_message)."""
         url = f"{self.mcp_base}{endpoint}"
         try:
-            resp = self.session.post(url, json=data, timeout=60)
+            # Longer timeout for operations that may pull Docker images
+            resp = self.session.post(url, json=data, timeout=300)
             if resp.status_code >= 400:
                 return None, f"HTTP {resp.status_code}: {resp.text[:500]}"
             return resp.json(), None
@@ -167,14 +172,25 @@ class MCPLabSimulator:
             category="infrastructure",
         )
     
+    def _get_target_url(self, lab_name: str) -> str:
+        """Get the appropriate URL for MCP to use when targeting a lab.
+        
+        When MCP runs in Docker, it needs to use Docker service names.
+        """
+        lab = LABS[lab_name]
+        if USE_DOCKER_URLS:
+            return lab["docker_url"]
+        return lab["base_url"]
+    
     def test_set_scope(self, lab_name: str) -> TestResult:
         """Test: /mcp/set_scope endpoint."""
         start = time.time()
         lab = LABS[lab_name]
+        target_url = self._get_target_url(lab_name)
         
         scope = {
             "program_name": f"lab-{lab_name}",
-            "primary_targets": [lab["base_url"]],
+            "primary_targets": [target_url],
             "secondary_targets": [],
             "rules": {},
         }
@@ -203,9 +219,9 @@ class MCPLabSimulator:
     def test_katana_nuclei(self, lab_name: str) -> TestResult:
         """Test: /mcp/run_katana_nuclei endpoint."""
         start = time.time()
-        lab = LABS[lab_name]
+        target_url = self._get_target_url(lab_name)
         
-        payload = {"target": lab["base_url"]}
+        payload = {"target": target_url}
         resp, err = self._mcp_post("/mcp/run_katana_nuclei", payload)
         duration = (time.time() - start) * 1000
         
@@ -246,9 +262,9 @@ class MCPLabSimulator:
     def test_backup_hunt_job(self, lab_name: str) -> TestResult:
         """Test: /mcp/run_backup_hunt background job."""
         start = time.time()
-        lab = LABS[lab_name]
+        target_url = self._get_target_url(lab_name)
         
-        payload = {"base_url": lab["base_url"]}
+        payload = {"base_url": target_url}
         resp, err = self._mcp_post("/mcp/run_backup_hunt", payload)
         duration = (time.time() - start) * 1000
         
@@ -306,9 +322,9 @@ class MCPLabSimulator:
     def test_js_miner_job(self, lab_name: str) -> TestResult:
         """Test: /mcp/run_js_miner background job."""
         start = time.time()
-        lab = LABS[lab_name]
+        target_url = self._get_target_url(lab_name)
         
-        payload = {"base_url": lab["base_url"]}
+        payload = {"base_url": target_url}
         resp, err = self._mcp_post("/mcp/run_js_miner", payload)
         duration = (time.time() - start) * 1000
         
@@ -356,11 +372,11 @@ class MCPLabSimulator:
     def test_host_profile(self, lab_name: str) -> TestResult:
         """Test: /mcp/host_profile endpoint."""
         start = time.time()
-        lab = LABS[lab_name]
+        target_url = self._get_target_url(lab_name)
         
         # Extract hostname from URL
         from urllib.parse import urlparse
-        parsed = urlparse(lab["base_url"])
+        parsed = urlparse(target_url)
         host = parsed.netloc
         
         payload = {"host": host}
@@ -403,10 +419,10 @@ class MCPLabSimulator:
     def test_triage_nuclei_templates(self, lab_name: str) -> TestResult:
         """Test: /mcp/triage_nuclei_templates AI endpoint."""
         start = time.time()
-        lab = LABS[lab_name]
+        target_url = self._get_target_url(lab_name)
         
         from urllib.parse import urlparse
-        parsed = urlparse(lab["base_url"])
+        parsed = urlparse(target_url)
         host = parsed.netloc
         
         # First need to build host_profile
@@ -451,9 +467,9 @@ class MCPLabSimulator:
     def test_fingerprints(self, lab_name: str) -> TestResult:
         """Test: /mcp/run_fingerprints endpoint."""
         start = time.time()
-        lab = LABS[lab_name]
+        target_url = self._get_target_url(lab_name)
         
-        payload = {"target": lab["base_url"]}
+        payload = {"target": target_url}
         resp, err = self._mcp_post("/mcp/run_fingerprints", payload)
         duration = (time.time() - start) * 1000
         
@@ -483,6 +499,105 @@ class MCPLabSimulator:
             name=f"Fingerprints ({lab_name})",
             passed=True,
             message=f"Detected {len(technologies)} technologies",
+            duration_ms=duration,
+            details=resp,
+            category="scanning",
+        )
+    
+    def test_bac_checks(self, lab_name: str) -> TestResult:
+        """Test: /mcp/run_bac_checks endpoint."""
+        start = time.time()
+        target_url = self._get_target_url(lab_name)
+        
+        from urllib.parse import urlparse
+        parsed = urlparse(target_url)
+        host = parsed.netloc
+        
+        payload = {"host": host}
+        resp, err = self._mcp_post("/mcp/run_bac_checks", payload)
+        duration = (time.time() - start) * 1000
+        
+        if err:
+            return TestResult(
+                name=f"BAC Checks ({lab_name})",
+                passed=False,
+                message=f"Failed: {err}",
+                duration_ms=duration,
+                category="validation",
+            )
+        
+        meta = resp.get("meta", {})
+        checks_count = meta.get("checks_count", 0)
+        confirmed = meta.get("confirmed_issues_count", 0)
+        
+        return TestResult(
+            name=f"BAC Checks ({lab_name})",
+            passed=True,
+            message=f"Ran {checks_count} checks, {confirmed} issues found",
+            duration_ms=duration,
+            details=resp,
+            category="validation",
+        )
+    
+    def test_ssrf_checks(self, lab_name: str) -> TestResult:
+        """Test: /mcp/run_ssrf_checks endpoint."""
+        start = time.time()
+        target_url = self._get_target_url(lab_name)
+        
+        # SSRF test needs a URL with a parameter
+        test_url = f"{target_url}?url=http://example.com"
+        
+        payload = {"target": test_url, "param": "url"}
+        resp, err = self._mcp_post("/mcp/run_ssrf_checks", payload)
+        duration = (time.time() - start) * 1000
+        
+        if err:
+            return TestResult(
+                name=f"SSRF Checks ({lab_name})",
+                passed=False,
+                message=f"Failed: {err}",
+                duration_ms=duration,
+                category="validation",
+            )
+        
+        meta = resp.get("meta", {})
+        checks_count = meta.get("checks_count", 0)
+        confirmed = meta.get("confirmed_issues_count", 0)
+        
+        return TestResult(
+            name=f"SSRF Checks ({lab_name})",
+            passed=True,
+            message=f"Ran {checks_count} checks, {confirmed} issues found",
+            duration_ms=duration,
+            details=resp,
+            category="validation",
+        )
+    
+    def test_nuclei_scan(self, lab_name: str) -> TestResult:
+        """Test: /mcp/run_nuclei endpoint."""
+        start = time.time()
+        target_url = self._get_target_url(lab_name)
+        
+        payload = {"target": target_url, "mode": "recon"}
+        resp, err = self._mcp_post("/mcp/run_nuclei", payload)
+        duration = (time.time() - start) * 1000
+        
+        if err:
+            return TestResult(
+                name=f"Nuclei Scan ({lab_name})",
+                passed=False,
+                message=f"Failed: {err}",
+                duration_ms=duration,
+                category="scanning",
+            )
+        
+        findings_count = resp.get("findings_count", 0)
+        mode = resp.get("mode", "unknown")
+        
+        return TestResult(
+            name=f"Nuclei Scan ({lab_name})",
+            passed=True,
+            message=f"Mode: {mode}, {findings_count} findings",
             duration_ms=duration,
             details=resp,
             category="scanning",
@@ -687,6 +802,11 @@ class MCPLabSimulator:
                 self.test_results.append(self.test_backup_hunt_job(lab_name))
                 self.test_results.append(self.test_js_miner_job(lab_name))
                 self.test_results.append(self.test_fingerprints(lab_name))
+                
+                # Validation tests (BAC, SSRF, Nuclei)
+                self.test_results.append(self.test_bac_checks(lab_name))
+                self.test_results.append(self.test_ssrf_checks(lab_name))
+                self.test_results.append(self.test_nuclei_scan(lab_name))
         
         # Static code analysis
         print("\n--- Analyzing codebase for issues ---")

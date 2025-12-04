@@ -1,0 +1,39 @@
+{
+  "name": "xss-basic",
+  "description": "Basic XSS vulnerabilities - reflected and error-page reflection",
+  "base_url": "http://localhost:9001",
+  "difficulty": "easy",
+  "expected_findings": [
+    {
+      "type": "xss",
+      "subtype": "reflected",
+      "cwe": "CWE-79",
+      "description": "Reflected XSS via search query parameter",
+      "endpoint": "/search",
+      "parameter": "q"
+    },
+    {
+      "type": "xss",
+      "subtype": "reflected",
+      "cwe": "CWE-79",
+      "description": "Reflected XSS via error message",
+      "endpoint": "/error",
+      "parameter": "msg"
+    },
+    {
+      "type": "xss",
+      "subtype": "reflected",
+      "cwe": "CWE-79",
+      "description": "Reflected XSS in user profile name",
+      "endpoint": "/profile",
+      "parameter": "name"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/search", "method": "GET", "description": "Search with vulnerable q param"},
+    {"path": "/error", "method": "GET", "description": "Error page with vulnerable msg param"},
+    {"path": "/profile", "method": "GET", "description": "Profile page with vulnerable name param"}
+  ]
+}
+

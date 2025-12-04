@@ -1,0 +1,48 @@
+{
+  "name": "secrets-exposure",
+  "description": "Exposed secrets, config files, and sensitive data",
+  "base_url": "http://localhost:9003",
+  "difficulty": "easy",
+  "expected_findings": [
+    {
+      "type": "secrets",
+      "subtype": "env_file",
+      "cwe": "CWE-200",
+      "pattern": ".env",
+      "description": "Exposed .env file with database credentials",
+      "endpoint": "/.env"
+    },
+    {
+      "type": "secrets",
+      "subtype": "js_hardcoded",
+      "cwe": "CWE-798",
+      "pattern": "api_key",
+      "description": "Hardcoded API key in JavaScript",
+      "endpoint": "/static/config.js"
+    },
+    {
+      "type": "exposure",
+      "subtype": "backup",
+      "cwe": "CWE-530",
+      "pattern": "backup",
+      "description": "Exposed backup file",
+      "endpoint": "/backup.sql"
+    },
+    {
+      "type": "exposure",
+      "subtype": "git",
+      "cwe": "CWE-527",
+      "pattern": ".git",
+      "description": "Exposed .git directory",
+      "endpoint": "/.git/config"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/.env", "method": "GET", "description": "Exposed environment file"},
+    {"path": "/static/config.js", "method": "GET", "description": "JS with hardcoded secrets"},
+    {"path": "/backup.sql", "method": "GET", "description": "Database backup"},
+    {"path": "/.git/config", "method": "GET", "description": "Git config exposure"}
+  ]
+}
+

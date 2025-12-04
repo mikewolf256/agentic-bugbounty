@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import json
 import time
 import shlex
@@ -130,13 +131,98 @@ Return STRICT JSON with keys: title, cvss_vector, cvss_score, summary, repro, im
 Additionally, when the issue appears to be XSS-like (cross-site scripting), also include:
 - xss_type: one of ["reflected","stored","dom"]
 - xss_context: one of ["attribute","html_body","script_block","other"].
-Be conservative. If low-value/noisy, confidence="low", recommended_bounty_usd=0. No leaked-credential validation or SE."""
+Be conservative. If low-value/noisy, confidence="low", recommended_bounty_usd=0. No leaked-credential validation or SE.
+
+When historical vulnerability examples are provided, use them as reference for:
+- Severity assessment and CVSS scoring
+- Impact descriptions and exploitation scenarios
+- Recommended bounty ranges based on similar accepted reports
+- Reproduction steps and payload patterns that have worked before"""
+
 USER_TMPL = """Program scope:
 {scope}
 
 Finding JSON:
 {finding}
 """
+
+USER_TMPL_WITH_RAG = """Program scope:
+{scope}
+
+{rag_context}
+
+Finding JSON:
+{finding}
+"""
+
+# RAG configuration
+RAG_ENABLED = os.environ.get("RAG_ENABLED", "true").lower() in ("1", "true", "yes")
+RAG_MAX_EXAMPLES = int(os.environ.get("RAG_MAX_EXAMPLES", "3"))
+
+# Lazy-loaded RAG client
+_rag_client_instance = None
+
+
+def _get_rag_context(finding: Dict[str, Any], max_examples: int = 3) -> str:
+    """
+    Get RAG context for a finding.
+    
+    This function queries the RAG knowledge base for similar historical
+    vulnerabilities and returns a formatted context string for LLM injection.
+    
+    Returns empty string if RAG is disabled or fails.
+    """
+    global _rag_client_instance
+    
+    if not RAG_ENABLED:
+        return ""
+    
+    try:
+        # Try to use the RAG client directly
+        if _rag_client_instance is None:
+            try:
+                from tools.rag_client import RAGClient
+                _rag_client_instance = RAGClient()
+            except Exception as e:
+                print(f"[RAG] Failed to initialize client: {e}", file=sys.stderr)
+                return ""
+        
+        return _rag_client_instance.get_context_for_triage(
+            finding=finding,
+            max_examples=max_examples,
+        )
+    except Exception as e:
+        # RAG failures should not break triage
+        print(f"[RAG] Warning: Failed to get context: {e}", file=sys.stderr)
+        return ""
+
+
+def _get_rag_context_via_mcp(finding: Dict[str, Any], max_examples: int = 3) -> str:
+    """
+    Get RAG context via MCP endpoint (for when running in full-scan mode).
+    
+    Falls back to empty string if MCP is unavailable.
+    """
+    if not RAG_ENABLED:
+        return ""
+    
+    try:
+        url = MCP_SERVER_URL.rstrip("/") + "/mcp/rag_similar_vulns"
+        payload = {
+            "finding": finding,
+            "top_k": max_examples + 2,  # Get a few extra for filtering
+            "min_similarity": 0.35,
+        }
+        
+        resp = requests.post(url, json=payload, timeout=30)
+        if resp.status_code != 200:
+            return ""
+        
+        data = resp.json()
+        return data.get("context_string", "")
+    except Exception as e:
+        print(f"[RAG] Warning: MCP RAG call failed: {e}", file=sys.stderr)
+        return ""
 
 # ==== Helpers ====
 def map_mitre(t: Dict[str, Any]) -> Dict[str, Any]:
@@ -587,13 +673,35 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         # Be defensive: ignore non-dict entries (e.g. summary objects)
         if not isinstance(f, dict):
             continue
+        
+        # Get RAG context for similar historical vulnerabilities
+        rag_context = ""
+        if RAG_ENABLED:
+            try:
+                rag_context = _get_rag_context(f, max_examples=RAG_MAX_EXAMPLES)
+                if rag_context:
+                    print(f"[RAG] Found similar historical vulnerabilities for finding", file=sys.stderr)
+            except Exception as e:
+                print(f"[RAG] Context retrieval failed: {e}", file=sys.stderr)
+        
+        # Build the user message with or without RAG context
+        if rag_context:
+            user_content = USER_TMPL_WITH_RAG.format(
+                scope=json.dumps(scope, indent=2),
+                rag_context=rag_context,
+                finding=json.dumps(f, indent=2),
+            )
+        else:
+            user_content = USER_TMPL.format(
+                scope=json.dumps(scope, indent=2),
+                finding=json.dumps(f, indent=2),
+            )
+        
         msgs = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": USER_TMPL.format(scope=json.dumps(scope, indent=2), finding=json.dumps(f, indent=2)),
-            },
+            {"role": "user", "content": user_content},
         ]
+        
         # LLM triage
         try:
             raw = openai_chat(msgs)

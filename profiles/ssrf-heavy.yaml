@@ -1,0 +1,70 @@
+# SSRF-Heavy Profile
+# Focus on Server-Side Request Forgery detection
+
+name: ssrf-heavy
+description: Focused SSRF detection with callback validation
+
+# Nuclei configuration - SSRF templates
+nuclei:
+  tags: [ssrf, oob, callback, redirect, url]
+  exclude_tags: [dos, xss, sqli]
+  severity: [critical, high, medium]
+  rate_limit: 50  # Lower rate for callback-based testing
+
+# Only SSRF validator
+validators:
+  - ssrf
+
+# Skip non-SSRF validators
+skip_modules:
+  - dalfox
+  - sqlmap
+  - bac
+
+# AI triage settings
+ai_triage:
+  enabled: true
+  use_llm: true
+  confidence_threshold: medium
+  priority_cwes: [CWE-918]
+
+# Scan phases
+phases:
+  - recon       # Katana + fingerprinting
+  - nuclei      # SSRF templates
+  - validators  # SSRF checks only
+  - triage      # LLM triage
+
+# Extra settings for SSRF testing
+extra:
+  # Callback server configuration (uses SSRF_CALLBACK_URL env var)
+  use_callback: true
+  callback_timeout: 30
+  # Focus on URL-handling endpoints
+  path_patterns:
+    - /fetch
+    - /proxy
+    - /url
+    - /import
+    - /export
+    - /webhook
+    - /callback
+    - /image
+    - /screenshot
+    - /pdf
+  # Parameter patterns for SSRF
+  ssrf_params:
+    - url
+    - uri
+    - target
+    - dest
+    - redirect
+    - callback
+    - webhook
+    - proxy
+    - fetch
+    - load
+    - img
+    - image
+    - src
+

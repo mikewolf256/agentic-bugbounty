@@ -1,0 +1,36 @@
+# Full Scan Profile
+# Runs all modules and validators - comprehensive coverage
+
+name: full
+description: Complete scan with all modules and validators enabled
+
+# Nuclei configuration
+nuclei:
+  tags: []  # No tag filtering - run all relevant templates
+  exclude_tags: [dos]  # Exclude denial-of-service tests
+  severity: [critical, high, medium, low]
+  rate_limit: 150  # requests per second
+
+# Validators to run on findings
+validators:
+  - dalfox      # XSS validation
+  - sqlmap      # SQLi validation
+  - ssrf        # SSRF validation
+  - bac         # Broken Access Control checks
+
+# Modules to skip (none for full scan)
+skip_modules: []
+
+# AI triage settings
+ai_triage:
+  enabled: true
+  use_llm: true
+  confidence_threshold: low  # Triage all confidence levels
+
+# Scan phases
+phases:
+  - recon       # Katana + fingerprinting
+  - nuclei      # AI-selected templates
+  - validators  # Run all validators
+  - triage      # LLM triage and reporting
+

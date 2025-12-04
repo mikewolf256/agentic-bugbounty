@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  idor-api:
+    build: .
+    ports:
+      - "9002:5000"
+    environment:
+      - FLASK_ENV=development
+    restart: unless-stopped
+

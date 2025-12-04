@@ -26,8 +26,8 @@ DALFOX_THREADS = int(os.environ.get("DALFOX_THREADS", "5"))  # dalfox -t
 _DALFOX_CACHE: Dict[Tuple[str, Optional[str]], Tuple[bool, dict]] = {}
 
 # MCP server config (for orchestrated scans / containerization)
+# Default port 8000 matches Dockerfile.mcp and docker-compose.yml
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000")
-MCP_BASE_DEFAULT = os.environ.get("MCP_BASE", "http://localhost:8100")
 
 SYSTEM_PROMPT = """You are a senior web security engineer and bug bounty triager.
 Return STRICT JSON with keys: title, cvss_vector, cvss_score, summary, repro, impact, remediation, cwe, confidence, recommended_bounty_usd.
@@ -1076,6 +1076,31 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
     return triage_path
 
+
+def _load_jsonl_findings(filepath: str) -> List[Dict[str, Any]]:
+    """Load findings from a JSONL file (one JSON object per line).
+    
+    Used for targeted nuclei output which uses JSONL format.
+    """
+    findings: List[Dict[str, Any]] = []
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    finding = json.loads(line)
+                    # Tag the finding source for tracking
+                    finding["_source"] = "targeted_nuclei"
+                    findings.append(finding)
+                except json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        print(f"[RUNNER] Error loading JSONL from {filepath}: {e}")
+    return findings
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--findings_file", help="ZAP findings JSON (for triage mode)")
@@ -1108,15 +1133,55 @@ def main():
         json.dump(summary, open(summary_path, "w"), indent=2)
         print("[RUNNER] Wrote full-scan summary", summary_path)
 
-        # Auto-triage any zap_findings_*.json and cloud_findings_*.json files produced by the scans
+        # Auto-triage findings from all sources:
+        # - zap_findings_*.json - ZAP scan results
+        # - cloud_findings_*.json - Cloud recon results  
+        # - targeted_nuclei_*.json - AI-driven targeted nuclei scans (JSONL format)
+        # - katana_nuclei_*.json - Katana+Nuclei recon results
         for fname in os.listdir(out_dir):
             if not fname.endswith(".json"):
                 continue
-            if not (fname.startswith("zap_findings_") or fname.startswith("cloud_findings_")):
-                continue
+            
             findings_path = os.path.join(out_dir, fname)
-            print(f"[RUNNER] Auto-triaging findings from {findings_path}")
-            run_triage_for_findings(findings_path, scope, out_dir=out_dir)
+            
+            # Handle standard JSON findings (ZAP, cloud)
+            if fname.startswith("zap_findings_") or fname.startswith("cloud_findings_"):
+                print(f"[RUNNER] Auto-triaging findings from {findings_path}")
+                run_triage_for_findings(findings_path, scope, out_dir=out_dir)
+                continue
+            
+            # Handle targeted nuclei findings (JSONL format from AI-driven scans)
+            if fname.startswith("targeted_nuclei_"):
+                print(f"[RUNNER] Processing targeted nuclei findings from {findings_path}")
+                nuclei_findings = _load_jsonl_findings(findings_path)
+                if nuclei_findings:
+                    # Write as standard JSON array for triage
+                    converted_path = findings_path.replace(".json", "_converted.json")
+                    with open(converted_path, "w", encoding="utf-8") as fh:
+                        json.dump(nuclei_findings, fh, indent=2)
+                    print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} targeted nuclei findings")
+                    run_triage_for_findings(converted_path, scope, out_dir=out_dir)
+                continue
+            
+            # Handle Katana+Nuclei findings (nested JSON structure)
+            if fname.startswith("katana_nuclei_") and not fname.endswith("_findings.json"):
+                print(f"[RUNNER] Processing katana+nuclei findings from {findings_path}")
+                try:
+                    with open(findings_path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    nuclei_findings = data.get("nuclei_findings", [])
+                    if nuclei_findings:
+                        # Write findings as separate file for triage
+                        findings_only_path = findings_path.replace(".json", "_findings.json")
+                        if not os.path.exists(findings_only_path):
+                            with open(findings_only_path, "w", encoding="utf-8") as fh:
+                                json.dump(nuclei_findings, fh, indent=2)
+                            print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} katana+nuclei findings")
+                            run_triage_for_findings(findings_only_path, scope, out_dir=out_dir)
+                except Exception as e:
+                    print(f"[RUNNER] Error processing {fname}: {e}")
+                continue
+        
         return
 
     # Triaging an existing findings file

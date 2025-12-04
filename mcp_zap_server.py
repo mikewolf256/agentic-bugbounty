@@ -1272,5 +1272,6 @@ def _load_host_profile_snapshot(host: str, latest: bool = True) -> Optional[Dict
 
 if __name__ == "__main__":
     import uvicorn
-    print("MCP server starting (no ZAP dependency).")
-    uvicorn.run("mcp_server:app", host="0.0.0.0", port=8100, reload=False)
+    # Default port 8000 matches Dockerfile.mcp and agentic_runner.py defaults
+    print("MCP server starting on port 8000 (no ZAP dependency).")
+    uvicorn.run("mcp_server:app", host="0.0.0.0", port=8000, reload=False)

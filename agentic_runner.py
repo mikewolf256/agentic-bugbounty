@@ -549,6 +549,27 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         summary["modules"].setdefault(host, {})
         summary["modules"][host]["katana_nuclei"] = katana_result
 
+        # --- Authenticated Katana recon (if Chrome DevTools available) ---
+        # Try to run authenticated recon - will auto-detect Chrome DevTools on port 9222
+        try:
+            print(f"[AUTH-KATANA] Attempting authenticated recon for {target_url}...")
+            auth_katana_result = _mcp_post("/mcp/run_katana_auth", {
+                "target": target_url,
+                "session_ws_url": None,  # Auto-detect
+            })
+            summary["modules"][host]["katana_auth"] = {
+                "auth_katana_count": auth_katana_result.get("auth_katana_count", 0),
+                "output_file": auth_katana_result.get("output_file"),
+            }
+            if auth_katana_result.get("auth_katana_count", 0) > 0:
+                print(f"[AUTH-KATANA] Discovered {auth_katana_result['auth_katana_count']} authenticated URLs")
+        except SystemExit as e:
+            print(f"[AUTH-KATANA] Authenticated recon skipped for {host}: {e}")
+            summary["modules"][host]["katana_auth"] = {"error": "Chrome DevTools not available or no authenticated session"}
+        except Exception as e:
+            print(f"[AUTH-KATANA] Authenticated recon failed for {host}: {e}")
+            summary["modules"][host]["katana_auth"] = {"error": str(e)}
+
         # --- JS miner (best-effort, non-blocking) ---
         try:
             js_resp = _mcp_post("/mcp/run_js_miner", {"base_url": target_url})
@@ -664,6 +685,36 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception as e:
                     print(f"[OPEN_REDIRECT] Error checking redirects: {e}")
 
+        # --- NEW: OAuth/OIDC Security Checks ---
+        # Run OAuth security checks if OAuth endpoints detected
+        oauth_results: Dict[str, Any] = {}
+        if profile:
+            web = profile.get("web", {}) or {}
+            # Check if OAuth endpoints might be present (check for common patterns)
+            urls = web.get("urls", []) or []
+            oauth_indicators = any(
+                "oauth" in url.lower() or "openid" in url.lower() or ".well-known" in url.lower()
+                for url in urls
+            )
+            
+            if oauth_indicators or "validators" in phases:
+                try:
+                    print(f"[OAUTH] Running OAuth security checks for {h}...")
+                    oauth_result = _mcp_post("/mcp/run_oauth_checks", {
+                        "host": h,
+                    })
+                    oauth_results = {
+                        "vulnerable_count": oauth_result.get("vulnerable_count", 0),
+                        "findings_file": oauth_result.get("findings_file"),
+                        "meta": oauth_result.get("meta", {}),
+                    }
+                    if oauth_result.get("vulnerable_count", 0) > 0:
+                        print(f"[OAUTH] Found {oauth_result['vulnerable_count']} OAuth vulnerabilities")
+                except SystemExit as e:
+                    print(f"[OAUTH] OAuth checks failed for {h}: {e}")
+                except Exception as e:
+                    print(f"[OAUTH] OAuth checks error for {h}: {e}")
+
         # --- NEW: Subdomain Takeover Checks ---
         # Run subdomain enumeration and takeover checks (recon phase)
         takeover_results: Dict[str, Any] = {}
@@ -714,7 +765,35 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
             "vulnerable_count": len(open_redirect_results),
             "results": open_redirect_results,
         }
+        summary["modules"][h]["oauth"] = oauth_results
         summary["modules"][h]["takeover"] = takeover_results
+
+        # --- NEW: Race Condition Checks ---
+        # Run race condition checks for fintech/e-commerce targets or race-heavy profile
+        race_results: Dict[str, Any] = {}
+        profile_name = get_profile_setting("name", "default")
+        is_race_heavy = profile_name == "race-heavy" or "race" in profile_name.lower()
+        
+        if is_race_heavy or "validators" in phases:
+            try:
+                print(f"[RACE] Running race condition checks for {h}...")
+                race_result = _mcp_post("/mcp/run_race_checks", {
+                    "host": h,
+                    "num_requests": 10,
+                })
+                race_results = {
+                    "vulnerable_count": race_result.get("vulnerable_count", 0),
+                    "findings_file": race_result.get("findings_file"),
+                    "meta": race_result.get("meta", {}),
+                }
+                if race_result.get("vulnerable_count", 0) > 0:
+                    print(f"[RACE] Found {race_result['vulnerable_count']} race condition vulnerabilities")
+            except SystemExit as e:
+                print(f"[RACE] Race checks failed for {h}: {e}")
+            except Exception as e:
+                print(f"[RACE] Race checks error for {h}: {e}")
+        
+        summary["modules"][h]["race"] = race_results
 
         summary_hosts.append(
             {
@@ -751,6 +830,22 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
     os.makedirs(out_dir, exist_ok=True)
     findings = json.load(open(findings_file))
+
+    # Deduplicate findings before triage
+    try:
+        print(f"[DEDUP] Deduplicating {len(findings)} findings before triage...", file=sys.stderr)
+        dedup_result = _mcp_post("/mcp/deduplicate_findings", {
+            "findings": findings,
+            "use_semantic": True,
+        })
+        findings = dedup_result.get("deduplicated_findings", findings)
+        print(f"[DEDUP] Deduplicated to {len(findings)} findings ({dedup_result.get('duplicates_removed', 0)} removed)", file=sys.stderr)
+        
+        # Store correlation graph if available
+        if dedup_result.get("correlation_graph"):
+            print(f"[CORRELATION] Vulnerability chains detected: {len(dedup_result['correlation_graph'].get('chains_detected', []))}", file=sys.stderr)
+    except Exception as e:
+        print(f"[DEDUP] Deduplication failed, continuing with original findings: {e}", file=sys.stderr)
 
     triaged = []
     for f in findings:

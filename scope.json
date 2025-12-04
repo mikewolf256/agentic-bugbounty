@@ -1,11 +1,10 @@
 {
-  "program_name": "juice-shop-local",
-  "me": "local-test",
+  "program_name": "labs-dev",
   "primary_targets": [
-    "http://juice-shop:3000"
+    "http://localhost:5001",
+    "http://localhost:5002",
+    "http://localhost:5003"
   ],
   "secondary_targets": [],
-  "in_scope": [
-    { "url": "http://juice-shop:3000" }
-  ]
+  "rules": {}
 }

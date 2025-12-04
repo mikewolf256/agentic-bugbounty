@@ -1,40 +1,120 @@
-# P0 Bug Bounty & Red-Team Roadmap
+# Agentic Bug Bounty – Updated Roadmap (with Authenticated Katana Session Support)
 
-This roadmap tracks planned capabilities for the current P0 program across seven core bug bounty focus areas, plus red-team and platform features.
+## P0 – Core Pipeline Foundations
+- [x] Project Scaffolding & Repo Structure
+- [x] Core MCP endpoints (run_scan, fetch_scope, nuclei_scan, zap_scan)
+- [x] Kubernetes Worker Model & Container Templates
+- [x] Global Config Management (scopes.json, endpoints.json)
+- [x] Local + K8s Execution Modes
+- [x] Scan Orchestration Controller
+- [x] Artifact Output Folder Standardization
 
 ---
 
-## Now / Next / Later (Unified View)
+## P1 – High Priority Features (Critical to MVP)
 
-- **Now – P0: Core Findings + Evidence Automation**
-  - Core MCP + runner pipeline, host profiling, and host deltas implemented and tested (`P0.0`).
-  - ZAP scanning orchestration via MCP, multi-host scan orchestration, and host history.
-  - Dedupe + pre-filtering of findings (skip noisy/low-CVSS issues) before LLM triage.
-  - XSS + Dalfox behavior tightened to XSS-only, medium+ confidence with clean triage/Markdown (`P0.1`).
-  - SQLi validation wired via `/mcp/run_sqlmap` and triage + Markdown integration (`P0.2`).
-  - BAC v1 (`/mcp/run_bac_checks` + config + basic vertical/IDOR checks) and SSRF v1 (`/mcp/run_ssrf_checks`) enriched with engine metadata in triage and Markdown (`P0.3`, `P0.4`).
-  - Katana + Nuclei web recon wired via MCP `/mcp/run_katana_nuclei` and helper script (`P0.0`, `P0.1`, `P0.2`).
-  - JS miner for endpoints/keys (MCP `/mcp/run_js_miner` + background job) and reflection detector for XSS candidates.
-  - Backup hunter (HTTP-based, via `/mcp/run_backup_hunt`) for common backup/config file exposures, with hits surfaced in `host_profile.web.backups`.
-  - Artifact hygiene + structured outputs (triage JSONs, Markdown reports, `program_run_*.json`).
-- **Next – P1: Authenticated Testing + High-ROI Expansions**
-  - ZAP Auth Context + API tokens for authenticated spidering and scanning.
-  - ffuf/sqlmap authenticated mode (reuse auth contexts, session cookies, or tokens).
-  - Deeper business logic checks (IDOR, BOLA, mass assignment) building on BAC v1.
-  - Nuclei curated recon/attack template sets for high-signal coverage.
-  - Interactsh (or equivalent) for OOB payloads and SSRF/callback correlation.
-  - Secrets detection + redaction pipeline (beyond basic regex/entropy checks).
-- **Later – P2–P5: Intelligence, Scale, Red-Team, Platform**
-  - **P2 – Intelligence + RAG memory:** vector DB of past findings, pattern recognition on repeats, RAG-assisted second-stage scanning, and LLM-assisted payload mutation.
-  - **P3 – Distributed worker cluster:** Redis/Kafka work queue, K8s worker pods with autoscaling, job templates for ZAP/ffuf/sqlmap/nuclei, and per-scan isolation.
-  - **P4 – Red team / ASM mode:** Wayback machine URI mining, JS/source-map harvesting, technology fingerprinting, attack-path graph building, MITRE ATT&CK JSON export, and red-team report templates.
-  - **P5 – Commercial features:** tenant onboarding, one-click scanning portal, automated evidence-to-report pipeline (PDF/MD), billing and usage metering.
+### **P1.1 – Recon & Crawling Layer**
+- [x] Katana unauthenticated crawling integration
+- [x] Katana + JS Miner for endpoint extraction
+- [x] WaybackURL ingestion
+- [x] Param mine baseline
+- [ ] Basic fingerprinting (technologies, frameworks)
+- [ ] Add WhatWeb/Similar tech-fingerprinter fallback
 
-  - **P2/P3 – Training & Lab Harness:**
-    - Build a small library of dockerized vulnerable labs (reflected XSS, IDOR/BOLA, backup/config leaks, hard-coded JS secrets, SSRF) with `lab_metadata.json` describing expected findings.
-    - Add a lab runner script that spins up a lab, sets MCP scope, runs ZAP + helpers, then triages findings via `agentic_runner.py` and scores detection/report quality against `expected_findings`.
-    - Use lab runs as regression tests for the agentic pipeline ("can we still detect XSS/IDOR/backup leaks end-to-end?").
-    - Index high-quality public bug bounty reports and lab walkthroughs in a RAG store (tagged by bug_type/CWE/surface) to assist triage and report generation without immediate fine-tuning.
+---
+
+### **P1.2 – NEW: Authenticated Recon via Katana Active Browser Session (Added)**
+**Purpose:** Unlock full authenticated surface mapping using live Chrome session + DevTools WebSocket.
+
+**Tasks:**
+- [ ] MCP Endpoint: `/mcp/run_katana_auth`
+- [ ] Output directory: `artifacts/katana_auth/<host>/`
+- [ ] Chrome helper script (`--remote-debugging-port=9222`)
+- [ ] Auto-extract authenticated session cookies
+- [ ] Collect authenticated-only:
+  - URLs
+  - JS files
+  - API endpoints (XHR/fetch)
+  - GraphQL schemas
+  - POST bodies
+- [ ] Normalize results into unified recon DB
+- [ ] Feed authenticated URLs → ffuf/sqlmap/dalfox/ZAP
+- [ ] Tag resources in RAG knowledge store
+- [ ] Integrate into reporting pipeline
+
+---
+
+### **P1.3 – Nuclei Layer**
+- [x] Baseline nuclei scan integration
+- [ ] Curated template bundle for highest-paying bug classes
+- [ ] Add GraphQL templates
+- [ ] Add authenticated-template support
+- [ ] Severity post-processing
+
+---
+
+### **P1.4 – ZAP Integration**
+- [ ] ZAP baseline passive scan
+- [ ] Advanced script loader
+- [ ] Scripted authenticated scans
+- [ ] Normalize ZAP results
+
+---
+
+### **P1.5 – RAG Vulnerability Intelligence Pipeline**
+- [x] Embedding model selection
+- [ ] Unified schema:
+  - vuln_type
+  - attack_chain
+  - endpoint
+  - reproduction_steps
+  - payload
+  - impact
+- [ ] H1 ingestion pipeline
+- [ ] Fingerprinting correlations
+- [ ] Suggest exploit chains
+- [ ] Add SSRF, GraphQL, ReDoS, IDOR embeddings
+
+---
+
+## P2 – Medium Priority Features
+
+### **P2.1 – Worker Clustering**
+- [ ] Batch scheduler
+- [ ] Priority queue
+- [ ] Adaptive parallelism
+
+### **P2.2 – Enhanced Fingerprinting**
+- [ ] JS/tech-library detection
+- [ ] Backend/framework inference
+- [ ] Cloud-provider fingerprinting
+- [ ] Favicon hash → tech inference
+
+---
+
+## P3 – Reporting & Export Layer
+- [ ] Markdown report generator
+- [ ] JSON export
+- [ ] MITRE ATT&CK Navigator export
+- [ ] Authenticated recon sections
+
+---
+
+## P4 – Long-term/Stretch Features
+
+### **P4.1 – Fully Autonomous Red Team Mode**
+- [ ] Search-based exploitation planner
+- [ ] Multi-step attack simulations
+- [ ] Auto-chain SSRF → metadata → takeover
+- [ ] Attack path graph generator
+
+### **P4.2 – Red Team Service Offering Mode**
+- [ ] Client-ready deliverables
+- [ ] MITRE mapping
+- [ ] Executive report generation
+- [ ] External API mode
+
+---
 
 ---
 
@@ -54,6 +134,14 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - [x] Introduce Katana + Nuclei helper: `tools/katana_nuclei_recon.py`.
   - [x] Add `/mcp/run_katana_nuclei` endpoint to orchestrate Katana + Nuclei and emit JSON findings.
   - [x] Wire Katana+Nuclei findings into `full-scan` flow and unified triage automatically (basic integration).
+- **AI-driven Nuclei template selection**
+  - [x] Implement `tools/ai_nuclei_triage.py` - AI helper that analyzes host_profile and selects optimal templates.
+  - [x] Add `/mcp/triage_nuclei_templates` endpoint for AI-driven template selection based on tech stack.
+  - [x] Add `/mcp/run_targeted_nuclei` endpoint for running Nuclei with AI-selected templates.
+  - [x] Wire AI triage into `full-scan` orchestration (after Katana+WhatWeb, before final triage).
+  - [x] Template category mappings for 50+ technologies (WordPress, GraphQL, Spring, AWS, etc.).
+  - [x] Attack surface analysis (API detection, auth endpoints, file upload, admin panels).
+  - [x] Static fallback when LLM unavailable.
 
 ---
 

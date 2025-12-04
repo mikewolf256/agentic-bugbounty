@@ -1,26 +1,11 @@
 version: "3.9"
 
 services:
-  zap:
-    image: ghcr.io/zaproxy/zaproxy
-    command: [
-      "zap.sh",
-      "-daemon",
-      "-host", "0.0.0.0",
-      "-port", "8080",
-      "-config", "api.disablekey=true",
-      "-config", "api.addrs.addr.name=.*",
-      "-config", "api.addrs.addr.regex=true"
-    ]
-    ports:
-      - "8080:8080"
-
   mcp:
     build:
       context: .
       dockerfile: Dockerfile.mcp
     environment:
-      - ZAP_API_BASE=http://zap:8080
       - OUTPUT_DIR=/app/output_zap
       - NUCLEI_TEMPLATES_DIR=/app/nuclei-templates
       - PYTHONPATH=/app
@@ -28,10 +13,9 @@ services:
       - "8000:8000"
     volumes:
       - ./output_zap:/app/output_zap
+      - /var/run/docker.sock:/var/run/docker.sock
       # Optionally mount your local nuclei templates:
       # - ~/nuclei-templates:/app/nuclei-templates:ro
-    depends_on:
-      - zap
 
   juice-shop:
     image: bkimminich/juice-shop
@@ -40,7 +24,5 @@ services:
 
 volumes:
   output_zap:
-
-# mcp_zap_server.py moved to a separate file: /home/mike/Documents/Cyber/agentic-bugbounty/mcp_zap_server.py
 
 

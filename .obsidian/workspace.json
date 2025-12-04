@@ -1,0 +1,227 @@
+{
+  "main": {
+    "id": "27a01fcb037d86ca",
+    "type": "split",
+    "children": [
+      {
+        "id": "fd87d070f9505b55",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "dc2f5b9cf9a6cab4",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "output_zap/test_findings__Cross_Site_Scripting.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "test_findings__Cross_Site_Scripting"
+            }
+          },
+          {
+            "id": "027b5ca3fff01ab0",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "fb66e6f906299dc6",
+    "type": "split",
+    "children": [
+      {
+        "id": "ea77cdb405321b97",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "3852e303151d1bb4",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "dedf3f401bb87b52",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "136d431987b98db2",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "9b4b8dee96220f6e",
+    "type": "split",
+    "children": [
+      {
+        "id": "bf1e20d812d49840",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "3ee86fe96e552e73",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "output_zap/test_findings__Cross_Site_Scripting.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for test_findings__Cross_Site_Scripting"
+            }
+          },
+          {
+            "id": "aeb2da27cf247787",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "output_zap/test_findings__Cross_Site_Scripting.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from test_findings__Cross_Site_Scripting"
+            }
+          },
+          {
+            "id": "b56e74ef1dd607eb",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "d306b5c0cc12f062",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "output_zap/test_findings__Cross_Site_Scripting.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of test_findings__Cross_Site_Scripting"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "027b5ca3fff01ab0",
+  "lastOpenFiles": [
+    "output_zap/program_run_1764819741.json",
+    "tools/ai_nuclei_triage.py",
+    "output_zap/katana_nuclei_httpbin.json",
+    "output_zap/katana_nuclei_reddit.json",
+    "output_zap/katana_nuclei_backup_leaks_fingerprint.json",
+    "output_zap/katana_nuclei_example.json",
+    "tmp_katana",
+    "output_zap/cloud_findings_localhost:3000__Cloud_storage_surface_detected.md",
+    "output_zap/program_run_1764810693.json",
+    "tools/katana_wrapper.py",
+    "tests/tools/katana_wrapper.py",
+    "Dockerfile.katana-wrapper",
+    "output_zap/cloud_findings_juice-shop:3000__Cloud_storage_surface_detected.md",
+    "ROADMAP.md",
+    "nuclei-templates-main/http/osint/user-enumeration/README.md",
+    "nuclei-templates-main/http/osint/phishing/README.md",
+    "nuclei-templates-main/http/token-spray/README.md",
+    "nuclei-templates-main/http/osint/README.md",
+    "nuclei-templates-main/http/credential-stuffing/README.md",
+    "nuclei-templates-main/helpers/payloads/retool-xss.svg",
+    "nuclei-templates-main/profiles/README.md",
+    "nuclei-templates-main/Templates-Bounty-FAQ.md",
+    "nuclei-templates-main/TOP-10.md",
+    "nuclei-templates-main/TEMPLATES-STATS.md",
+    "nuclei-templates-main/TEMPLATE-REVIEW-GUIDE.md",
+    "nuclei-templates-main/TEMPLATE-CREATION-GUIDE.md",
+    "nuclei-templates-main/README_KR.md",
+    "nuclei-templates-main/README_JA.md",
+    "nuclei-templates-main/README_CN.md",
+    "nuclei-templates-main/README.md",
+    "nuclei-templates-main/PULL_REQUEST_TEMPLATE.md",
+    "nuclei-templates-main/LICENSE.md",
+    "nuclei-templates-main/CONTRIBUTING.md",
+    "nuclei-templates-main/CODE_OF_CONDUCT.md",
+    "output_zap/cloud_findings_localhost:3000__Cloud_Storage_Surface_Detected.md",
+    "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md",
+    "P4.md"
+  ]
+}

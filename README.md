@@ -8,7 +8,7 @@
 ## 🌐 Overview
 
 **Agentic Bug Bounty** is a modular framework for automated, AI-assisted security testing across public bug bounty programs.  
-It combines traditional scanners (ZAP, ffuf, Dalfox, etc.) with an LLM-based triage pipeline that filters, analyzes, and summarizes findings into clean, human-ready vulnerability reports.
+It combines traditional scanners (ffuf, Dalfox, Nuclei, Katana, etc.) with an LLM-based triage pipeline that filters, analyzes, and summarizes findings into clean, human-ready vulnerability reports.
 
 This project is designed to:
 - Run **continuously** against program scopes,
@@ -26,8 +26,8 @@ This project is designed to:
 │                  Agentic Bug Bounty Stack                 │
 ├───────────────────────────────────────────────────────────┤
 │ Scope Runner (Python)          → Feeds in-scope targets   │
-│ MCP (Modular Control Plane)    → Orchestrates scans (ZAP) │
-│ ZAP Spider / Active Scan       → Collects findings        │
+│ MCP (Modular Control Plane)    → Orchestrates recon/scans │
+│ Web Recon / Active Scans       → Collect findings         │
 │ Dedupe & Noise Filter          → Drops low-value alerts   │
 │ AI Triage (OpenAI / GPT-4o)    → Summarizes & scores CVSS │
 │ Dalfox / SQLmap / BAC / SSRF  → Validates key bug classes │
@@ -37,7 +37,7 @@ This project is designed to:
 
 **Data Flow:**
 1. **Scope ingestion:** A `scope.json` defines targets & rules.  
-2. **Scanning:** ZAP or other tools crawl each target and export findings.  
+2. **Scanning:** Recon tools crawl each target and export findings.  
 3. **Pre-processing:** `mcp_helpers/dedupe.py` removes noise and deduplicates results.  
 4. **AI triage:** Only meaningful findings are passed to the LLM for contextual scoring, impact, and bounty estimation.  
 5. **Validation:** Tools like **Dalfox** (XSS), **sqlmap** (SQLi), and MCP-powered **BAC/SSRF checks** re-validate high-value findings.  

@@ -1,0 +1,19 @@
+{
+  "name": "idor_auth",
+  "description": "Simple bearer-token auth plus IDOR on /api/users/<id>",
+  "base_url": "http://idor_auth:5000",
+  "auth": {
+    "login_url": "/login/alice",
+    "header_name": "Authorization",
+    "header_value_template": "Bearer {token_header}"
+  },
+  "expected_findings": {
+    "bac": [
+      {
+        "url": "/api/users/2",
+        "requires_auth": true,
+        "pattern": "user A can access user B"
+      }
+    ]
+  }
+}

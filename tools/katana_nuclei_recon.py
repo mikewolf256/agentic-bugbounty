@@ -10,46 +10,85 @@ import tempfile
 from typing import List, Dict, Any
 from urllib.parse import urlparse
 
+
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "./output_zap")
 NUCLEI_TEMPLATES_DIR = os.environ.get(
     "NUCLEI_TEMPLATES_DIR", os.path.expanduser("~/nuclei-templates")
 )
-KATANA_BIN = os.environ.get("KATANA_BIN", "katana")
 NUCLEI_BIN = os.environ.get("NUCLEI_BIN", "nuclei")
 
+# Recon-only template pack (relative to NUCLEI_TEMPLATES_DIR)
+RECON_TEMPLATE_DIRS = [
+    "http/technologies/",
+    "http/exposed-panels/",
+    "http/fingerprints/",
+    "http/misconfiguration/",
+    "exposures/files/",
+    "exposures/configs/",
+    "ssl/",
+]
 
-def run_katana(target: str, out_file: str) -> None:
-    """Run katana against a single target and write JSONL to out_file."""
+
+def run_katana(target: str, out_path: str) -> None:
+    """Run Katana via docker image and write JSONL results to out_path."""
     cmd = [
-        KATANA_BIN,
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "host",  # sees host's localhost:ports
+        "projectdiscovery/katana:latest",
         "-u",
         target,
-        "-o",
-        out_file,
+        "-d",
+        "2",  # working depth from manual test
+        "-c",
+        "5",  # working concurrency from manual test
         "-jsonl",
         "-silent",
-        "-depth",
-        "3",          # moderate depth
-        "-crawl-scope",
-        "host",       # stay on same host
     ]
     print(f"[KATANA] Running: {' '.join(cmd)}", file=sys.stderr)
-    subprocess.run(cmd, check=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print("[KATANA] failed:", proc.stderr or proc.stdout, file=sys.stderr)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            return
 
+    with open(out_path, "w", encoding="utf-8") as dst:
+        for line in proc.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("[launcher.Browser]"):
+                # Skip rod/chromium progress logs
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
-def run_nuclei(urls_file: str, out_file: str) -> None:
-    """Run nuclei over URLs from urls_file, write JSONL to out_file."""
-    cmd = [
-        NUCLEI_BIN,
-        "-l",
-        urls_file,
-        "-t",
-        NUCLEI_TEMPLATES_DIR,
-        "-jsonl",
-        "-silent",
-        "-o",
-        out_file,
-    ]
+            req = obj.get("request") or {}
+
+            url = (
+                obj.get("url")
+                or obj.get("endpoint")
+                or req.get("url")
+                or req.get("endpoint")  # <- this is what your output uses
+            )
+            if not url:
+                continue
+
+            dst.write(json.dumps({"url": url}) + "\n")
+def run_nuclei(urls_file: str, out_file: str, recon_only: bool = False) -> None:
+    """Run nuclei over URLs from urls_file, write JSONL to out_file. If recon_only, use only recon template pack."""
+    cmd = [NUCLEI_BIN, "-l", urls_file]
+    if recon_only:
+        for rel_dir in RECON_TEMPLATE_DIRS:
+            abs_dir = os.path.join(NUCLEI_TEMPLATES_DIR, rel_dir)
+            cmd += ["-t", abs_dir]
+    else:
+        cmd += ["-t", NUCLEI_TEMPLATES_DIR]
+    cmd += ["-jsonl", "-silent", "-o", out_file]
     print(f"[NUCLEI] Running: {' '.join(cmd)}", file=sys.stderr)
     subprocess.run(cmd, check=True)
 
@@ -106,18 +145,46 @@ def classify_katana_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _extract_url(item: Dict[str, Any]) -> str | None:
-    # Try several common katana JSON shapes
+    # Our run_katana now writes simple {"url": ...} items
     if "url" in item:
         return item["url"]
     req = item.get("request") or {}
     if isinstance(req, dict):
         if "url" in req:
             return req["url"]
-        # Some katana versions use "endpoint"
         if "endpoint" in req:
             return req["endpoint"]
-    # Fallback: nothing useful
     return None
+
+
+def run_whatweb(hosts: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    Run whatweb via Docker for each host, return a dict:
+      { host: { "plugins": [...], "raw": "<whatweb-json>" } }
+    """
+    fingerprints: dict[str, dict[str, Any]] = {}
+    for host in hosts:
+        cmd = [
+            "docker", "run", "--rm",
+            "morningstar/whatweb:latest",
+            "-a", "3",
+            "--log-json=-",
+            host,
+        ]
+        print(f"[WHATWEB] Running: {' '.join(cmd)}", file=sys.stderr)
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            print("[WHATWEB] failed for", host, ":", proc.stderr or proc.stdout, file=sys.stderr)
+            continue
+        # whatweb JSON is usually one object per line; take first line
+        line = proc.stdout.splitlines()[0] if proc.stdout else "{}"
+        try:
+            data = json.loads(line)
+        except Exception:
+            data = {"raw": line}
+        fingerprints[host] = data
+    return fingerprints
+
 
 
 def main() -> None:
@@ -127,6 +194,11 @@ def main() -> None:
         "--output",
         default=None,
         help="Output JSON file (under OUTPUT_DIR). Default: katana_nuclei_<host>.json",
+    )
+    ap.add_argument(
+        "--recon-only",
+        action="store_true",
+        help="Use only recon/fingerprinting Nuclei templates (fast, low-noise)",
     )
     args = ap.parse_args()
 
@@ -156,7 +228,7 @@ def main() -> None:
                     fh.write(u + "\n")
 
         # 2) Run nuclei over discovered URLs
-        run_nuclei(urls_txt, nuclei_out)
+        run_nuclei(urls_txt, nuclei_out, recon_only=args.recon_only)
         nuclei_items = load_jsonl(nuclei_out)
 
         # 3) Build structured HTTP surface

@@ -27,6 +27,7 @@ _DALFOX_CACHE: Dict[Tuple[str, Optional[str]], Tuple[bool, dict]] = {}
 
 # MCP server config (for orchestrated scans / containerization)
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000")
+MCP_BASE_DEFAULT = os.environ.get("MCP_BASE", "http://localhost:8100")
 
 SYSTEM_PROMPT = """You are a senior web security engineer and bug bounty triager.
 Return STRICT JSON with keys: title, cvss_vector, cvss_score, summary, repro, impact, remediation, cwe, confidence, recommended_bounty_usd.
@@ -396,6 +397,45 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[MCP] host_delta failed for {h}: {e}")
             delta = {}
 
+        # --- NEW: AI-driven targeted Nuclei scan ---
+        # After Katana+WhatWeb, use AI to select optimal templates and run a targeted scan
+        ai_triage_result: Dict[str, Any] = {}
+        targeted_nuclei_result: Dict[str, Any] = {}
+        
+        if profile:
+            try:
+                print(f"[AI-TRIAGE] Selecting Nuclei templates for {h}...")
+                ai_triage_result = _mcp_post("/mcp/triage_nuclei_templates", {"host": h, "use_llm": True})
+                print(f"[AI-TRIAGE] Mode: {ai_triage_result.get('mode')}, Templates: {len(ai_triage_result.get('templates', []))}")
+                print(f"[AI-TRIAGE] Reasoning: {ai_triage_result.get('reasoning', 'N/A')}")
+                
+                # Run targeted Nuclei scan with AI-selected templates
+                templates = ai_triage_result.get("templates", [])
+                if templates:
+                    target_url = f"http://{h}"
+                    print(f"[AI-TRIAGE] Running targeted Nuclei scan on {target_url}...")
+                    targeted_nuclei_result = _mcp_post("/mcp/run_targeted_nuclei", {
+                        "target": target_url,
+                        "templates": templates,
+                        "tags": ai_triage_result.get("tags"),
+                        "exclude_tags": ai_triage_result.get("exclude_tags"),
+                        "severity": ai_triage_result.get("severity_filter"),
+                    })
+                    print(f"[AI-TRIAGE] Targeted scan complete: {targeted_nuclei_result.get('findings_count', 0)} findings")
+                else:
+                    print(f"[AI-TRIAGE] No specific templates selected, skipping targeted scan")
+                    
+            except SystemExit as e:
+                print(f"[AI-TRIAGE] Failed for {h}: {e}")
+            except Exception as e:
+                print(f"[AI-TRIAGE] Error for {h}: {e}")
+
+        # Store AI triage results in modules
+        summary.setdefault("modules", {})
+        summary["modules"].setdefault(h, {})
+        summary["modules"][h]["ai_triage"] = ai_triage_result
+        summary["modules"][h]["targeted_nuclei"] = targeted_nuclei_result
+
         summary_hosts.append(
             {
                 "host": h,
@@ -404,6 +444,16 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 "delta": delta,
                 # Compact view of JS-derived secrets from host_profile (if any)
                 "js_secrets": (profile.get("web", {}) or {}).get("js_secrets"),
+                # AI triage summary
+                "ai_triage": {
+                    "mode": ai_triage_result.get("mode"),
+                    "templates_count": len(ai_triage_result.get("templates", [])),
+                    "reasoning": ai_triage_result.get("reasoning"),
+                },
+                "targeted_nuclei": {
+                    "findings_count": targeted_nuclei_result.get("findings_count", 0),
+                    "findings_file": targeted_nuclei_result.get("findings_file"),
+                },
             }
         )
 
@@ -424,6 +474,9 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
     triaged = []
     for f in findings:
+        # Be defensive: ignore non-dict entries (e.g. summary objects)
+        if not isinstance(f, dict):
+            continue
         msgs = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -1023,18 +1076,23 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
     return triage_path
 
-# ==== Main triage ====
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--findings_file", help="ZAP findings JSON (for triage mode)")
-    ap.add_argument("--scope_file", default="scope.json", help="Program scope JSON")
-    ap.add_argument(
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--findings_file", help="ZAP findings JSON (for triage mode)")
+    parser.add_argument("--scope_file", default="scope.json", help="Program scope JSON")
+    parser.add_argument(
         "--mode",
         choices=["triage", "full-scan"],
         default="triage",
         help="Runner mode: triage existing findings or orchestrate full scan via MCP",
     )
-    args = ap.parse_args()
+    parser.add_argument("--mcp-url", help="Base URL for MCP server (default from MCP_BASE env)")
+    args = parser.parse_args()
+
+    # Allow overriding MCP server base URL at runtime
+    global MCP_SERVER_URL
+    if args.mcp_url:
+        MCP_SERVER_URL = args.mcp_url
 
     print(f"[TRIAGE] Using DALFOX_BIN={DALFOX_PATH} (docker={DALFOX_DOCKER})")
 
@@ -1067,6 +1125,7 @@ def main():
 
     run_triage_for_findings(args.findings_file, scope, out_dir=out_dir)
 
+
 if __name__ == "__main__":
     main()
 
@@ -1084,13 +1143,46 @@ def _load_katana_nuclei_findings(output_dir: str, host: str) -> list[dict]:
         data = json.load(fh)
     return data.get("nuclei_findings", []) or []
 
+
+def _load_targeted_nuclei_findings(output_dir: str, host: str) -> list[dict]:
+    """Load findings from AI-driven targeted Nuclei scans (JSONL format)."""
+    host_key = host.replace(":", "_").replace("/", "_")
+    files = [
+        f for f in os.listdir(output_dir)
+        if f.startswith("targeted_nuclei_") and host_key in f and f.endswith(".json")
+    ]
+    if not files:
+        return []
+    files.sort()
+    # Load the latest targeted nuclei output (JSONL format)
+    path = os.path.join(output_dir, files[-1])
+    findings: list[dict] = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                finding = json.loads(line)
+                # Tag the finding as coming from AI-targeted scan
+                finding["_source"] = "targeted_nuclei"
+                findings.append(finding)
+            except json.JSONDecodeError:
+                continue
+    return findings
+
+
 def gather_findings_for_triage(host: str, output_dir: str) -> list[dict]:
     findings: list[dict] = []
 
     # ...existing sources (cloud, zap, sqlmap, bac, ssrf, etc.)...
 
-    # --- NEW: nuclei findings from Katana run ---
+    # --- Nuclei findings from Katana run (recon-only) ---
     nuclei_from_katana = _load_katana_nuclei_findings(output_dir, host)
     findings.extend(nuclei_from_katana)
+
+    # --- NEW: Nuclei findings from AI-targeted scan ---
+    nuclei_from_targeted = _load_targeted_nuclei_findings(output_dir, host)
+    findings.extend(nuclei_from_targeted)
 
     return findings

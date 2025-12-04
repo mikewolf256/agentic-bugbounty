@@ -1,0 +1,12 @@
+version: "3.8"
+services:
+  xss_js_secrets:
+    build: .
+    ports:
+      - "5001:5000"
+    networks:
+      - labs_net
+
+networks:
+  labs_net:
+    driver: bridge

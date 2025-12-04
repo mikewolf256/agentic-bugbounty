@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-# mcp_zap_server.py
-"""
-MCP-style starter server using free tooling:
-- OWASP ZAP (API) for crawling + active scanning
-- ffuf for fast fuzzing
-- sqlmap for SQLi checks
-- interactsh-client (optional) for OAST / blind callback tests
+# mcp_server.py
+"""MCP-style starter server using free tooling (no ZAP dependency).
 
 Features:
 - /mcp/set_scope         -> upload scope (json)
-- /mcp/start_zap_scan    -> start a ZAP spider + active scan
-- /mcp/start_auth_scan   -> same but requires per-host auth config
-- /mcp/poll_zap          -> poll ZAP for alerts and normalize
 - /mcp/run_ffuf          -> run ffuf on a target endpoint
 - /mcp/run_sqlmap        -> run sqlmap on a target endpoint
 - /mcp/run_nuclei        -> run nuclei recon templates
@@ -25,10 +17,13 @@ Features:
 - /mcp/run_backup_hunt   -> backup/VCS ffuf hunt (background job)
 - /mcp/job/{id}          -> query background job status/results
 - /mcp/run_katana_nuclei -> Katana + Nuclei web recon wrapper
-- /mcp/export_report     -> HackerOne-style markdown reports
+- /mcp/run_katana_auth   -> Dev-mode authenticated Katana via browser session
+- /mcp/run_fingerprints  -> WhatWeb-style technology fingerprinting
+- /mcp/run_api_recon     -> lightweight API surface probing
+- /mcp/triage_nuclei_templates -> AI-driven template selection based on host_profile
+- /mcp/run_targeted_nuclei     -> Run Nuclei with AI-selected templates
 
 Notes:
-- Requires ZAP accessible at ZAP_API_BASE (default http://localhost:8080).
 - ffuf, sqlmap, nuclei, katana, interactsh-client must be in PATH where used.
 """
 
@@ -59,8 +54,6 @@ def normalize_target(t: str) -> str:
 
 # ---------- CONFIG ----------
 
-ZAP_API_BASE = os.environ.get("ZAP_API_BASE", "http://localhost:8080")
-ZAP_API_KEY = os.environ.get("ZAP_API_KEY", "")
 H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
 MAX_REQ_PER_SEC = float(os.environ.get("MAX_REQ_PER_SEC", "3.0"))
 
@@ -113,7 +106,7 @@ def rate_limit_wait():
 
 # ---------- Models & FastAPI app ----------
 
-app = FastAPI(title="MCP ZAP + Katana/Nuclei Server")
+app = FastAPI(title="MCP Server (Katana/Nuclei, Recon)")
 
 class BacChecksRequest(BaseModel):
     host: str
@@ -176,6 +169,28 @@ class KatanaNucleiResult(BaseModel):
     findings_file: str
     findings_count: int
 
+
+class KatanaAuthRequest(BaseModel):
+    target: str  # full URL of authenticated app (e.g. https://example.com)
+    session_ws_url: Optional[str] = None  # DevTools WebSocket URL (dev mode)
+    output_name: Optional[str] = None
+
+
+class KatanaAuthResult(BaseModel):
+    target: str
+    output_file: str
+    auth_katana_count: int
+
+
+class FingerprintRequest(BaseModel):
+    target: str  # full URL
+
+
+class FingerprintResult(BaseModel):
+    target: str
+    output_file: str
+    technologies: List[str]
+
 class ApiReconRequest(BaseModel):
     host: str
 
@@ -184,101 +199,42 @@ class ApiReconResult(BaseModel):
     endpoints_count: int
     findings_file: str
 
+
+class NucleiTriageRequest(BaseModel):
+    host: str
+    use_llm: bool = True  # Whether to use LLM for intelligent selection
+
+
+class NucleiTriageResult(BaseModel):
+    host: str
+    mode: str  # "recon" or "targeted"
+    templates: List[str]
+    tags: List[str]
+    exclude_tags: List[str]
+    severity_filter: List[str]
+    reasoning: str
+
+
+class TargetedNucleiRequest(BaseModel):
+    target: str  # Full URL to scan
+    templates: List[str]  # Template paths/directories to use
+    tags: Optional[List[str]] = None  # Optional tags to filter
+    exclude_tags: Optional[List[str]] = None  # Tags to exclude
+    severity: Optional[List[str]] = None  # Severity filter
+
+
+class TargetedNucleiResult(BaseModel):
+    target: str
+    findings_count: int
+    findings_file: str
+    templates_used: int
+
+
 # ---------- in-memory stores ----------
 
 SCOPE: Optional[ScopeConfig] = None
 JOB_STORE: Dict[str, Dict[str, Any]] = {}
-ZAP_SCAN_IDS: Dict[str, str] = {}
 AUTH_CONFIGS: Dict[str, AuthConfig] = {}
-
-# ---------- ZAP helpers ----------
-
-def zap_api(endpoint_path: str, params: Dict[str, Any] = None, method: str = "GET", json_body: Any = None):
-    if params is None:
-        params = {}
-    if ZAP_API_KEY:
-        params["apikey"] = ZAP_API_KEY
-    url = ZAP_API_BASE.rstrip("/") + endpoint_path
-    rate_limit_wait()
-
-    if endpoint_path == "/JSON/ascan/action/scan/":
-        print(f"[DEBUG] ZAP ascan call: {url} params={params}", file=sys.stderr)
-
-    try:
-        if method.upper() == "GET":
-            r = requests.get(url, params=params, timeout=60)
-        else:
-            # actions expect form-encoded
-            r = requests.post(url, data=params, timeout=60)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Error contacting ZAP at {url}: {e}")
-    if r.status_code >= 400:
-        raise HTTPException(status_code=r.status_code, detail=f"ZAP API error {r.status_code}: {r.text}")
-    try:
-        return r.json()
-    except ValueError:
-        return r.text
-
-def _build_auth_script_body() -> str:
-    entries = []
-    for host, cfg in AUTH_CONFIGS.items():
-        header_entries = []
-        for hk, hv in cfg.headers.items():
-            safe_key = str(hk).replace("\\", "\\\\").replace("\"", "\\\"")
-            safe_val = str(hv).replace("\\", "\\\\").replace("\"", "\\\"")
-            header_entries.append(f'"{safe_key}": "{safe_val}"')
-        headers_obj = ", ".join(header_entries)
-        entries.append(f'"{host}": {{{headers_obj}}}')
-    auth_map = ", ".join(entries)
-    return f"""
-var authConfigs = {{{auth_map}}};
-
-function sendingRequest(msg, initiator, helper) {{
-    var headers = msg.getRequestHeader();
-    var uri = msg.getRequestHeader().getURI();
-    var host = uri.getHost();
-    headers.setHeader("X-HackerOne-Research", "{H1_ALIAS}");
-    if (authConfigs[host]) {{
-        var hmap = authConfigs[host];
-        for (var key in hmap) {{
-            if (hmap.hasOwnProperty(key)) {{
-                headers.setHeader(key, hmap[key]);
-            }}
-        }}
-    }}
-    msg.setRequestHeader(headers);
-}}
-
-function responseReceived(msg, initiator, helper) {{
-}}
-"""
-
-def ensure_zap_header_script():
-    try:
-        scripts = zap_api("/JSON/script/view/listScripts/")
-    except Exception:
-        # If script API not available, skip silently
-        return False
-    for s in scripts.get("scripts", []):
-        if s.get("name") == "h1_research_header":
-            try:
-                zap_api("/JSON/script/action/removeScript/", params={"scriptName": "h1_research_header"}, method="POST")
-            except Exception:
-                pass
-            break
-    script_body = _build_auth_script_body()
-    params = {
-        "scriptName": "h1_research_header",
-        "scriptType": "httpsender",
-        "scriptEngine": "ECMAScript",
-        "script": script_body,
-    }
-    try:
-        zap_api("/JSON/script/action/addScript/", params=params, method="POST")
-        return True
-    except Exception as e:
-        print("[!] Could not add ZAP header script:", e)
-        return False
 
 # ---------- scope helpers ----------
 
@@ -295,19 +251,30 @@ def _enforce_scope(host_or_url: str) -> str:
     return normalize_target(host_or_url)
 
 
+@app.post("/mcp/set_scope")
+def set_scope(cfg: ScopeConfig):
+    """Upload scope configuration used by _enforce_scope.
+
+    Stores the ScopeConfig in-memory so later calls to endpoints that
+    enforce scope (e.g., js_miner, backup_hunt, katana, auth, etc.)
+    will accept only hosts listed in primary_targets/secondary_targets.
+    """
+
+    global SCOPE
+    SCOPE = cfg
+    return {"status": "ok", "program_name": cfg.program_name}
+
+
 @app.post("/mcp/set_auth")
 def set_auth(cfg: AuthConfig):
     """Register per-host auth configuration (currently header-based).
 
     This enforces that the host is within the current scope and stores
-    auth configs in-memory for use by ZAP header scripting and
-    host_profile auth surface.
+    auth configs in-memory for use by host_profile auth surface.
     """
 
     host = _enforce_scope(cfg.host)
     AUTH_CONFIGS[host] = AuthConfig(host=host, type=cfg.type, headers=cfg.headers)
-    # Refresh the ZAP header script so new auth takes effect
-    ensure_zap_header_script()
     return {"status": "ok", "host": host}
 
 
@@ -436,7 +403,7 @@ def get_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     return job
 
-# ---------- Katana + Nuclei MCP endpoint ----------
+# ---------- Katana (unauth + auth) + Fingerprinting MCP endpoints ----------
 
 @app.post("/mcp/run_katana_nuclei", response_model=KatanaNucleiResult)
 def run_katana_nuclei(req: KatanaNucleiRequest):
@@ -512,6 +479,165 @@ def run_katana_nuclei(req: KatanaNucleiRequest):
         findings_count=len(findings),
     )
 
+
+@app.post("/mcp/run_katana_auth", response_model=KatanaAuthResult)
+def run_katana_auth(req: KatanaAuthRequest):
+    """Dev-mode: run authenticated Katana helper against a live browser session.
+
+    This is intentionally minimal for development:
+    - Assumes the user has an existing Chrome instance with DevTools enabled
+      and an authenticated session for the target.
+    - Delegates to tools/katana_auth_helper.py which is responsible for
+      talking to DevTools, extracting requests, and writing a JSON artifact.
+    """
+
+    target = _enforce_scope(req.target)
+
+    # Derive host key and output path under ARTIFACTS_DIR/katana_auth/<host>/
+    host_key = target.replace("://", "_").replace("/", "_")
+    base_dir = os.path.join(ARTIFACTS_DIR, "katana_auth", host_key)
+    os.makedirs(base_dir, exist_ok=True)
+
+    out_name = req.output_name or f"katana_auth_{host_key}.json"
+    out_path = os.path.join(base_dir, out_name)
+
+    script_path = os.path.join(os.path.dirname(__file__), "tools", "katana_auth_helper.py")
+    if not os.path.exists(script_path):
+        raise HTTPException(
+            status_code=500,
+            detail=f"katana_auth_helper.py not found at {script_path}",
+        )
+
+    env = os.environ.copy()
+    env.setdefault("OUTPUT_DIR", OUTPUT_DIR)
+    env.setdefault("ARTIFACTS_DIR", ARTIFACTS_DIR)
+
+    cmd = [
+        sys.executable,
+        script_path,
+        "--target",
+        target,
+        "--output",
+        out_path,
+    ]
+
+    if req.session_ws_url:
+        cmd.extend(["--ws-url", req.session_ws_url])
+
+    rate_limit_wait()
+    try:
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=3600,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running katana_auth_helper.py: {e}")
+
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"katana_auth_helper.py failed: {proc.stderr.strip()}",
+        )
+
+    if not os.path.exists(out_path):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Expected output file not found: {out_path}",
+        )
+
+    try:
+        with open(out_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load katana_auth_helper output: {e}")
+
+    urls = data.get("urls") or []
+
+    return KatanaAuthResult(
+        target=target,
+        output_file=out_path,
+        auth_katana_count=len(urls),
+    )
+
+
+@app.post("/mcp/run_fingerprints", response_model=FingerprintResult)
+def run_fingerprints(req: FingerprintRequest):
+    """Run basic technology fingerprinting using WhatWeb (or similar).
+
+    This uses a configurable FINGERPRINT_BIN (default "whatweb") and writes
+    raw output under ARTIFACTS_DIR/fingerprints/<host>/, then parses a simple
+    technology list when possible.
+    """
+
+    target = _enforce_scope(req.target)
+
+    host_key = target.replace("://", "_").replace("/", "_")
+    base_dir = os.path.join(ARTIFACTS_DIR, "fingerprints", host_key)
+    os.makedirs(base_dir, exist_ok=True)
+
+    ts = int(time.time())
+    out_name = f"whatweb_{ts}.txt"
+    out_path = os.path.join(base_dir, out_name)
+
+    fp_bin = os.environ.get("FINGERPRINT_BIN", "whatweb")
+
+    cmd = [fp_bin, "-v", target]
+
+    rate_limit_wait()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail=f"Fingerprinting binary not found: {fp_bin}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running fingerprints: {e}")
+
+    # Always write raw stdout/stderr for later inspection
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write(proc.stdout)
+        if proc.stderr:
+            fh.write("\n\n# stderr:\n")
+            fh.write(proc.stderr)
+
+    if proc.returncode != 0:
+        # We still return the artifact, but note that exit code was non-zero.
+        raise HTTPException(
+            status_code=500,
+            detail=f"Fingerprinting tool failed (exit {proc.returncode}); see {out_path}",
+        )
+
+    # Heuristic parse: WhatWeb default output is of form:
+    #   http://example.com [200 OK] Country[United States] HTTPServer[nginx]
+    technologies: List[str] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(" ")
+        if not parts:
+            continue
+        # Everything after the first token is a plugin-like label
+        for token in parts[1:]:
+            if "[" in token and "]" in token:
+                tech = token.split("[", 1)[0]
+                if tech:
+                    technologies.append(tech)
+
+    return FingerprintResult(
+        target=target,
+        output_file=out_path,
+        technologies=sorted(sorted(set(technologies))),
+    )
+
 @app.post("/mcp/host_profile")
 def host_profile(req: CloudReconRequest):
     """
@@ -528,7 +654,7 @@ def host_profile(req: CloudReconRequest):
 
     # --- existing: load cloud findings, nuclei, etc. (if you have any here) ---
 
-    # --- Katana HTTP surface ingestion ---
+    # --- Katana HTTP surface ingestion (unauthenticated) ---
     katana_prefix = "katana_nuclei_"
     katana_files = [
         f for f in os.listdir(OUTPUT_DIR)
@@ -560,6 +686,75 @@ def host_profile(req: CloudReconRequest):
 
     if api_endpoints:
         profile["web"]["api_endpoints"] = api_endpoints
+
+    # --- Authenticated Katana HTTP surface ingestion (dev-mode) ---
+    # Looks for artifacts emitted by /mcp/run_katana_auth under
+    # ARTIFACTS_DIR/katana_auth/<host_key>/katana_auth_*.json.
+    host_key = host.replace("://", "_").replace("/", "_")
+    auth_base = os.path.join(ARTIFACTS_DIR, "katana_auth", host_key)
+    auth_urls: List[str] = []
+    auth_api_endpoints: List[Dict[str, Any]] = []
+
+    if os.path.isdir(auth_base):
+        for fname in sorted(os.listdir(auth_base)):
+            if not fname.endswith(".json"):
+                continue
+            fpath = os.path.join(auth_base, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                continue
+
+            urls = data.get("urls") or []
+            if isinstance(urls, list):
+                for u in urls:
+                    if isinstance(u, str):
+                        auth_urls.append(u)
+
+            api_eps = data.get("api_endpoints") or []
+            if isinstance(api_eps, list):
+                for ep in api_eps:
+                    if isinstance(ep, dict):
+                        auth_api_endpoints.append(ep)
+
+    if auth_urls or auth_api_endpoints:
+        profile["web"]["auth_katana"] = {
+            "urls": sorted(set(auth_urls)),
+            "api_endpoints": auth_api_endpoints,
+            "count": len(set(auth_urls)),
+        }
+
+    # --- Fingerprinting ingestion (WhatWeb/compatible) ---
+    fp_base = os.path.join(ARTIFACTS_DIR, "fingerprints", host.replace("://", "_").replace("/", "_"))
+    fp_tech: List[str] = []
+    if os.path.isdir(fp_base):
+        files = [f for f in os.listdir(fp_base) if f.startswith("whatweb_")]
+        files.sort()
+        if files:
+            latest = os.path.join(fp_base, files[-1])
+            try:
+                with open(latest, "r", encoding="utf-8") as fh:
+                    text = fh.read()
+            except Exception:
+                text = ""
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split(" ")
+                if not parts:
+                    continue
+                for token in parts[1:]:
+                    if "[" in token and "]" in token:
+                        tech = token.split("[", 1)[0]
+                        if tech:
+                            fp_tech.append(tech)
+
+    if fp_tech:
+        profile.setdefault("web", {})["fingerprints"] = {
+            "technologies": sorted(set(fp_tech)),
+        }
 
     # --- Backup hunter ingestion ---
     backup_dir = os.path.join(ARTIFACTS_DIR, "backup_hunt", host)
@@ -829,6 +1024,204 @@ def run_api_recon(req: ApiReconRequest):
         findings_file=out_path,
     )
 
+
+# ---------- AI Nuclei Triage Endpoints ----------
+
+@app.post("/mcp/triage_nuclei_templates", response_model=NucleiTriageResult)
+def triage_nuclei_templates(req: NucleiTriageRequest):
+    """
+    AI-driven Nuclei template selection based on host_profile.
+
+    This endpoint:
+    1. Loads the latest host_profile snapshot for the given host
+    2. Calls the AI triage helper to analyze technologies and attack surface
+    3. Returns a curated list of templates/tags optimized for this host
+
+    The output can be passed directly to /mcp/run_targeted_nuclei.
+    """
+    host = _enforce_scope(req.host)
+
+    # Load latest host profile
+    profile = _load_host_profile_snapshot(host, latest=True)
+    if not profile:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No host_profile snapshot found for {host}. Run host_profile first.",
+        )
+
+    # Import and call the AI triage helper
+    triage_script = os.path.join(os.path.dirname(__file__), "tools", "ai_nuclei_triage.py")
+    if not os.path.exists(triage_script):
+        raise HTTPException(
+            status_code=500,
+            detail=f"ai_nuclei_triage.py not found at {triage_script}",
+        )
+
+    # Write profile to temp file for the helper
+    import tempfile
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as tmp:
+        json.dump(profile, tmp, indent=2)
+        tmp_path = tmp.name
+
+    try:
+        cmd = [
+            sys.executable,
+            triage_script,
+            "--host-profile",
+            tmp_path,
+        ]
+        if not req.use_llm:
+            cmd.append("--no-llm")
+
+        rate_limit_wait()
+        proc = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+
+        if proc.returncode != 0:
+            # Log error but try to parse any output
+            print(f"[TRIAGE] ai_nuclei_triage.py warning: {proc.stderr}", file=sys.stderr)
+
+        # Parse JSON output
+        output = proc.stdout.strip()
+        if not output:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Empty output from ai_nuclei_triage.py: {proc.stderr}",
+            )
+
+        try:
+            result = json.loads(output)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Invalid JSON from ai_nuclei_triage.py: {e}\nOutput: {output[:500]}",
+            )
+
+    finally:
+        # Cleanup temp file
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+    return NucleiTriageResult(
+        host=host,
+        mode=result.get("mode", "recon"),
+        templates=result.get("templates", []),
+        tags=result.get("tags", []),
+        exclude_tags=result.get("exclude_tags", []),
+        severity_filter=result.get("severity_filter", ["critical", "high", "medium"]),
+        reasoning=result.get("reasoning", ""),
+    )
+
+
+@app.post("/mcp/run_targeted_nuclei", response_model=TargetedNucleiResult)
+def run_targeted_nuclei(req: TargetedNucleiRequest):
+    """
+    Run Nuclei with AI-selected templates for targeted vulnerability discovery.
+
+    This endpoint is designed to be called after /mcp/triage_nuclei_templates
+    with the templates/tags returned by the AI triage.
+
+    Unlike the recon-only mode, this runs deeper vulnerability checks on
+    specific template categories relevant to the detected technology stack.
+    """
+    host = _enforce_scope(req.target)
+
+    if not req.templates:
+        raise HTTPException(
+            status_code=400,
+            detail="No templates specified. Call /mcp/triage_nuclei_templates first.",
+        )
+
+    # Resolve template paths
+    nuclei_bin = os.environ.get("NUCLEI_BIN", "nuclei")
+    templates_dir = NUCLEI_TEMPLATES_DIR or os.path.expanduser("~/nuclei-templates")
+
+    # Build nuclei command
+    cmd = [nuclei_bin, "-u", req.target]
+
+    # Add templates
+    templates_used = 0
+    for tmpl in req.templates:
+        abs_path = os.path.join(templates_dir, tmpl) if not os.path.isabs(tmpl) else tmpl
+        if os.path.exists(abs_path):
+            cmd.extend(["-t", abs_path])
+            templates_used += 1
+        else:
+            print(f"[NUCLEI] Template path not found, skipping: {abs_path}", file=sys.stderr)
+
+    if templates_used == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No valid template paths found. Check NUCLEI_TEMPLATES_DIR={templates_dir}",
+        )
+
+    # Add tags filter
+    if req.tags:
+        cmd.extend(["-tags", ",".join(req.tags)])
+
+    # Add exclude tags
+    if req.exclude_tags:
+        cmd.extend(["-etags", ",".join(req.exclude_tags)])
+
+    # Add severity filter
+    if req.severity:
+        cmd.extend(["-severity", ",".join(req.severity)])
+
+    # Output configuration
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"targeted_nuclei_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+
+    cmd.extend(["-jsonl", "-silent", "-o", out_path])
+
+    print(f"[NUCLEI] Running targeted scan: {' '.join(cmd)}", file=sys.stderr)
+
+    rate_limit_wait()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(__file__),
+            capture_output=True,
+            text=True,
+            timeout=3600,  # 1 hour timeout for deep scans
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Nuclei scan timed out (1 hour)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error running nuclei: {e}")
+
+    if proc.returncode != 0 and not os.path.exists(out_path):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Nuclei failed: {proc.stderr.strip()}",
+        )
+
+    # Count findings
+    findings_count = 0
+    if os.path.exists(out_path):
+        with open(out_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    findings_count += 1
+
+    return TargetedNucleiResult(
+        target=req.target,
+        findings_count=findings_count,
+        findings_file=out_path,
+        templates_used=templates_used,
+    )
+
+
 # ---------- host history snapshots ----------
 
 HOST_HISTORY_DIR = os.path.join(OUTPUT_DIR, "host_history")
@@ -879,5 +1272,5 @@ def _load_host_profile_snapshot(host: str, latest: bool = True) -> Optional[Dict
 
 if __name__ == "__main__":
     import uvicorn
-    print("MCP ZAP server starting. Ensure ZAP is running (default http://localhost:8080).")
-    uvicorn.run("mcp_zap_server:app", host="0.0.0.0", port=8100, reload=False)
+    print("MCP server starting (no ZAP dependency).")
+    uvicorn.run("mcp_server:app", host="0.0.0.0", port=8100, reload=False)

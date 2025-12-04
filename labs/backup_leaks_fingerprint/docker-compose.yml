@@ -1,0 +1,12 @@
+version: "3.8"
+services:
+  backup_leaks_fingerprint:
+    build: .
+    ports:
+      - "5003:80"
+    networks:
+      - labs_net
+
+networks:
+  labs_net:
+    driver: bridge

@@ -4,6 +4,9 @@
 
 Features:
 - /mcp/set_scope         -> upload scope (json)
+- /mcp/import_h1_scope   -> import scope from HackerOne program
+- /mcp/search_h1_programs -> search HackerOne bug bounty programs
+- /mcp/h1_program/{handle} -> get full HackerOne program details
 - /mcp/run_ffuf          -> run ffuf on a target endpoint
 - /mcp/run_sqlmap        -> run sqlmap on a target endpoint
 - /mcp/run_nuclei        -> run nuclei recon templates
@@ -271,6 +274,41 @@ class WhatWebResult(BaseModel):
     raw_plugins: Dict[str, Any]
 
 
+# ---------- HackerOne Import Models ----------
+
+class H1ImportRequest(BaseModel):
+    handle: str  # HackerOne program handle (e.g., "23andme_bbp")
+    url: Optional[str] = None  # Alternative: provide full URL
+    include_out_of_scope: bool = False  # Include out-of-scope assets in response
+    auto_set_scope: bool = True  # Automatically set as active scope
+
+
+class H1ImportResult(BaseModel):
+    program_name: str
+    program_handle: str
+    program_url: str
+    in_scope_count: int
+    out_of_scope_count: int
+    primary_targets: List[str]
+    secondary_targets: List[str]
+    bounty_ranges: Dict[str, Any]
+    scope_file: str
+    scope_set: bool
+
+
+class H1SearchRequest(BaseModel):
+    query: str
+    limit: int = 20
+    bounties_only: bool = True
+
+
+class H1SearchResult(BaseModel):
+    handle: str
+    name: str
+    offers_bounties: bool
+    state: Optional[str] = None
+
+
 # ---------- RAG Models ----------
 
 class RAGSearchRequest(BaseModel):
@@ -354,6 +392,164 @@ def set_scope(cfg: ScopeConfig):
     global SCOPE
     SCOPE = cfg
     return {"status": "ok", "program_name": cfg.program_name}
+
+
+@app.post("/mcp/import_h1_scope", response_model=H1ImportResult)
+def import_h1_scope(req: H1ImportRequest):
+    """
+    Import a bug bounty program scope from HackerOne.
+    
+    This endpoint:
+    1. Fetches program info from HackerOne (via GraphQL or page scraping)
+    2. Extracts in-scope and out-of-scope assets
+    3. Generates a scope.json compatible with the agentic runner
+    4. Optionally sets it as the active scope for scanning
+    
+    Example:
+        POST /mcp/import_h1_scope
+        {"handle": "23andme_bbp", "auto_set_scope": true}
+    """
+    from urllib.parse import urlparse
+    
+    # Determine handle from input
+    handle = req.handle
+    if req.url:
+        # Extract handle from URL
+        parsed = urlparse(req.url)
+        path = parsed.path.strip("/")
+        if path.startswith("programs/"):
+            handle = path.split("/")[1]
+        else:
+            handle = path.split("/")[0].split("?")[0]
+    
+    if not handle:
+        raise HTTPException(status_code=400, detail="No program handle provided")
+    
+    # Import the H1 client (lazy import to avoid startup failures)
+    try:
+        from tools.h1_client import H1Client, H1NotFoundError, H1ClientError
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"H1 client not available: {e}. Ensure tools/h1_client.py exists.",
+        )
+    
+    print(f"[H1] Importing program: {handle}", file=sys.stderr)
+    
+    try:
+        client = H1Client()
+        program = client.fetch_program(handle)
+    except H1NotFoundError:
+        raise HTTPException(status_code=404, detail=f"Program not found: {handle}")
+    except H1ClientError as e:
+        raise HTTPException(status_code=502, detail=f"Error fetching from HackerOne: {e}")
+    
+    # Generate scope.json
+    scope_data = program.to_scope_json(include_out_of_scope=req.include_out_of_scope)
+    
+    # Save to file
+    scopes_dir = os.path.join(OUTPUT_DIR, "scopes")
+    os.makedirs(scopes_dir, exist_ok=True)
+    scope_file = os.path.join(scopes_dir, f"{handle}.json")
+    
+    with open(scope_file, "w", encoding="utf-8") as f:
+        json.dump(scope_data, f, indent=2)
+    
+    print(f"[H1] Saved scope to: {scope_file}", file=sys.stderr)
+    
+    # Optionally set as active scope
+    scope_set = False
+    if req.auto_set_scope:
+        global SCOPE
+        SCOPE = ScopeConfig(
+            program_name=program.name,
+            primary_targets=scope_data.get("primary_targets", []),
+            secondary_targets=scope_data.get("secondary_targets", []),
+            rules=scope_data.get("rules", {}),
+        )
+        scope_set = True
+        print(f"[H1] Set active scope: {program.name}", file=sys.stderr)
+    
+    # Build bounty ranges dict
+    bounty_ranges = {}
+    for br in program.bounty_ranges:
+        bounty_ranges[br.severity.value] = {
+            "min": br.min_amount,
+            "max": br.max_amount,
+        }
+    
+    return H1ImportResult(
+        program_name=program.name,
+        program_handle=program.handle,
+        program_url=program.url,
+        in_scope_count=len(program.in_scope_assets),
+        out_of_scope_count=len(program.out_of_scope_assets),
+        primary_targets=scope_data.get("primary_targets", []),
+        secondary_targets=scope_data.get("secondary_targets", []),
+        bounty_ranges=bounty_ranges,
+        scope_file=scope_file,
+        scope_set=scope_set,
+    )
+
+
+@app.post("/mcp/search_h1_programs")
+def search_h1_programs(req: H1SearchRequest):
+    """
+    Search for bug bounty programs on HackerOne.
+    
+    Returns a list of matching programs with basic info.
+    Use /mcp/import_h1_scope to fetch full details for a specific program.
+    """
+    try:
+        from tools.h1_client import H1Client, H1ClientError
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"H1 client not available: {e}",
+        )
+    
+    try:
+        client = H1Client()
+        results = client.search_programs(
+            query=req.query,
+            offers_bounties=req.bounties_only,
+            limit=req.limit,
+        )
+    except H1ClientError as e:
+        raise HTTPException(status_code=502, detail=f"Search failed: {e}")
+    
+    return {
+        "query": req.query,
+        "results": results,
+        "total": len(results),
+    }
+
+
+@app.get("/mcp/h1_program/{handle}")
+def get_h1_program(handle: str):
+    """
+    Get detailed information about a HackerOne program.
+    
+    Returns full program details including:
+    - Scope (in-scope and out-of-scope assets)
+    - Bounty ranges
+    - Policy and rules
+    - Response times
+    """
+    try:
+        from tools.h1_client import H1Client, H1NotFoundError, H1ClientError
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"H1 client not available: {e}")
+    
+    try:
+        client = H1Client()
+        program = client.fetch_program(handle)
+    except H1NotFoundError:
+        raise HTTPException(status_code=404, detail=f"Program not found: {handle}")
+    except H1ClientError as e:
+        raise HTTPException(status_code=502, detail=f"Error fetching program: {e}")
+    
+    return program.to_dict()
 
 
 @app.post("/mcp/set_auth")

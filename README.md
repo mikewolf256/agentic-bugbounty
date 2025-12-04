@@ -36,7 +36,7 @@ This project is designed to:
 ```
 
 **Data Flow:**
-1. **Scope ingestion:** A `scope.json` defines targets & rules.  
+1. **Scope ingestion:** Import from HackerOne directly or define a `scope.json` manually.  
 2. **Scanning:** Recon tools crawl each target and export findings.  
 3. **Pre-processing:** `mcp_helpers/dedupe.py` removes noise and deduplicates results.  
 4. **AI triage:** Only meaningful findings are passed to the LLM for contextual scoring, impact, and bounty estimation.  
@@ -60,6 +60,121 @@ This project is designed to:
 | **Modular Control Plane (MCP)** | Provides API endpoints to start scans, triage, or check scope compliance. |
 | **Token-Efficient Design** | Filters findings *before* LLM inference to cut costs and scale affordably. |
 | **RAG Knowledge Base** | Semantic search over 8k+ historical HackerOne reports for context-aware triage. |
+| **HackerOne Integration** | Auto-import program scopes, bounty ranges, and rules directly from HackerOne. |
+
+---
+
+## 🎯 HackerOne Scope Integration
+
+Automatically import bug bounty program scopes from HackerOne to target real programs with proper scope enforcement.
+
+### Quick Start
+
+```bash
+# Fetch a program scope by handle
+python tools/h1_scope_fetcher.py fetch 23andme_bbp
+
+# Fetch from HackerOne URL
+python tools/h1_scope_fetcher.py fetch "https://hackerone.com/security?type=team"
+
+# Fetch and immediately start scanning
+python tools/h1_scope_fetcher.py fetch hackerone --run
+
+# Search for programs
+python tools/h1_scope_fetcher.py search "fintech"
+
+# List popular bounty programs  
+python tools/h1_scope_fetcher.py list --top 20
+```
+
+### MCP API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /mcp/import_h1_scope` | Import program scope from HackerOne and optionally set as active |
+| `POST /mcp/search_h1_programs` | Search for bug bounty programs |
+| `GET /mcp/h1_program/{handle}` | Get full program details including scope and policies |
+
+### Import via API
+
+```bash
+# Import and set as active scope
+curl -X POST http://localhost:8000/mcp/import_h1_scope \
+  -H "Content-Type: application/json" \
+  -d '{"handle": "23andme_bbp", "auto_set_scope": true}'
+```
+
+Response includes:
+- Program name and URL
+- In-scope and out-of-scope asset counts
+- Primary targets (ready for scanning)
+- Bounty ranges by severity
+- Path to saved scope file
+
+### What Gets Extracted
+
+| Data | Description |
+|------|-------------|
+| **In-scope assets** | URLs, APIs, wildcards, CIDRs, mobile apps, source code |
+| **Out-of-scope** | Excluded targets with explanations |
+| **Bounty ranges** | Min/max payouts per severity level |
+| **Program rules** | Rate limits, safe harbor, excluded vuln types |
+| **Asset instructions** | Per-target notes from the program |
+
+### Generated Scope Format
+
+```json
+{
+  "program_name": "23andMe Bug Bounty",
+  "program_handle": "23andme_bbp",
+  "primary_targets": [
+    "https://api.23andme.com",
+    "https://www.23andme.com"
+  ],
+  "rules": {
+    "safe_harbor": true,
+    "allow_automated": true,
+    "excluded_vuln_types": ["dos", "rate limiting"]
+  },
+  "in_scope": [
+    {
+      "url": "https://api.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Main API endpoint"
+    }
+  ],
+  "bounties": {
+    "low": {"min": 150, "max": 300},
+    "critical": {"min": 7500, "max": 15000}
+  }
+}
+```
+
+### Container Cluster Workflow
+
+For distributing work across a Kubernetes cluster:
+
+```python
+from tools.h1_client import H1Client
+
+# 1. Fetch program scope
+client = H1Client()
+program = client.fetch_program("target_program")
+
+# 2. Generate per-target job configurations
+for asset in program.in_scope_assets:
+    if asset.asset_type.value in ("URL", "WILDCARD", "API"):
+        job_config = {
+            "target": asset.to_target_url(),
+            "program": program.name,
+            "rules": program.policy.to_dict(),
+        }
+        # 3. Dispatch to worker container
+        dispatch_k8s_job(job_config)
+```
+
+See [`docs/hackerone_integration.md`](docs/hackerone_integration.md) for complete documentation.
 
 ---
 
@@ -194,7 +309,7 @@ When RAG is enabled, the triage flow automatically:
 
 ### ☁️ Phase 3 — Scaling & Agentic Cluster
 - [ ] Containerized workers per scan (Docker/Kubernetes)  
-- [ ] AI agent to fetch live bounty scopes (HackerOne/BBP)  
+- [x] AI agent to fetch live bounty scopes (HackerOne/BBP)  
 - [ ] Job queue (Redis/Kafka) dispatch to workers  
 - [ ] Centralized results dashboard + S3 artifact storage  
 
@@ -396,9 +511,11 @@ Each report is ready to be reviewed by a human triager or attached directly to a
 | Component | Tool |
 |------------|------|
 | Orchestrator | Python 3.11 |
-| Scanners | OWASP ZAP, ffuf, Dalfox |
-| Validator | Dalfox (XSS), future: Nuclei, sqlmap |
+| Scanners | OWASP ZAP, ffuf, Dalfox, Nuclei, Katana |
+| Validator | Dalfox (XSS), sqlmap (SQLi), BAC/SSRF checks |
 | AI Engine | OpenAI GPT-4o (triage & summarization) |
+| Scope Import | HackerOne GraphQL API + page scraping |
+| Knowledge Base | Supabase pgvector (RAG) |
 | Message Queue | Planned: Redis/Kafka |
 | Cluster Runtime | Planned: Docker / Kubernetes |
 | Artifact Storage | Local → S3 (planned) |

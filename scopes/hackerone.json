@@ -1,0 +1,36 @@
+{
+  "program_name": "hackerone",
+  "program_handle": "hackerone",
+  "program_url": "https://hackerone.com/hackerone",
+  "primary_targets": [
+    "https://hackerone.com/teams/new/sandbox",
+    "https://00.000Z"
+  ],
+  "secondary_targets": [],
+  "rules": {
+    "rate_limit": null,
+    "safe_harbor": true,
+    "allow_automated": true,
+    "excluded_vuln_types": [],
+    "requires_poc": true
+  },
+  "in_scope": [
+    {
+      "url": "https://hackerone.com/teams/new/sandbox",
+      "target": "https://hackerone.com/teams/new/sandbox",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://00.000Z",
+      "target": "00.000Z",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    }
+  ],
+  "out_of_scope": [],
+  "_fetched_at": "2025-12-03T21:56:28.431055",
+  "_source": "hackerone"
+}

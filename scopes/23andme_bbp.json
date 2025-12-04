@@ -1,0 +1,145 @@
+{
+  "program_name": "23andMe Bug Bounty",
+  "program_handle": "23andme_bbp",
+  "program_url": "https://hackerone.com/23andme_bbp",
+  "primary_targets": [
+    "https://api.23andme.com",
+    "https://auth.23andme.com",
+    "https://blog.23andme.com",
+    "https://education.23andme.com",
+    "https://mediacenter.23andme.com",
+    "https://medical.23andme.com",
+    "https://store.23andme.com",
+    "https://therapeutics.23andme.com",
+    "https://you.23andme.com",
+    "https://clinic.lemonaidhealth.com",
+    "https://sapi-live.lh.us-west-2.prd.23andme.us",
+    "https://pd-api.polkadoc.com",
+    "https://healthaid.lemonaidhealth.com",
+    "https://lemonaidhealth.com",
+    "https://research.23andme.com"
+  ],
+  "secondary_targets": [],
+  "rules": {
+    "rate_limit": null,
+    "safe_harbor": true,
+    "allow_automated": true,
+    "excluded_vuln_types": [
+      "dos",
+      "rate limiting",
+      "missing headers",
+      "clickjacking"
+    ],
+    "requires_poc": true
+  },
+  "in_scope": [
+    {
+      "url": "https://api.23andme.com",
+      "target": "api.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "First API from original codebase, responsible for less services at the moment but still integrated into the product."
+    },
+    {
+      "url": "https://auth.23andme.com",
+      "target": "auth.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Responsible for all authenticated services throughout the product."
+    },
+    {
+      "url": "https://blog.23andme.com",
+      "target": "blog.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Official blog of 23andMe, sharing insightful articles, updates, and stories on genetics, health, and personal genomics."
+    },
+    {
+      "url": "https://education.23andme.com",
+      "target": "education.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "23andMe's dedicated education site, offering resources and insights to enhance genetic literacy through informative content and educational materials"
+    },
+    {
+      "url": "https://mediacenter.23andme.com",
+      "target": "mediacenter.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Media center for 23andMe, providing press releases, media assets, and comprehensive information for journalists and media professionals"
+    },
+    {
+      "url": "https://medical.23andme.com",
+      "target": "medical.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Medical and therapeutics site containing information about 23andMe's medical research."
+    },
+    {
+      "url": "https://store.23andme.com",
+      "target": "store.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Online store for 23andMe products, offering DNA testing kits, genetic insights, and personalized merchandise."
+    },
+    {
+      "url": "https://therapeutics.23andme.com",
+      "target": "therapeutics.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "23andMe's site exclusively dedicated to therapeutics to share and market what we've done and what we have in the pipeline in regards to therapeutics."
+    },
+    {
+      "url": "https://you.23andme.com",
+      "target": "you.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "you.23andme.com is our main consumer site which contains users DNA kit results, dna relatives, and more. Users can interact with relatives and perform profile related features such as downloading data."
+    },
+    {
+      "url": "https://clinic.lemonaidhealth.com",
+      "target": "clinic.lemonaidhealth.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://sapi-live.lh.us-west-2.prd.23andme.us",
+      "target": "sapi-live.lh.us-west-2.prd.23andme.us",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://pd-api.polkadoc.com",
+      "target": "pd-api.polkadoc.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://healthaid.lemonaidhealth.com",
+      "target": "healthaid.lemonaidhealth.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://lemonaidhealth.com",
+      "target": "lemonaidhealth.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://research.23andme.com",
+      "target": "research.23andme.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "research.23andMe.com is the official research domain of 23andMe"
+    }
+  ],
+  "out_of_scope": [],
+  "_fetched_at": "2025-12-03T21:56:53.018604",
+  "_source": "hackerone"
+}

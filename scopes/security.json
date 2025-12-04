@@ -1,0 +1,273 @@
+{
+  "program_name": "HackerOne",
+  "program_handle": "security",
+  "program_url": "https://hackerone.com/security",
+  "primary_targets": [
+    "https://hackerone.com",
+    "https://api.hackerone.com",
+    "https://www.hackerone.com",
+    "https://app.pullrequest.com",
+    "https://reviewer.pullrequest.com",
+    "https://hackerone-us-west-2-production-attachments.s3.us-west-2.amazonaws.com",
+    "https://www.wearehackerone.com",
+    "https://mta-sts.wearehackerone.com",
+    "https://errors.hackerone.net",
+    "https://*.hackerone-ext-content.com",
+    "https://a5s.hackerone-ext-content.com",
+    "https://b5s.hackerone-ext-content.com",
+    "https://hackerone-ext-content.com",
+    "https://*.hackerone-user-content.com/",
+    "https://ctf.hacker101.com",
+    "https://hackathon-photos.hackerone-user-content.com",
+    "https://cover-photos.hackerone-user-content.com",
+    "https://hackathon-photos-us-east-2.hackerone-user-content.com",
+    "https://profile-photos.hackerone-user-content.com",
+    "https://hackerone-user-content.com",
+    "https://profile-photos-us-east-2.hackerone-user-content.com",
+    "https://cover-photos-us-east-2.hackerone-user-content.com",
+    "https://hackerone.live"
+  ],
+  "secondary_targets": [],
+  "rules": {
+    "rate_limit": null,
+    "safe_harbor": true,
+    "allow_automated": false,
+    "excluded_vuln_types": [],
+    "requires_poc": true
+  },
+  "in_scope": [
+    {
+      "url": "https://hackerone.com",
+      "target": "hackerone.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is our main application that hackers and customers use to interact with each other. It connects with a database that contains information about vulnerability reports, users, and programs. This system\u2019s backend is written in Ruby and exposes data to the client through GraphQL, rendered pages, and JSON endpoints."
+    },
+    {
+      "url": "https://api.hackerone.com",
+      "target": "api.hackerone.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is our public API that customers use to read and interact with reports. To look for vulnerabilities in this asset, create a sandboxed program, select HackerOne Professional or HackerOne Enterprise in the Product Edition settings page, and create an API token. This system\u2019s backend is written in Ruby, converts the request to a GraphQL query, and serializes the GraphQL result to JSON."
+    },
+    {
+      "url": "https://www.hackerone.com",
+      "target": "www.hackerone.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is our marketing website. It does not contain any report or customer information. It may store information about hackers, such as information collected through the [penetration tester sign up form](https://www.hackerone.com/hackers/pentest-community-application). The website runs Drupal with a few customizations."
+    },
+    {
+      "url": "https://app.pullrequest.com",
+      "target": "app.pullrequest.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Please use your `@wearehackerone.com` email address when signing up."
+    },
+    {
+      "url": "https://reviewer.pullrequest.com",
+      "target": "reviewer.pullrequest.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Please use your `@wearehackerone.com` email address when signing up."
+    },
+    {
+      "url": "https://hackerone-us-west-2-production-attachments.s3.us-west-2.amazonaws.com",
+      "target": "hackerone-us-west-2-production-attachments.s3.us-west-2.amazonaws.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains attachments of reports and activities. These attachments may contain confidential information. A signed request is required to download an object."
+    },
+    {
+      "url": "https://www.wearehackerone.com",
+      "target": "www.wearehackerone.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://mta-sts.wearehackerone.com",
+      "target": "mta-sts.wearehackerone.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "https://errors.hackerone.net",
+      "target": "errors.hackerone.net",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "A separate domain that we use to capture information of client and server side exceptions."
+    },
+    {
+      "url": "https://*.hackerone-ext-content.com",
+      "target": "https://*.hackerone-ext-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This domain is used to serve static marketing assets. No confidential information is stored on these systems. However, it is important to us that these assets cannot be updated by an unauthorized third-party."
+    },
+    {
+      "url": "https://a5s.hackerone-ext-content.com",
+      "target": "a5s.hackerone-ext-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This domain is used to serve static marketing assets. No confidential information is stored on these systems. However, it is important to us that these assets cannot be updated by an unauthorized third-party."
+    },
+    {
+      "url": "https://b5s.hackerone-ext-content.com",
+      "target": "b5s.hackerone-ext-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This domain is used to serve static marketing assets. No confidential information is stored on these systems. However, it is important to us that these assets cannot be updated by an unauthorized third-party."
+    },
+    {
+      "url": "https://hackerone-ext-content.com",
+      "target": "hackerone-ext-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This domain is used to serve static marketing assets. No confidential information is stored on these systems. However, it is important to us that these assets cannot be updated by an unauthorized third-party."
+    },
+    {
+      "url": "https://*.hackerone-user-content.com/",
+      "target": "https://*.hackerone-user-content.com/",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object.\n\n"
+    },
+    {
+      "url": "https://ctf.hacker101.com",
+      "target": "ctf.hacker101.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "The Hacker101 CTF domain, ctf.hacker101.com, is not connected to HackerOne's production environment. It is hosted on Amazon AWS. Users authenticate through HackerOne.com (OAuth). The maximum bounty for any vulnerability on this asset is $500 right now. The CTF challenges itself are not in scope for our bug bounty program."
+    },
+    {
+      "url": "https://hackathon-photos.hackerone-user-content.com",
+      "target": "hackathon-photos.hackerone-user-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object."
+    },
+    {
+      "url": "https://cover-photos.hackerone-user-content.com",
+      "target": "cover-photos.hackerone-user-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object."
+    },
+    {
+      "url": "https://hackathon-photos-us-east-2.hackerone-user-content.com",
+      "target": "hackathon-photos-us-east-2.hackerone-user-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object."
+    },
+    {
+      "url": "https://profile-photos.hackerone-user-content.com",
+      "target": "profile-photos.hackerone-user-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object."
+    },
+    {
+      "url": "https://hackerone-user-content.com",
+      "target": "hackerone-user-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object."
+    },
+    {
+      "url": "https://profile-photos-us-east-2.hackerone-user-content.com",
+      "target": "profile-photos-us-east-2.hackerone-user-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object."
+    },
+    {
+      "url": "https://cover-photos-us-east-2.hackerone-user-content.com",
+      "target": "cover-photos-us-east-2.hackerone-user-content.com",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "This is an Amazon S3 bucket that contains profile and cover photos of users and programs. It does not contain any highly confidential information and would not impact the main application if it would be unreachable. A signed request is required to download an object."
+    },
+    {
+      "url": "https://hackerone.live",
+      "target": "hackerone.live",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": null
+    },
+    {
+      "url": "*.vpn.hackerone.net",
+      "target": "*.vpn.hackerone.net",
+      "type": "OTHER",
+      "bounty_eligible": true,
+      "instruction": "The HackerOne hacker VPN is used by hackers and HackerOne personnel. We'd be most interested in vulnerabilities that allow you to route traffic to other clients (lack of client isolation), routing traffic to internal HackerOne / Amazon networks, and bypassing [sslsplit](https://github.com/droe/sslsplit). Traffic routed through the VPN will originate from `66.232.20.0/23` or `206.166.248.0/23` (HackerOne netblocks). The VPN is based on OpenVPN."
+    },
+    {
+      "url": "66.232.20.0/23",
+      "target": "66.232.20.0/23",
+      "type": "CIDR",
+      "bounty_eligible": true,
+      "instruction": "This net block is the origin of all traffic routed through the HackerOne hacker VPN. See the description for *.vpn.hackerone.net for the stack and vulnerabilities we're interested in."
+    },
+    {
+      "url": "206.166.248.0/23",
+      "target": "206.166.248.0/23",
+      "type": "CIDR",
+      "bounty_eligible": true,
+      "instruction": "This net block is the origin of all traffic routed through the HackerOne hacker VPN. See the description for *.vpn.hackerone.net for the stack and vulnerabilities we're interested in."
+    },
+    {
+      "url": "https://github.com/Hacker0x01/react-datepicker",
+      "target": "https://github.com/Hacker0x01/react-datepicker",
+      "type": "OTHER",
+      "bounty_eligible": false,
+      "instruction": null
+    }
+  ],
+  "out_of_scope": [
+    {
+      "target": "support.hackerone.com",
+      "type": "URL",
+      "instruction": "This asset is hosted by Freshdesk (as of 2023-04-28), and as such these reports should be submitted to the appropriate program: https://hackerone.com/freshworks"
+    },
+    {
+      "target": "go.hacker.one",
+      "type": "URL",
+      "instruction": "This asset is hosted by Marketo, and as such these reports should be submitted to them directly."
+    },
+    {
+      "target": "info.hacker.one",
+      "type": "URL",
+      "instruction": "This asset is hosted by Unbounce, and as such these reports should be submitted to them via https://unbounce.com/security/."
+    },
+    {
+      "target": "ma.hacker.one",
+      "type": "URL",
+      "instruction": "This asset is hosted by Marketo, and as such these reports should be submitted to them directly."
+    },
+    {
+      "target": "h1.community",
+      "type": "URL",
+      "instruction": null
+    },
+    {
+      "target": "www.h1.community",
+      "type": "URL",
+      "instruction": null
+    },
+    {
+      "target": "www.hackeronestatus.com",
+      "type": "URL",
+      "instruction": "This asset is hosted by Atlassian, and as such these reports should be submitted to their program instead via https://bugcrowd.com/statuspage. "
+    },
+    {
+      "target": "hackerone-swag.com",
+      "type": "URL",
+      "instruction": null
+    }
+  ],
+  "_fetched_at": "2025-12-03T21:56:36.765491",
+  "_source": "hackerone"
+}

@@ -31,6 +31,15 @@ _DALFOX_CACHE: Dict[Tuple[str, Optional[str]], Tuple[bool, dict]] = {}
 # Default port 8000 matches Dockerfile.mcp and docker-compose.yml
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000")
 
+# K8s mode support
+LOCAL_K8S_MODE = os.environ.get("LOCAL_K8S_MODE", "false").lower() in ("true", "1", "yes")
+try:
+    from tools.local_executor import LocalExecutor, is_local_k8s_mode
+    K8S_AVAILABLE = True
+except ImportError:
+    K8S_AVAILABLE = False
+    LocalExecutor = None
+
 # Profile configuration
 PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
 ACTIVE_PROFILE: Optional[Dict[str, Any]] = None
@@ -522,11 +531,35 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 break
 
     # 4) Nuclei recon per host (best-effort)
-    for h in hosts:
+    # Try K8s mode first if available
+    if LOCAL_K8S_MODE and K8S_AVAILABLE and is_local_k8s_mode():
         try:
-            _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
-        except SystemExit as e:
-            print(f"[MCP] nuclei recon failed for {h}: {e}")
+            executor = LocalExecutor()
+            for h in hosts:
+                try:
+                    print(f"[K8S] Running Nuclei recon for {h}...")
+                    result = executor.submit_and_wait("nuclei", h, options={"mode": "recon"})
+                    if result:
+                        print(f"[K8S] Nuclei recon completed for {h}")
+                except Exception as e:
+                    print(f"[K8S] Nuclei recon failed for {h}: {e}, falling back to MCP")
+                    try:
+                        _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
+                    except SystemExit:
+                        pass
+        except Exception as e:
+            print(f"[K8S] K8s executor failed: {e}, using MCP")
+            for h in hosts:
+                try:
+                    _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
+                except SystemExit as e:
+                    print(f"[MCP] nuclei recon failed for {h}: {e}")
+    else:
+        for h in hosts:
+            try:
+                _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
+            except SystemExit as e:
+                print(f"[MCP] nuclei recon failed for {h}: {e}")
 
     # 4b) Cloud recon per host (best-effort)
     for h in hosts:
@@ -539,10 +572,31 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     for host in hosts:
         target_url = f"http://{host}"
         # Katana/Nuclei recon
-        try:
-            katana_result = _run_katana_stage(MCP_SERVER_URL, target_url)
-        except Exception as e:
-            katana_result = {"error": str(e)}
+        # Try K8s mode first if available
+        katana_result = None
+        if LOCAL_K8S_MODE and K8S_AVAILABLE and is_local_k8s_mode():
+            try:
+                executor = LocalExecutor()
+                print(f"[K8S] Running Katana for {target_url}...")
+                katana_result_k8s = executor.submit_and_wait("katana", target_url)
+                if katana_result_k8s:
+                    # Also run nuclei via k8s
+                    print(f"[K8S] Running Nuclei for {target_url}...")
+                    nuclei_result_k8s = executor.submit_and_wait("nuclei", target_url)
+                    katana_result = {
+                        "katana": katana_result_k8s,
+                        "nuclei": nuclei_result_k8s,
+                        "source": "k8s"
+                    }
+            except Exception as e:
+                print(f"[K8S] K8s execution failed for {target_url}: {e}, falling back to MCP")
+        
+        # Fall back to MCP if K8s didn't work
+        if not katana_result:
+            try:
+                katana_result = _run_katana_stage(MCP_SERVER_URL, target_url)
+            except Exception as e:
+                katana_result = {"error": str(e)}
 
         # stash in full-scan summary structure under modules
         summary.setdefault("modules", {})
@@ -923,6 +977,26 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         except Exception:
             # Keep failures non-fatal; missing MITRE is fine
             t["mitre"] = {"techniques": [], "tactics": [], "notes": "mapping_error"}
+        
+        # Calculate business impact score and bounty estimate
+        try:
+            from tools.impact_scorer import calculate_impact_score
+            from tools.bounty_estimator import estimate_bounty
+            
+            # Merge triage result with raw finding for impact calculation
+            finding_with_triage = {**f, **t}
+            impact_score = calculate_impact_score(finding_with_triage)
+            t["business_impact_score"] = impact_score
+            
+            # Estimate bounty
+            bounty_estimate = estimate_bounty(finding_with_triage)
+            t["bounty_estimate"] = bounty_estimate
+            # Update recommended_bounty if not set or if estimate is higher
+            if not t.get("recommended_bounty_usd") or bounty_estimate.get("estimated", 0) > t.get("recommended_bounty_usd", 0):
+                t["recommended_bounty_usd"] = bounty_estimate.get("estimated", t.get("recommended_bounty_usd", 0))
+        except Exception as e:
+            # Impact scoring failures should not break triage
+            print(f"[IMPACT] Warning: Failed to calculate impact score: {e}", file=sys.stderr)
 
         # Skip Dalfox/SQLmap for cloud storage findings
         name = (f.get("name") or "").lower()
@@ -1599,6 +1673,17 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
     scan_id = os.path.basename(findings_file).replace("zap_findings_", "").replace(".json", "")
     triage_path = os.path.join(out_dir, f"triage_{scan_id}.json")
+    
+    # Sort by business impact score (if available) or CVSS score
+    try:
+        from tools.impact_scorer import score_findings
+        triaged = score_findings(triaged)
+        print("[IMPACT] Findings prioritized by business impact", file=sys.stderr)
+    except Exception as e:
+        # Fallback to CVSS sorting
+        triaged.sort(key=lambda x: float(x.get("cvss_score", 0) or 0), reverse=True)
+        print(f"[IMPACT] Impact scoring failed, using CVSS: {e}", file=sys.stderr)
+    
     json.dump(triaged, open(triage_path, "w"), indent=2)
     print("[TRIAGE] Wrote", triage_path)
 

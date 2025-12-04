@@ -39,8 +39,7 @@ except ImportError:
     REDIS_AVAILABLE = False
 
 
-# Configuration
-LOCAL_K8S_MODE = os.environ.get("LOCAL_K8S_MODE", "false").lower() in ("true", "1", "yes")
+# Configuration - Note: LOCAL_K8S_MODE is checked at runtime, not import time
 REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
 RESULTS_PATH = os.environ.get("RESULTS_PATH", "/tmp/agentic-bugbounty-results")
@@ -65,8 +64,13 @@ TOOL_QUEUES = {
 
 
 def is_local_k8s_mode() -> bool:
-    """Check if local K8s execution is enabled."""
-    return LOCAL_K8S_MODE and REDIS_AVAILABLE
+    """Check if local K8s execution is enabled.
+    
+    Reads environment variable at call time, not import time,
+    so it can be set via command-line flags.
+    """
+    local_k8s_mode = os.environ.get("LOCAL_K8S_MODE", "false").lower() in ("true", "1", "yes")
+    return local_k8s_mode and REDIS_AVAILABLE
 
 
 class LocalExecutor:

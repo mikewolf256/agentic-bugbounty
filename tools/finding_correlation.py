@@ -207,6 +207,115 @@ def correlate_findings(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
     return result
 
 
+def calculate_exploitability_score(chain: List[Dict[str, Any]]) -> float:
+    """Calculate exploitability score for a chain (0.0-1.0)
+    
+    Args:
+        chain: List of findings in the chain
+        
+    Returns:
+        Exploitability score (0.0 = not exploitable, 1.0 = highly exploitable)
+    """
+    if not chain:
+        return 0.0
+    
+    score = 0.0
+    
+    # Factor 1: Number of steps (fewer is better for exploitability)
+    step_penalty = len(chain) * 0.1
+    step_score = max(0.0, 1.0 - step_penalty)
+    score += step_score * 0.3  # 30% weight
+    
+    # Factor 2: Average confidence of each finding
+    confidences = []
+    for finding in chain:
+        conf = finding.get("confidence", "medium")
+        if conf == "high":
+            confidences.append(1.0)
+        elif conf == "medium":
+            confidences.append(0.6)
+        elif conf == "low":
+            confidences.append(0.3)
+        else:
+            confidences.append(0.5)  # Default
+    
+    if confidences:
+        avg_confidence = sum(confidences) / len(confidences)
+        score += avg_confidence * 0.3  # 30% weight
+    
+    # Factor 3: Validation status
+    validated_count = sum(1 for f in chain if f.get("validated", False) or f.get("poc_validated", False))
+    validation_bonus = (validated_count / len(chain)) * 0.2
+    score += validation_bonus  # 20% weight
+    
+    # Factor 4: CVSS score (if available)
+    cvss_scores = [f.get("cvss_score", 0) for f in chain if f.get("cvss_score")]
+    if cvss_scores:
+        avg_cvss = sum(cvss_scores) / len(cvss_scores)
+        # Normalize CVSS (0-10) to 0-1
+        cvss_normalized = avg_cvss / 10.0
+        score += cvss_normalized * 0.2  # 20% weight
+    
+    return min(1.0, score)
+
+
+def find_chains(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Find all exploitable chains from findings
+    
+    Args:
+        findings: List of findings
+        
+    Returns:
+        List of chains with exploitability scores
+    """
+    # Build attack graph
+    graph = build_attack_graph(findings)
+    
+    # Extract chains with exploitability scores
+    chains = []
+    for chain_info in graph.get("chains", []):
+        # Get actual finding objects for this chain
+        chain_findings = []
+        step_ids = chain_info.get("steps", [])
+        
+        # Verify we have step IDs (they should be node IDs like "finding_0")
+        if not step_ids:
+            continue
+        
+        # Find nodes by ID and extract findings
+        for step_id in step_ids:
+            node_found = False
+            for node in graph.get("nodes", []):
+                if node.get("id") == step_id:
+                    finding = node.get("finding")
+                    if finding:
+                        chain_findings.append(finding)
+                        node_found = True
+                    break
+            
+            # If we can't find a node for a step, the chain is incomplete
+            if not node_found:
+                break
+        
+        # Only create chain if we found all steps
+        if chain_findings and len(chain_findings) == len(step_ids):
+            exploitability_score = calculate_exploitability_score(chain_findings)
+            chain = {
+                "name": chain_info.get("name"),
+                "description": chain_info.get("description"),
+                "steps": chain_findings,
+                "exploitability_score": exploitability_score,
+                "confidence": chain_info.get("confidence", "medium"),
+                "step_ids": step_ids
+            }
+            chains.append(chain)
+    
+    # Sort by exploitability score (highest first)
+    chains.sort(key=lambda c: c.get("exploitability_score", 0.0), reverse=True)
+    
+    return chains
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Finding Correlation Engine")
     ap.add_argument("--findings-file", required=True, help="JSON file with findings")

@@ -229,6 +229,19 @@ class SqlmapRequest(BaseModel):
 class SsrfChecksRequest(BaseModel):
     target: str  # full URL the application will fetch from
     param: Optional[str] = None  # query/body parameter carrying the URL, if applicable
+    use_callback: Optional[bool] = True  # enable callback-based validation
+
+class XxeChecksRequest(BaseModel):
+    target: str  # full URL that accepts XML
+    use_callback: Optional[bool] = True  # enable callback-based validation
+
+class BusinessLogicChecksRequest(BaseModel):
+    target: str  # target URL or host
+    auth_context: Optional[Dict[str, Any]] = None  # optional auth context (cookies, headers)
+
+class ExploitChainRequest(BaseModel):
+    findings: List[Dict[str, Any]]  # list of findings to build chain from
+    auth_context: Optional[Dict[str, Any]] = None  # optional auth context
 
 class OAuthChecksRequest(BaseModel):
     host: str  # target host
@@ -269,6 +282,10 @@ class AuthConfig(BaseModel):
 
 class CloudReconRequest(BaseModel):
     host: str
+
+class CloudChecksRequest(BaseModel):
+    target: str  # target URL or SSRF endpoint
+    metadata_response: Optional[str] = None  # optional metadata response if already obtained
 
 class KatanaNucleiRequest(BaseModel):
     target: str  # full URL
@@ -323,6 +340,29 @@ class SsrfChecksResult(BaseModel):
     target: str
     param: Optional[str]
     meta: Dict[str, Any]
+
+class XxeChecksResult(BaseModel):
+    target: str
+    meta: Dict[str, Any]
+    results: Dict[str, Any]
+
+class BusinessLogicChecksResult(BaseModel):
+    target: str
+    meta: Dict[str, Any]
+    results: Dict[str, Any]
+
+class ExploitChainResult(BaseModel):
+    success: bool
+    chain_name: Optional[str]
+    steps_executed: int
+    final_impact: Optional[Dict[str, Any]]
+    exploit_code: Optional[str]
+    evidence: List[Dict[str, Any]]
+
+class CloudChecksResult(BaseModel):
+    target: str
+    meta: Dict[str, Any]
+    results: Dict[str, Any]
 
 class OAuthChecksResult(BaseModel):
     host: str
@@ -2334,9 +2374,10 @@ def run_ssrf_checks(req: SsrfChecksRequest):
     2. Testing cloud metadata endpoints (169.254.169.254)
     3. Testing DNS rebinding indicators
     4. Checking for response differences that indicate SSRF
+    5. Using callback-based validation for out-of-band detection
     
-    Note: For full SSRF detection, consider using Interactsh or similar
-    out-of-band detection services.
+    Note: For full SSRF detection, callback-based validation is recommended.
+    Set CALLBACK_SERVER_URL environment variable to enable.
     """
     # Extract host from target URL for scope check
     from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
@@ -2344,6 +2385,26 @@ def run_ssrf_checks(req: SsrfChecksRequest):
     parsed = urlparse(req.target)
     host = parsed.netloc  # Keep port for scope check
     _enforce_scope(host)
+    
+    # Initialize callback correlator if callback server is configured
+    callback_enabled = req.use_callback and os.environ.get("CALLBACK_SERVER_URL")
+    correlator = None
+    job_id = None
+    callback_token = None
+    callback_url = None
+    
+    if callback_enabled:
+        try:
+            from tools.callback_correlator import CallbackCorrelator
+            callback_server_url = os.environ.get("CALLBACK_SERVER_URL")
+            correlator = CallbackCorrelator(callback_server_url)
+            job_id = f"ssrf_{normalize_target(req.target)}_{int(time.time())}"
+            callback_token = correlator.register_job(job_id, "ssrf", req.target, timeout=300)
+            callback_url = correlator.get_callback_url(callback_token)
+            print(f"[SSRF] Callback enabled: {callback_url}")
+        except Exception as e:
+            print(f"[SSRF] Callback setup failed: {e}, continuing without callbacks")
+            callback_enabled = False
     
     checks_run = 0
     confirmed_issues: List[Dict[str, Any]] = []
@@ -2369,6 +2430,19 @@ def run_ssrf_checks(req: SsrfChecksRequest):
         ("http://0x7f000001/", "hex_ip"),
         ("http://2130706433/", "decimal_ip"),
     ]
+    
+    # If callback enabled, add callback URL to metadata endpoint payloads
+    if callback_enabled and callback_url:
+        enhanced_payloads = []
+        for payload, payload_type in ssrf_payloads:
+            if "metadata" in payload_type:
+                # Append callback parameter to metadata endpoints
+                separator = "&" if "?" in payload else "?"
+                enhanced_payload = f"{payload}{separator}callback={callback_url}"
+                enhanced_payloads.append((enhanced_payload, payload_type))
+            else:
+                enhanced_payloads.append((payload, payload_type))
+        ssrf_payloads = enhanced_payloads
     
     param = req.param or "url"
     
@@ -2444,6 +2518,30 @@ def run_ssrf_checks(req: SsrfChecksRequest):
             # Other errors - skip
             pass
     
+    # Poll for callback hits if callback enabled
+    if callback_enabled and correlator:
+        print(f"[SSRF] Polling for callback hits (job_id: {job_id})...")
+        time.sleep(5)  # Wait for potential callback
+        hits = correlator.poll_hits(job_id, timeout=60, interval=2)
+        if hits:
+            print(f"[SSRF] Received {len(hits)} callback hit(s)")
+            # Add callback evidence to confirmed_issues
+            for hit in hits:
+                confirmed_issues.append({
+                    "type": "ssrf_callback_confirmed",
+                    "confidence": "high",
+                    "callback_evidence": {
+                        "remote_addr": hit.get("remote_addr"),
+                        "user_agent": hit.get("user_agent"),
+                        "method": hit.get("method"),
+                        "path": hit.get("path"),
+                        "query_params": hit.get("query_params"),
+                        "timestamp": hit.get("timestamp"),
+                    },
+                    "note": "SSRF confirmed via out-of-band callback"
+                })
+                targets_reached.append("callback_oob")
+    
     # Build summary
     if confirmed_issues:
         summary = f"Found {len(confirmed_issues)} potential SSRF issue(s). Targets reached: {', '.join(set(targets_reached))}"
@@ -2479,6 +2577,248 @@ def run_ssrf_checks(req: SsrfChecksRequest):
             "findings_file": out_path,
             "issues": confirmed_issues[:10],
         },
+    )
+
+
+@app.post("/mcp/run_xxe_checks", response_model=XxeChecksResult)
+def run_xxe_checks(req: XxeChecksRequest):
+    """
+    Run XXE (XML External Entity) validation checks.
+    
+    This endpoint tests for XXE vulnerabilities by:
+    1. Testing external entity injection with OOB callbacks
+    2. Testing local file inclusion
+    3. Testing SSRF via XXE
+    4. Using callback-based validation for out-of-band detection
+    
+    Note: For full XXE detection, callback-based validation is recommended.
+    Set CALLBACK_SERVER_URL environment variable to enable.
+    """
+    from tools.xxe_validator import validate_xxe
+    
+    parsed = urlparse(req.target)
+    host = parsed.netloc
+    _enforce_scope(host)
+    
+    # Get callback server URL if enabled
+    callback_url = None
+    if req.use_callback:
+        callback_url = os.environ.get("CALLBACK_SERVER_URL")
+    
+    discovery_data = {"target": req.target}
+    results = validate_xxe(discovery_data, callback_url)
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"xxe_checks_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+    
+    return XxeChecksResult(
+        target=req.target,
+        meta={
+            "findings_count": len(results.get("findings", [])),
+            "tests_run": results.get("tests_run", 0),
+            "vulnerable": results.get("vulnerable", False),
+            "findings_file": out_path
+        },
+        results=results
+    )
+
+
+@app.post("/mcp/run_business_logic_checks", response_model=BusinessLogicChecksResult)
+def run_business_logic_checks(req: BusinessLogicChecksRequest):
+    """
+    Run business logic vulnerability checks.
+    
+    This endpoint tests for business logic flaws by:
+    1. Analyzing application workflows from discovery data
+    2. Testing pricing/quantity manipulation
+    3. Testing workflow bypasses (skipping steps)
+    4. Testing rate limit bypasses
+    5. Testing state transition vulnerabilities
+    
+    Note: Requires discovery data (endpoints, URLs) from recon phase.
+    Use /mcp/host_profile to get discovery data for a host.
+    """
+    from tools.business_logic_analyzer import validate_business_logic
+    from tools.workflow_validator import validate_state_transitions
+    
+    parsed = urlparse(req.target)
+    host = parsed.netloc if parsed.netloc else req.target
+    _enforce_scope(host)
+    
+    # Get discovery data from host profile
+    discovery_data = {"target": req.target}
+    
+    # Try to load host profile for discovery data
+    host_key = host.replace(":", "_").replace("/", "_")
+    host_profile_file = os.path.join(HOST_HISTORY_DIR, f"host_profile_{host_key}.json")
+    if os.path.exists(host_profile_file):
+        try:
+            with open(host_profile_file, "r", encoding="utf-8") as f:
+                profile = json.load(f)
+                # Merge profile data into discovery_data
+                if "web" in profile:
+                    discovery_data["web"] = profile.get("web", {})
+                if "api_endpoints" in profile:
+                    discovery_data["api_endpoints"] = profile["api_endpoints"]
+        except Exception as e:
+            print(f"[BUSINESS-LOGIC] Failed to load host profile: {e}")
+    
+    # Run business logic validation
+    results = validate_business_logic(discovery_data, req.auth_context)
+    
+    # Also run workflow state transition validation
+    if results.get("workflow"):
+        state_result = validate_state_transitions(results["workflow"], req.auth_context)
+        results["tests_run"] += 1
+        if state_result["vulnerable"]:
+            results["vulnerable"] = True
+            results["findings"].append(state_result)
+    
+    # Save results
+    ts = int(time.time())
+    out_name = f"business_logic_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+    
+    return BusinessLogicChecksResult(
+        target=req.target,
+        meta={
+            "findings_count": len(results.get("findings", [])),
+            "tests_run": results.get("tests_run", 0),
+            "vulnerable": results.get("vulnerable", False),
+            "workflow_patterns": len(results.get("workflow", {}).get("workflow_patterns", [])),
+            "findings_file": out_path
+        },
+        results=results
+    )
+
+
+@app.post("/mcp/exploit_chain", response_model=ExploitChainResult)
+def exploit_chain(req: ExploitChainRequest):
+    """
+    Execute an attack chain automatically.
+    
+    This endpoint:
+    1. Finds exploitable chains from findings
+    2. Executes the highest priority chain
+    3. Generates exploit code for the chain
+    4. Returns execution results and impact assessment
+    
+    Note: Only executes chains with high exploitability scores.
+    """
+    from tools.finding_correlation import find_chains
+    from tools.chain_exploiter import execute_chain
+    from tools.exploit_generator import generate_chain_exploit
+    
+    # Find chains from findings
+    chains = find_chains(req.findings)
+    
+    if not chains:
+        return ExploitChainResult(
+            success=False,
+            chain_name=None,
+            steps_executed=0,
+            final_impact=None,
+            exploit_code=None,
+            evidence=[],
+        )
+    
+    # Select best chain (highest exploitability score)
+    best_chain = chains[0]
+    chain_findings = best_chain.get("steps", [])
+    
+    # Execute chain
+    execution_result = execute_chain(chain_findings, req.auth_context)
+    
+    # Generate exploit code
+    exploit_code = None
+    if execution_result.get("success"):
+        exploit_code = generate_chain_exploit(chain_findings, format="markdown")
+    
+    return ExploitChainResult(
+        success=execution_result.get("success", False),
+        chain_name=best_chain.get("name"),
+        steps_executed=execution_result.get("steps_executed", 0),
+        final_impact=execution_result.get("final_impact"),
+        exploit_code=exploit_code,
+        evidence=execution_result.get("evidence", []),
+    )
+
+
+@app.post("/mcp/run_cloud_checks", response_model=CloudChecksResult)
+def run_cloud_checks(req: CloudChecksRequest):
+    """
+    Run cloud-specific vulnerability checks.
+    
+    This endpoint tests for:
+    1. Cloud metadata endpoint access (AWS, GCP, Azure)
+    2. Storage bucket misconfigurations (S3, GCS, Azure Blob)
+    3. IAM misconfigurations and credential exposure
+    
+    Note: Requires SSRF vulnerability or direct metadata access.
+    """
+    from tools.cloud_metadata_tester import test_cloud_metadata
+    from tools.cloud_storage_tester import test_cloud_storage
+    from tools.cloud_iam_analyzer import analyze_cloud_iam
+    
+    parsed = urlparse(req.target)
+    host = parsed.netloc if parsed.netloc else req.target
+    _enforce_scope(host)
+    
+    results = {
+        "metadata_tests": {},
+        "storage_tests": {},
+        "iam_analysis": {},
+        "vulnerable": False
+    }
+    
+    # Test metadata endpoints
+    callback_url = os.environ.get("CALLBACK_SERVER_URL")
+    metadata_results = test_cloud_metadata(req.target, callback_url)
+    results["metadata_tests"] = metadata_results
+    if metadata_results.get("vulnerable"):
+        results["vulnerable"] = True
+    
+    # If metadata response provided, analyze it
+    if req.metadata_response:
+        # Test storage buckets
+        discovery_data = {"metadata_response": req.metadata_response}
+        storage_results = test_cloud_storage(discovery_data)
+        results["storage_tests"] = storage_results
+        if storage_results.get("vulnerable"):
+            results["vulnerable"] = True
+        
+        # Analyze IAM
+        iam_results = analyze_cloud_iam(req.metadata_response)
+        results["iam_analysis"] = iam_results
+        if iam_results.get("vulnerable"):
+            results["vulnerable"] = True
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"cloud_checks_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+    
+    return CloudChecksResult(
+        target=req.target,
+        meta={
+            "vulnerable": results["vulnerable"],
+            "metadata_tests_run": metadata_results.get("tests_run", 0),
+            "findings_file": out_path
+        },
+        results=results
     )
 
 

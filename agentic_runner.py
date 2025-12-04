@@ -45,7 +45,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
         "severity": ["critical", "high", "medium"],
         "rate_limit": 150,
     },
-    "validators": ["dalfox", "sqlmap", "ssrf", "bac"],
+    "validators": ["dalfox", "sqlmap", "ssrf", "bac", "oauth", "race", "smuggling", "graphql"],
     "skip_modules": [],
     "ai_triage": {
         "enabled": True,
@@ -1245,6 +1245,239 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             # SSRF validation is best-effort; ignore errors.
             pass
 
+        # === OAuth validation via MCP ===
+        try:
+            title = (t.get("title") or "").lower()
+            cwe = (t.get("cwe") or "").lower()
+            category = (t.get("category") or "").lower()
+            confidence = (t.get("confidence") or "").lower()
+            summary_txt = (t.get("summary") or "").lower()
+
+            looks_oauth = (
+                "oauth" in title
+                or "oidc" in title
+                or "openid" in title
+                or "oauth" in category
+                or ("authorization" in title and "oauth" in summary_txt)
+            )
+
+            if not should_run_validator("oauth"):
+                t.setdefault("validation", {})
+                t["validation"]["oauth"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "endpoint": "/mcp/run_oauth_checks",
+                }
+            elif looks_oauth and confidence in ("medium", "high", "very_high", "very high"):
+                host = (f.get("host") or f.get("request", {}).get("url") or "").split("//")[-1].split("/")[0]
+                payload = {"host": host} if host else None
+                if payload:
+                    try:
+                        resp = _mcp_post("/mcp/run_oauth_checks", payload)
+                        t.setdefault("validation", {})
+                        meta = resp.get("meta") or {}
+                        vulnerable_count = resp.get("vulnerable_count", 0)
+                        oauth_meta: Dict[str, Any] = {
+                            "engine_result": "confirmed" if vulnerable_count > 0 else "ran",
+                            "vulnerable_count": vulnerable_count,
+                            "endpoint": "/mcp/run_oauth_checks",
+                            "host": host,
+                        }
+                        if meta.get("vulnerable_tests"):
+                            oauth_meta["vulnerable_tests"] = meta.get("vulnerable_tests")
+                        if vulnerable_count > 0:
+                            oauth_meta["validation_confidence"] = "high"
+                        else:
+                            oauth_meta["validation_confidence"] = "medium"
+                        t["validation"]["oauth"] = oauth_meta
+                    except SystemExit as e:
+                        t.setdefault("validation", {})
+                        t["validation"]["oauth"] = {
+                            "engine_result": "error",
+                            "error": str(e),
+                            "endpoint": "/mcp/run_oauth_checks",
+                        }
+            else:
+                t.setdefault("validation", {})
+                t["validation"]["oauth"] = {
+                    "engine_result": "skipped_not_oauth_or_low_confidence",
+                    "endpoint": "/mcp/run_oauth_checks",
+                }
+        except Exception:
+            pass
+
+        # === Race Condition validation via MCP ===
+        try:
+            title = (t.get("title") or "").lower()
+            cwe = (t.get("cwe") or "").lower()
+            category = (t.get("category") or "").lower()
+            confidence = (t.get("confidence") or "").lower()
+
+            looks_race = (
+                "race condition" in title
+                or "race" in title
+                or "toctou" in title
+                or "time-of-check" in title
+                or "race" in category
+            )
+
+            if not should_run_validator("race"):
+                t.setdefault("validation", {})
+                t["validation"]["race"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "endpoint": "/mcp/run_race_checks",
+                }
+            elif looks_race and confidence in ("medium", "high", "very_high", "very high"):
+                host = (f.get("host") or f.get("request", {}).get("url") or "").split("//")[-1].split("/")[0]
+                payload = {"host": host} if host else None
+                if payload:
+                    try:
+                        resp = _mcp_post("/mcp/run_race_checks", payload)
+                        t.setdefault("validation", {})
+                        vulnerable_count = resp.get("vulnerable_count", 0)
+                        race_meta: Dict[str, Any] = {
+                            "engine_result": "confirmed" if vulnerable_count > 0 else "ran",
+                            "vulnerable_count": vulnerable_count,
+                            "endpoint": "/mcp/run_race_checks",
+                            "host": host,
+                        }
+                        meta = resp.get("meta") or {}
+                        if meta.get("vulnerable_tests"):
+                            race_meta["vulnerable_tests"] = meta.get("vulnerable_tests")
+                        if vulnerable_count > 0:
+                            race_meta["validation_confidence"] = "high"
+                        else:
+                            race_meta["validation_confidence"] = "medium"
+                        t["validation"]["race"] = race_meta
+                    except SystemExit as e:
+                        t.setdefault("validation", {})
+                        t["validation"]["race"] = {
+                            "engine_result": "error",
+                            "error": str(e),
+                            "endpoint": "/mcp/run_race_checks",
+                        }
+            else:
+                t.setdefault("validation", {})
+                t["validation"]["race"] = {
+                    "engine_result": "skipped_not_race_or_low_confidence",
+                    "endpoint": "/mcp/run_race_checks",
+                }
+        except Exception:
+            pass
+
+        # === Request Smuggling validation via MCP ===
+        try:
+            title = (t.get("title") or "").lower()
+            cwe = (t.get("cwe") or "").lower()
+            category = (t.get("category") or "").lower()
+            confidence = (t.get("confidence") or "").lower()
+
+            looks_smuggling = (
+                "request smuggling" in title
+                or "http request smuggling" in title
+                or "smuggling" in title
+                or "smuggling" in category
+            )
+
+            if not should_run_validator("smuggling"):
+                t.setdefault("validation", {})
+                t["validation"]["smuggling"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "endpoint": "/mcp/run_smuggling_checks",
+                }
+            elif looks_smuggling and confidence in ("medium", "high", "very_high", "very high"):
+                host = (f.get("host") or f.get("request", {}).get("url") or "").split("//")[-1].split("/")[0]
+                payload = {"host": host} if host else None
+                if payload:
+                    try:
+                        resp = _mcp_post("/mcp/run_smuggling_checks", payload)
+                        t.setdefault("validation", {})
+                        vulnerable = resp.get("vulnerable", False)
+                        smuggling_meta: Dict[str, Any] = {
+                            "engine_result": "confirmed" if vulnerable else "ran",
+                            "vulnerable": vulnerable,
+                            "endpoint": "/mcp/run_smuggling_checks",
+                            "host": host,
+                        }
+                        meta = resp.get("meta") or {}
+                        if meta.get("tests"):
+                            smuggling_meta["tests"] = meta.get("tests")
+                        if vulnerable:
+                            smuggling_meta["validation_confidence"] = "high"
+                        else:
+                            smuggling_meta["validation_confidence"] = "medium"
+                        t["validation"]["smuggling"] = smuggling_meta
+                    except SystemExit as e:
+                        t.setdefault("validation", {})
+                        t["validation"]["smuggling"] = {
+                            "engine_result": "error",
+                            "error": str(e),
+                            "endpoint": "/mcp/run_smuggling_checks",
+                        }
+            else:
+                t.setdefault("validation", {})
+                t["validation"]["smuggling"] = {
+                    "engine_result": "skipped_not_smuggling_or_low_confidence",
+                    "endpoint": "/mcp/run_smuggling_checks",
+                }
+        except Exception:
+            pass
+
+        # === GraphQL validation via MCP ===
+        try:
+            title = (t.get("title") or "").lower()
+            cwe = (t.get("cwe") or "").lower()
+            category = (t.get("category") or "").lower()
+            confidence = (t.get("confidence") or "").lower()
+            url = f.get("url") or f.get("request", {}).get("url") or ""
+
+            looks_graphql = (
+                "graphql" in title
+                or "graphql" in category
+                or "/graphql" in url.lower()
+                or "/api/graphql" in url.lower()
+            )
+
+            if not should_run_validator("graphql"):
+                t.setdefault("validation", {})
+                t["validation"]["graphql"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "endpoint": "/mcp/run_graphql_security",
+                }
+            elif looks_graphql and confidence in ("medium", "high", "very_high", "very high") and url:
+                try:
+                    resp = _mcp_post("/mcp/run_graphql_security", {"endpoint": url})
+                    t.setdefault("validation", {})
+                    vulnerable = resp.get("vulnerable", False)
+                    graphql_meta: Dict[str, Any] = {
+                        "engine_result": "confirmed" if vulnerable else "ran",
+                        "vulnerable": vulnerable,
+                        "endpoint": "/mcp/run_graphql_security",
+                        "graphql_endpoint": url,
+                    }
+                    meta = resp.get("meta") or {}
+                    if meta:
+                        graphql_meta.update(meta)
+                    if vulnerable:
+                        graphql_meta["validation_confidence"] = "high"
+                    else:
+                        graphql_meta["validation_confidence"] = "medium"
+                    t["validation"]["graphql"] = graphql_meta
+                except SystemExit as e:
+                    t.setdefault("validation", {})
+                    t["validation"]["graphql"] = {
+                        "engine_result": "error",
+                        "error": str(e),
+                        "endpoint": "/mcp/run_graphql_security",
+                    }
+            else:
+                t.setdefault("validation", {})
+                t["validation"]["graphql"] = {
+                    "engine_result": "skipped_not_graphql_or_low_confidence",
+                    "endpoint": "/mcp/run_graphql_security",
+                }
+        except Exception:
+            pass
+
         # === Simple XSS classification (type + context heuristics) ===
         try:
             title_txt = (t.get("title") or "").lower()
@@ -1334,6 +1567,36 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         triaged.append(t)
         time.sleep(0.4)
 
+    # === POC Validation Gate ===
+    # Validate POCs before including in reports
+    try:
+        from tools.poc_validator import validate_findings as validate_poc_findings
+        print("[POC-VALIDATOR] Validating POCs before report generation...", file=sys.stderr)
+        validation_result = validate_poc_findings(triaged, require_validation=False)
+        
+        # Add POC validation metadata to each finding
+        for finding in triaged:
+            poc_validation = finding.get("_poc_validation", {})
+            if poc_validation:
+                finding["poc_validated"] = poc_validation.get("poc_validated", False)
+                finding["poc_quality_score"] = poc_validation.get("poc_quality_score", "low")
+                finding["validation_evidence_complete"] = poc_validation.get("validation_evidence_complete", False)
+        
+        stats = validation_result["stats"]
+        print(f"[POC-VALIDATOR] Validated: {stats['validated']}, Rejected: {stats['rejected']}", file=sys.stderr)
+        print(f"[POC-VALIDATOR] Quality: High: {stats['high_quality']}, Medium: {stats['medium_quality']}, Low: {stats['low_quality']}", file=sys.stderr)
+        
+        # Filter to only validated findings if configured
+        require_poc_validation = get_profile_setting("poc_validation.require_validation", False)
+        if require_poc_validation:
+            original_count = len(triaged)
+            triaged = validation_result["validated"]
+            print(f"[POC-VALIDATOR] Filtered to {len(triaged)} validated findings (from {original_count})", file=sys.stderr)
+    except ImportError:
+        print("[POC-VALIDATOR] poc_validator module not available, skipping validation", file=sys.stderr)
+    except Exception as e:
+        print(f"[POC-VALIDATOR] POC validation failed: {e}, continuing with all findings", file=sys.stderr)
+
     scan_id = os.path.basename(findings_file).replace("zap_findings_", "").replace(".json", "")
     triage_path = os.path.join(out_dir, f"triage_{scan_id}.json")
     json.dump(triaged, open(triage_path, "w"), indent=2)
@@ -1417,6 +1680,70 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 {t.get('remediation','')}
 """
 
+        # Extract validation data for Proof of Concept section
+        bacv = (t.get("validation") or {}).get("bac") or {}
+        ssrfv = (t.get("validation") or {}).get("ssrf") or {}
+        sqlv = (t.get("validation") or {}).get("sqlmap") or {}
+        oauthv = (t.get("validation") or {}).get("oauth") or {}
+        racev = (t.get("validation") or {}).get("race") or {}
+        smugglingv = (t.get("validation") or {}).get("smuggling") or {}
+        graphqlv = (t.get("validation") or {}).get("graphql") or {}
+
+        # === Comprehensive Proof of Concept Section ===
+        has_any_validation = bool(validation_engines)
+        poc_validated = t.get("poc_validated", False)
+        poc_quality = t.get("poc_quality_score", "low")
+        
+        if has_any_validation or poc_validated:
+            body += """
+
+## Proof of Concept
+
+"""
+            # Validation status
+            if validation_status == "validated":
+                body += "✅ **Validation Status:** Confirmed by automated validation engine(s)\n\n"
+            elif validation_status == "planned":
+                body += "⏳ **Validation Status:** Validation planned\n\n"
+            elif validation_status == "error":
+                body += "❌ **Validation Status:** Validation error occurred\n\n"
+            else:
+                body += f"ℹ️ **Validation Status:** {validation_status}\n\n"
+            
+            # POC Quality
+            if poc_validated:
+                quality_emoji = "🟢" if poc_quality == "high" else "🟡" if poc_quality == "medium" else "🔴"
+                body += f"{quality_emoji} **POC Quality:** {poc_quality.upper()}\n\n"
+            
+            # Validation engines summary
+            if validation_engines:
+                body += "**Validation Engines Used:** " + ", ".join(validation_engines) + "\n\n"
+            
+            # Evidence summary
+            evidence_parts = []
+            if show_dalfox and dal_conf:
+                evidence_parts.append("Dalfox confirmed XSS")
+            if sqlv and sqlv.get("dbms"):
+                evidence_parts.append(f"SQLmap detected {sqlv.get('dbms')}")
+            if bacv and bacv.get("confirmed_issues_count", 0) > 0:
+                evidence_parts.append("BAC checks confirmed access control issues")
+            if ssrfv and ssrfv.get("confirmed_issues_count", 0) > 0:
+                evidence_parts.append("SSRF checks confirmed request forgery")
+            if oauthv and oauthv.get("vulnerable_count", 0) > 0:
+                evidence_parts.append("OAuth checks confirmed misconfigurations")
+            if racev and racev.get("vulnerable_count", 0) > 0:
+                evidence_parts.append("Race condition checks confirmed vulnerabilities")
+            if smugglingv and smugglingv.get("vulnerable", False):
+                evidence_parts.append("Request smuggling checks confirmed vulnerability")
+            if graphqlv and graphqlv.get("vulnerable", False):
+                evidence_parts.append("GraphQL security checks confirmed vulnerabilities")
+            
+            if evidence_parts:
+                body += "**Evidence Summary:**\n"
+                for part in evidence_parts:
+                    body += f"- {part}\n"
+                body += "\n"
+
         if show_dalfox:
             body += f"""
 
@@ -1433,7 +1760,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 """
 
         # BAC-specific validation evidence (when present)
-        bacv = (t.get("validation") or {}).get("bac") or {}
+        # (bacv already defined above for Proof of Concept section)
         # Render a BAC section whenever we have a BAC validation dict;
         # the test path patches _mcp_post to return meta only, so
         # engine_result may be missing.
@@ -1453,7 +1780,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 body += f"- Summary: {bacv.get('summary')}\n"
 
         # SSRF-specific validation evidence (when present)
-        ssrfv = (t.get("validation") or {}).get("ssrf") or {}
+        # (ssrfv already defined above for Proof of Concept section)
         if ssrfv and isinstance(ssrfv, dict) and ssrfv.get("engine_result"):
             body += """
 
@@ -1473,7 +1800,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 body += f"- Summary: {ssrfv.get('summary')}\n"
 
         # SQLmap-specific validation evidence (when present)
-        sqlv = (t.get("validation") or {}).get("sqlmap") or {}
+        # (sqlv already defined above for Proof of Concept section)
         if sqlv and isinstance(sqlv, dict) and sqlv.get("engine_result"):
             dbms = sqlv.get("dbms")
             vuln_params = sqlv.get("vulnerable_params") or []
@@ -1493,6 +1820,95 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 body += f"- Vulnerable parameters: {vp_str}\n"
             if dump_summary:
                 body += f"- Data dump summary: {dump_summary}\n"
+
+        # OAuth-specific validation evidence (when present)
+        # (oauthv already defined above for Proof of Concept section)
+        if oauthv and isinstance(oauthv, dict) and oauthv.get("engine_result"):
+            body += """
+
+## OAuth Validation Details
+"""
+            body += f"- OAuth result: {oauthv.get('engine_result')}\n"
+            vulnerable_count = oauthv.get("vulnerable_count", 0)
+            if vulnerable_count is not None:
+                body += f"- Vulnerable tests: {vulnerable_count}\n"
+            vulnerable_tests = oauthv.get("vulnerable_tests") or []
+            if vulnerable_tests:
+                body += f"- Vulnerable test types: {', '.join(map(str, vulnerable_tests))}\n"
+
+        # Race Condition validation evidence (when present)
+        # (racev already defined above for Proof of Concept section)
+        if racev and isinstance(racev, dict) and racev.get("engine_result"):
+            body += """
+
+## Race Condition Validation Details
+"""
+            body += f"- Race condition result: {racev.get('engine_result')}\n"
+            vulnerable_count = racev.get("vulnerable_count", 0)
+            if vulnerable_count is not None:
+                body += f"- Vulnerable endpoints: {vulnerable_count}\n"
+            vulnerable_tests = racev.get("vulnerable_tests") or []
+            if vulnerable_tests:
+                body += f"- Vulnerable endpoints: {', '.join(map(str, vulnerable_tests[:5]))}\n"
+
+        # Request Smuggling validation evidence (when present)
+        # (smugglingv already defined above for Proof of Concept section)
+        if smugglingv and isinstance(smugglingv, dict) and smugglingv.get("engine_result"):
+            body += """
+
+## Request Smuggling Validation Details
+"""
+            body += f"- Smuggling result: {smugglingv.get('engine_result')}\n"
+            vulnerable = smugglingv.get("vulnerable", False)
+            body += f"- Vulnerable: {vulnerable}\n"
+            tests = smugglingv.get("tests") or []
+            if tests:
+                for test in tests[:3]:  # Show first 3 tests
+                    if test.get("vulnerable"):
+                        body += f"- Test {test.get('type')}: Vulnerable (elapsed: {test.get('elapsed', 'N/A')}s)\n"
+
+        # GraphQL validation evidence (when present)
+        # (graphqlv already defined above for Proof of Concept section)
+        if graphqlv and isinstance(graphqlv, dict) and graphqlv.get("engine_result"):
+            body += """
+
+## GraphQL Security Validation Details
+"""
+            body += f"- GraphQL result: {graphqlv.get('engine_result')}\n"
+            vulnerable = graphqlv.get("vulnerable", False)
+            body += f"- Vulnerable: {vulnerable}\n"
+            depth_attack = graphqlv.get("depth_attack") or {}
+            if depth_attack.get("vulnerable"):
+                body += f"- Depth attack: Vulnerable (depth: {depth_attack.get('depth', 'N/A')})\n"
+            batching = graphqlv.get("batching") or {}
+            if batching.get("vulnerable"):
+                body += f"- Batching attack: Vulnerable (batches: {batching.get('batches_sent', 'N/A')})\n"
+
+        # Request/Response Capture (when available)
+        request_capture = (t.get("validation") or {}).get("request_capture") or t.get("request_capture")
+        if request_capture:
+            try:
+                from tools.poc_capture import POCCapture
+                capture = POCCapture()
+                formatted = capture.format_for_report(request_capture)
+                body += f"""
+
+## Request/Response Capture
+
+{formatted}
+"""
+            except Exception:
+                pass
+
+        # Screenshot (when available)
+        screenshot = (t.get("validation") or {}).get("screenshot") or t.get("screenshot")
+        if screenshot and os.path.exists(screenshot):
+            body += f"""
+
+## Screenshot Evidence
+
+![POC Screenshot]({screenshot})
+"""
 
         body += f"""
 

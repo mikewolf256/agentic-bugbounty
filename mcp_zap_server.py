@@ -2784,6 +2784,12 @@ def run_smuggling_checks(req: SmugglingChecksRequest):
     discovery_script = os.path.join(os.path.dirname(__file__), "tools", "smuggling_discovery.py")
     validator_script = os.path.join(os.path.dirname(__file__), "tools", "smuggling_validator.py")
     
+    # Verify scripts exist
+    if not os.path.exists(discovery_script):
+        raise HTTPException(status_code=500, detail=f"Discovery script not found: {discovery_script}")
+    if not os.path.exists(validator_script):
+        raise HTTPException(status_code=500, detail=f"Validator script not found: {validator_script}")
+    
     import tempfile
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         discovery_file = f.name
@@ -2793,10 +2799,34 @@ def run_smuggling_checks(req: SmugglingChecksRequest):
     
     try:
         # Discovery
-        subprocess.run([sys.executable, discovery_script, "--target", base_url, "--output", discovery_file], timeout=30)
+        discovery_result = subprocess.run(
+            [sys.executable, discovery_script, "--target", base_url, "--output", discovery_file],
+            timeout=30,
+            capture_output=True,
+            text=True
+        )
+        if discovery_result.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Discovery script failed: {discovery_result.stderr}"
+            )
         
         # Validation
-        subprocess.run([sys.executable, validator_script, "--target", base_url, "--output", validation_file], timeout=60)
+        validation_result = subprocess.run(
+            [sys.executable, validator_script, "--target", base_url, "--output", validation_file],
+            timeout=60,
+            capture_output=True,
+            text=True
+        )
+        if validation_result.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Validation script failed: {validation_result.stderr}"
+            )
+        
+        # Verify output file exists before reading
+        if not os.path.exists(validation_file):
+            raise HTTPException(status_code=500, detail="Validation script did not produce output file")
         
         with open(validation_file, "r") as fh:
             validation = json.load(fh)
@@ -2833,12 +2863,30 @@ def run_graphql_security(req: GraphQLSecurityRequest):
     
     script = os.path.join(os.path.dirname(__file__), "tools", "graphql_security.py")
     
+    # Verify script exists
+    if not os.path.exists(script):
+        raise HTTPException(status_code=500, detail=f"GraphQL security script not found: {script}")
+    
     import tempfile
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         output_file = f.name
     
     try:
-        subprocess.run([sys.executable, script, "--endpoint", req.endpoint, "--output", output_file], timeout=120)
+        result_proc = subprocess.run(
+            [sys.executable, script, "--endpoint", req.endpoint, "--output", output_file],
+            timeout=120,
+            capture_output=True,
+            text=True
+        )
+        if result_proc.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"GraphQL security script failed: {result_proc.stderr}"
+            )
+        
+        # Verify output file exists before reading
+        if not os.path.exists(output_file):
+            raise HTTPException(status_code=500, detail="GraphQL security script did not produce output file")
         
         with open(output_file, "r") as fh:
             result = json.load(fh)

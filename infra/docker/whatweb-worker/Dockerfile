@@ -18,10 +18,11 @@ RUN git clone --depth 1 https://github.com/urbanadventurer/WhatWeb.git /opt/what
     && chmod +x /opt/whatweb/whatweb
 
 # Install AWS SDK and worker script dependencies
-RUN pip3 install --no-cache-dir boto3 requests
+RUN pip3 install --no-cache-dir boto3 requests redis
 
-# Copy worker script
+# Copy worker scripts
 COPY worker.py /app/worker.py
+COPY worker-local.py /app/worker-local.py
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

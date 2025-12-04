@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scan-results
+  namespace: scan-workers
+  labels:
+    app: scan-results
+    component: storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  # For kind, we'll use a storage class that supports hostPath
+  # If local-path-provisioner is installed, it will handle this
+  # Otherwise, we'll create a PV manually
+  storageClassName: standard
+

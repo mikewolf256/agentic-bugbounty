@@ -1,0 +1,18 @@
+# Manual PV for kind cluster (if no storage provisioner)
+# This uses hostPath which works well for local testing
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: scan-results-pv
+  labels:
+    type: local
+spec:
+  storageClassName: standard
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteMany
+  hostPath:
+    path: /tmp/agentic-bugbounty-results
+    type: DirectoryOrCreate
+

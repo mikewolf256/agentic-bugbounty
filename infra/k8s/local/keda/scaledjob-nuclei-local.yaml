@@ -1,0 +1,81 @@
+# KEDA ScaledJob for Nuclei scanning (Local)
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: nuclei-worker
+  namespace: scan-workers
+  labels:
+    app.kubernetes.io/name: nuclei-worker
+    app.kubernetes.io/component: scan-worker
+spec:
+  jobTargetRef:
+    parallelism: 1
+    completions: 1
+    backoffLimit: 2
+    ttlSecondsAfterFinished: 300
+    activeDeadlineSeconds: 1800  # 30 min max runtime
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/name: nuclei-worker
+          app.kubernetes.io/component: scan-worker
+      spec:
+        serviceAccountName: scan-worker
+        restartPolicy: Never
+        containers:
+          - name: nuclei
+            image: localhost:5001/agentic-bugbounty/nuclei-worker:latest
+            imagePullPolicy: IfNotPresent
+            env:
+              - name: REDIS_HOST
+                value: "redis.scan-workers.svc.cluster.local"
+              - name: REDIS_PORT
+                value: "6379"
+              - name: REDIS_QUEUE_NAME
+                value: "nuclei-jobs"
+              - name: RESULTS_QUEUE_NAME
+                value: "scan-results"
+              - name: RESULTS_PATH
+                value: "/mnt/scan-results"
+            resources:
+              requests:
+                cpu: 500m
+                memory: 1Gi
+              limits:
+                cpu: 2000m
+                memory: 4Gi
+            volumeMounts:
+              - name: scan-results
+                mountPath: /mnt/scan-results
+              - name: nuclei-templates
+                mountPath: /root/nuclei-templates
+        volumes:
+          - name: scan-results
+            persistentVolumeClaim:
+              claimName: scan-results
+          - name: nuclei-templates
+            emptyDir: {}
+        initContainers:
+          - name: fetch-templates
+            image: alpine/git:latest
+            command:
+              - sh
+              - -c
+              - |
+                git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git /templates
+            volumeMounts:
+              - name: nuclei-templates
+                mountPath: /templates
+  
+  pollingInterval: 30
+  cooldownPeriod: 120
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.scan-workers.svc.cluster.local:6379
+        listName: nuclei-jobs
+        listLength: "1"
+

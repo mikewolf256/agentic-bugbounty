@@ -1,12 +1,58 @@
+# Python
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Environment
 .env
 .env.*
+.venv
+
+# Output directories
 output_zap/
+outputs/
+returns/
 metrics/
 logs/
+tmp_katana/
+
+# Editor/IDE
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+.obsidian/
+
+# Large dependencies (should use submodules or install separately)
+nuclei-templates-main/
+nuclei-templates/
+
+# Temporary files
+*.bak
+*.swp
+*.swo
+*~
+*.tmp
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini

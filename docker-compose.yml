@@ -9,6 +9,8 @@ services:
       - PYTHONPATH=/app
       # Docker network name for katana/nuclei to use
       - DOCKER_NETWORK=agentic-bugbounty_lab_network
+      # Lab testing mode - use higher rate limits since we control the lab
+      - LAB_TESTING=true
     ports:
       - "8000:8000"
     volumes:
@@ -48,6 +50,14 @@ services:
       context: ./labs/backup_leaks_fingerprint
     ports:
       - "5003:80"
+    networks:
+      - lab_network
+
+  auth_scan_lab:
+    build:
+      context: ./labs/auth_scan_lab
+    ports:
+      - "5004:5000"
     networks:
       - lab_network
 

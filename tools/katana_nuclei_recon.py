@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse
 
 
@@ -21,25 +21,74 @@ NUCLEI_BIN = os.environ.get("NUCLEI_BIN", "nuclei")
 # When running MCP in Docker, this should be the compose network name
 DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "agentic-bugbounty_lab_network")
 
-# Recon-only template pack (relative to NUCLEI_TEMPLATES_DIR)
-RECON_TEMPLATE_DIRS = [
-    "http/technologies/",
-    "http/exposed-panels/",
-    "http/fingerprints/",
-    "http/misconfiguration/",
-    "exposures/files/",
-    "exposures/configs/",
-    "ssl/",
-]
+# Conservative rate limits for bug bounty compliance
+# For lab testing (controlled environment), use higher limits
+IS_LAB_ENV = os.environ.get("LAB_TESTING", "false").lower() == "true"
+LAB_KATANA_RATE_LIMIT = int(os.environ.get("LAB_KATANA_RATE_LIMIT", "50"))  # Higher for lab
+LAB_NUCLEI_RATE_LIMIT = int(os.environ.get("LAB_NUCLEI_RATE_LIMIT", "50"))  # Higher for lab
+
+DEFAULT_KATANA_RATE_LIMIT = LAB_KATANA_RATE_LIMIT if IS_LAB_ENV else int(os.environ.get("DEFAULT_KATANA_RATE_LIMIT", "10"))  # req/sec
+DEFAULT_NUCLEI_RATE_LIMIT = LAB_NUCLEI_RATE_LIMIT if IS_LAB_ENV else int(os.environ.get("DEFAULT_NUCLEI_RATE_LIMIT", "10"))  # req/sec
+
+# Template packs for different scan modes (relative to NUCLEI_TEMPLATES_DIR)
+TEMPLATE_MODES = {
+    "recon": [
+        # Fast fingerprinting and technology detection
+        "http/technologies/",
+        "http/exposed-panels/",
+        "http/fingerprints/",
+        "ssl/",
+    ],
+    "auth": [
+        # Authentication and authorization focused - EXCLUDE massive CVE directory
+        "http/exposed-panels/",
+        "http/default-logins/",
+        "http/vulnerabilities/other/",  # Contains auth bypasses
+        "http/misconfiguration/",
+        # "http/cves/",  # REMOVED - too large, causes timeouts
+        "exposures/configs/",
+        "exposures/tokens/",
+        "http/exposures/",
+    ],
+    "targeted": [
+        # Ultra-targeted mode using specific directories + tags
+        # This mode uses tags instead of directories for better performance
+    ],
+    "full": [
+        # All templates - use with caution, very slow
+        "",  # Empty string means use root templates dir
+    ],
+}
+
+# Tag-based template selection for targeted scanning
+# More specific tags to reduce scan time and focus on high-value findings
+TEMPLATE_TAGS = {
+    "auth": ["auth", "jwt", "session", "login"],  # Removed: oauth, token, credential (too broad)
+    "idor": ["idor", "access-control"],  # Removed: authorization (too broad)
+    "exposure": ["exposure", "config", "secret"],  # Removed: token, api-key (covered by auth)
+}
+
+# Backwards compatibility
+RECON_TEMPLATE_DIRS = TEMPLATE_MODES["recon"]
 
 
-def run_katana(target: str, out_path: str) -> None:
+def run_katana(target: str, out_path: str, max_urls: int = 200, rate_limit: Optional[int] = None) -> None:
     """Run Katana via docker image and write JSONL results to out_path.
     
     Uses DOCKER_NETWORK env var to connect to the same network as target services.
     When running in Docker compose, targets should use service names (e.g., http://xss_js_secrets:5000)
     rather than localhost URLs.
+    
+    Args:
+        target: Target URL to crawl
+        out_path: Output file path
+        max_urls: Maximum number of URLs to collect (prevents excessive crawling)
+        rate_limit: Rate limit in requests per second (defaults to env var or 10)
     """
+    # Get rate limit from env or use conservative default
+    if rate_limit is None:
+        rate_limit = int(os.environ.get("KATANA_RATE_LIMIT", DEFAULT_KATANA_RATE_LIMIT))
+    
     cmd = [
         "docker",
         "run",
@@ -50,9 +99,13 @@ def run_katana(target: str, out_path: str) -> None:
         "-u",
         target,
         "-d",
-        "2",  # working depth from manual test
+        "2",  # Depth 2 is usually sufficient
         "-c",
-        "5",  # working concurrency from manual test
+        "3",  # Lower concurrency to respect rate limits
+        "-rl",  # Rate limit
+        str(rate_limit),  # Respect bug bounty program limits
+        "-ct",  # Crawl duration limit
+        "2m",  # Max 2 minutes of crawling
         "-jsonl",
         "-silent",
     ]
@@ -88,18 +141,77 @@ def run_katana(target: str, out_path: str) -> None:
                 continue
 
             dst.write(json.dumps({"url": url}) + "\n")
-def run_nuclei(urls_file: str, out_file: str, recon_only: bool = False) -> None:
-    """Run nuclei over URLs from urls_file, write JSONL to out_file. If recon_only, use only recon template pack."""
+def run_nuclei(urls_file: str, out_file: str, mode: str = "recon", rate_limit: Optional[int] = None) -> None:
+    """Run nuclei over URLs from urls_file, write JSONL to out_file.
+    
+    Modes:
+    - recon: Fast fingerprinting and technology detection
+    - auth: Authentication and authorization focused templates (directories)
+    - targeted: Tag-based scanning for auth-related vulnerabilities (faster)
+    - full: All templates (slow, comprehensive)
+    
+    Args:
+        urls_file: File containing URLs to scan (one per line)
+        out_file: Output file for JSONL results
+        mode: Scan mode (recon, auth, targeted, full)
+        rate_limit: Rate limit in requests per second (defaults to env var or 10)
+    """
+    # Get rate limit from env or use conservative default
+    if rate_limit is None:
+        rate_limit = int(os.environ.get("NUCLEI_RATE_LIMIT", DEFAULT_NUCLEI_RATE_LIMIT))
+    
     cmd = [NUCLEI_BIN, "-l", urls_file]
-    if recon_only:
-        for rel_dir in RECON_TEMPLATE_DIRS:
-            abs_dir = os.path.join(NUCLEI_TEMPLATES_DIR, rel_dir)
-            cmd += ["-t", abs_dir]
+    
+    # Use tag-based approach for "targeted" mode (much faster)
+    if mode == "targeted":
+        # Use more specific tags - focus on high-value auth vulnerabilities
+        # Combine tags with OR logic (templates matching any tag)
+        auth_tags = TEMPLATE_TAGS.get("auth", [])
+        idor_tags = TEMPLATE_TAGS.get("idor", [])
+        exposure_tags = TEMPLATE_TAGS.get("exposure", [])
+        
+        # Use most specific tags first to reduce template count
+        all_tags = auth_tags + idor_tags + exposure_tags
+        cmd += ["-tags", ",".join(all_tags)]
+        cmd += ["-severity", "critical,high,medium"]
+        
+        # Exclude noisy tags
+        exclude_tags = ["dos", "fuzz", "brute-force"]  # Exclude DoS and brute-force templates
+        cmd += ["-etags", ",".join(exclude_tags)]
     else:
-        cmd += ["-t", NUCLEI_TEMPLATES_DIR]
+        # Get template dirs for the selected mode
+        template_dirs = TEMPLATE_MODES.get(mode, TEMPLATE_MODES["recon"])
+        
+        if mode == "full" or not template_dirs or template_dirs == [""]:
+            # Full scan uses all templates
+            cmd += ["-t", NUCLEI_TEMPLATES_DIR]
+        else:
+            # Add specific template directories
+            for rel_dir in template_dirs:
+                if rel_dir:  # Skip empty strings
+                    abs_dir = os.path.join(NUCLEI_TEMPLATES_DIR, rel_dir)
+                    if os.path.exists(abs_dir):
+                        cmd += ["-t", abs_dir]
+        
+        # Add severity filter for auth mode to focus on important findings
+        if mode == "auth":
+            cmd += ["-severity", "critical,high,medium"]
+    
+    # Always add rate limiting - respect bug bounty program limits
+    cmd += ["-rl", str(rate_limit)]
+    
     cmd += ["-jsonl", "-silent", "-o", out_file]
     print(f"[NUCLEI] Running: {' '.join(cmd)}", file=sys.stderr)
-    subprocess.run(cmd, check=True)
+    
+    # Increase timeout for targeted/auth modes since they're more focused
+    timeout = 600 if mode in ("auth", "targeted") else 300
+    
+    try:
+        subprocess.run(cmd, check=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"[NUCLEI] Timed out after {timeout}s", file=sys.stderr)
+    except subprocess.CalledProcessError as e:
+        print(f"[NUCLEI] Error: {e}", file=sys.stderr)
 
 
 def load_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -210,9 +322,19 @@ def main() -> None:
     ap.add_argument(
         "--recon-only",
         action="store_true",
-        help="Use only recon/fingerprinting Nuclei templates (fast, low-noise)",
+        help="[DEPRECATED] Use --mode=recon instead",
+    )
+    ap.add_argument(
+        "--mode",
+        choices=["recon", "auth", "targeted", "full"],
+        default="recon",
+        help="Scan mode: recon (fast fingerprinting), auth (auth-focused dirs), targeted (tag-based, fastest), full (all templates)",
     )
     args = ap.parse_args()
+    
+    # Handle deprecated --recon-only flag
+    if args.recon_only:
+        args.mode = "recon"
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -224,9 +346,19 @@ def main() -> None:
         katana_out = os.path.join(tmpdir, "katana_urls.jsonl")
         nuclei_out = os.path.join(tmpdir, "nuclei_results.jsonl")
 
-        # 1) Crawl with katana
-        run_katana(args.target, katana_out)
+        # Get rate limits from environment (set by MCP server based on scope)
+        katana_rate_limit = int(os.environ.get("KATANA_RATE_LIMIT", DEFAULT_KATANA_RATE_LIMIT))
+        nuclei_rate_limit = int(os.environ.get("NUCLEI_RATE_LIMIT", DEFAULT_NUCLEI_RATE_LIMIT))
+        
+        # 1) Crawl with katana (limit URLs for faster scanning)
+        max_urls = 150 if args.mode in ("auth", "targeted") else 200
+        run_katana(args.target, katana_out, max_urls=max_urls, rate_limit=katana_rate_limit)
         katana_items = load_jsonl(katana_out)
+        
+        # Limit URLs if we got too many
+        if len(katana_items) > max_urls:
+            print(f"[KATANA] Limiting to {max_urls} URLs (found {len(katana_items)})", file=sys.stderr)
+            katana_items = katana_items[:max_urls]
         katana_items = [classify_katana_item(x) for x in katana_items]
 
         # Extract URLs to a simple file for nuclei
@@ -240,7 +372,7 @@ def main() -> None:
                     fh.write(u + "\n")
 
         # 2) Run nuclei over discovered URLs
-        run_nuclei(urls_txt, nuclei_out, recon_only=args.recon_only)
+        run_nuclei(urls_txt, nuclei_out, mode=args.mode, rate_limit=nuclei_rate_limit)
         nuclei_items = load_jsonl(nuclei_out)
 
         # 3) Build structured HTTP surface

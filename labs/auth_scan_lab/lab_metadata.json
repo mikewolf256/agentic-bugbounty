@@ -1,0 +1,354 @@
+{
+  "name": "auth_scan_lab",
+  "description": "Comprehensive authentication and authorization vulnerability testing lab",
+  "version": "1.0.0",
+  "base_url": "http://auth_scan_lab:5000",
+  "auth": {
+    "login_url": "/login",
+    "quick_login": {
+      "admin": "/login/admin",
+      "alice": "/login/alice",
+      "bob": "/login/bob"
+    },
+    "credentials": {
+      "admin": {"username": "admin", "password": "admin"},
+      "alice": {"username": "alice", "password": "alice123"},
+      "bob": {"username": "bob", "password": "bob456"}
+    },
+    "header_name": "Authorization",
+    "header_value_template": "Bearer {token}"
+  },
+  "vulnerabilities": {
+    "DEFAULT_CREDENTIALS": {
+      "id": "VULN-001",
+      "severity": "critical",
+      "cwe": "CWE-798",
+      "title": "Default Admin Credentials",
+      "description": "Admin account uses default credentials admin/admin",
+      "endpoint": "/login",
+      "method": "POST",
+      "detection": {
+        "type": "credential_test",
+        "payload": {"username": "admin", "password": "admin"},
+        "success_indicator": "\"success\": true"
+      },
+      "nuclei_template": "default-logins/admin-panel-default-login.yaml",
+      "expected_by": ["nuclei", "bac_checks", "manual"]
+    },
+    "WEAK_JWT_SECRET": {
+      "id": "VULN-002",
+      "severity": "high",
+      "cwe": "CWE-321",
+      "title": "Weak JWT Secret Key",
+      "description": "JWT tokens are signed with weak secret 'secret123'",
+      "endpoint": "/login",
+      "method": "POST",
+      "detection": {
+        "type": "jwt_crack",
+        "secret": "secret123",
+        "algorithm": "HS256"
+      },
+      "nuclei_template": "vulnerabilities/jwt/jwt-weak-secret.yaml",
+      "expected_by": ["nuclei", "manual"]
+    },
+    "JWT_ALGORITHM_NONE": {
+      "id": "VULN-003",
+      "severity": "critical",
+      "cwe": "CWE-327",
+      "title": "JWT Algorithm None Accepted",
+      "description": "Server accepts JWT tokens with alg:none bypassing signature",
+      "endpoint": "/api/profile",
+      "method": "GET",
+      "detection": {
+        "type": "jwt_none",
+        "test_header": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0"
+      },
+      "nuclei_template": "vulnerabilities/jwt/jwt-none-algorithm.yaml",
+      "expected_by": ["nuclei", "manual"]
+    },
+    "MISSING_RATE_LIMIT": {
+      "id": "VULN-004",
+      "severity": "medium",
+      "cwe": "CWE-307",
+      "title": "Missing Rate Limiting on Login",
+      "description": "No brute force protection on login endpoint",
+      "endpoint": "/login",
+      "method": "POST",
+      "detection": {
+        "type": "rate_limit_test",
+        "requests": 100,
+        "expected_block": false
+      },
+      "nuclei_template": "vulnerabilities/rate-limit-missing.yaml",
+      "expected_by": ["manual", "ffuf"]
+    },
+    "USERNAME_ENUMERATION": {
+      "id": "VULN-005",
+      "severity": "low",
+      "cwe": "CWE-204",
+      "title": "Username Enumeration via Login",
+      "description": "Different error messages for valid/invalid usernames",
+      "endpoint": "/login",
+      "method": "POST",
+      "detection": {
+        "type": "response_diff",
+        "valid_user_response": "Invalid password",
+        "invalid_user_response": "User not found"
+      },
+      "nuclei_template": "vulnerabilities/username-enumeration.yaml",
+      "expected_by": ["nuclei", "manual"]
+    },
+    "PREDICTABLE_SESSION": {
+      "id": "VULN-006",
+      "severity": "high",
+      "cwe": "CWE-330",
+      "title": "Predictable Session Token",
+      "description": "Session IDs are sequential (sess_1001, sess_1002, ...)",
+      "endpoint": "/login",
+      "method": "POST",
+      "detection": {
+        "type": "session_analysis",
+        "pattern": "sess_\\d+"
+      },
+      "expected_by": ["manual"]
+    },
+    "IDOR_USER_DATA": {
+      "id": "VULN-007",
+      "severity": "high",
+      "cwe": "CWE-639",
+      "title": "IDOR - Access Any User's Data",
+      "description": "Authenticated user can access any user's data by ID",
+      "endpoint": "/api/users/{id}",
+      "method": "GET",
+      "detection": {
+        "type": "idor",
+        "auth_as": "alice",
+        "access_target": "/api/users/3",
+        "expected_unauthorized": false
+      },
+      "nuclei_template": "vulnerabilities/idor/idor-user-data.yaml",
+      "expected_by": ["bac_checks", "nuclei", "manual"]
+    },
+    "IDOR_ORDER_DATA": {
+      "id": "VULN-008",
+      "severity": "high",
+      "cwe": "CWE-639",
+      "title": "IDOR - Access Any Order",
+      "description": "Authenticated user can access any order by ID",
+      "endpoint": "/api/orders/{id}",
+      "method": "GET",
+      "detection": {
+        "type": "idor",
+        "auth_as": "alice",
+        "access_target": "/api/orders/3",
+        "expected_unauthorized": false
+      },
+      "nuclei_template": "vulnerabilities/idor/idor-order-data.yaml",
+      "expected_by": ["bac_checks", "nuclei", "manual"]
+    },
+    "PRIVILEGE_ESCALATION": {
+      "id": "VULN-009",
+      "severity": "critical",
+      "cwe": "CWE-269",
+      "title": "Privilege Escalation via Profile Update",
+      "description": "User can change their own role to admin via PUT /api/profile",
+      "endpoint": "/api/profile",
+      "method": "PUT",
+      "detection": {
+        "type": "privilege_escalation",
+        "payload": {"role": "admin"},
+        "verify_endpoint": "/admin/users"
+      },
+      "nuclei_template": "vulnerabilities/privilege-escalation.yaml",
+      "expected_by": ["bac_checks", "manual"]
+    },
+    "INSECURE_PASSWORD_RESET": {
+      "id": "VULN-010",
+      "severity": "high",
+      "cwe": "CWE-640",
+      "title": "Predictable Password Reset Token",
+      "description": "Reset tokens are predictable (base64 of user_id:timestamp)",
+      "endpoint": "/forgot-password",
+      "method": "POST",
+      "detection": {
+        "type": "token_analysis",
+        "pattern": "base64(user_id:timestamp)"
+      },
+      "expected_by": ["manual"]
+    },
+    "SESSION_IN_URL": {
+      "id": "VULN-011",
+      "severity": "medium",
+      "cwe": "CWE-598",
+      "title": "Session Token in URL",
+      "description": "Authentication tokens accepted via URL query parameter",
+      "endpoint": "/api/profile?token={jwt}",
+      "method": "GET",
+      "detection": {
+        "type": "url_token",
+        "param": "token"
+      },
+      "expected_by": ["manual"]
+    },
+    "MISSING_SECURE_COOKIE": {
+      "id": "VULN-012",
+      "severity": "medium",
+      "cwe": "CWE-614",
+      "title": "Session Cookie Missing Secure Flags",
+      "description": "Session cookie set without HttpOnly and Secure flags",
+      "endpoint": "/login",
+      "method": "POST",
+      "detection": {
+        "type": "cookie_flags",
+        "cookie_name": "session_id",
+        "missing_flags": ["HttpOnly", "Secure"]
+      },
+      "nuclei_template": "vulnerabilities/cookie/insecure-cookie.yaml",
+      "expected_by": ["nuclei", "fingerprints", "manual"]
+    },
+    "EXPOSED_ADMIN_PANEL": {
+      "id": "VULN-013",
+      "severity": "medium",
+      "cwe": "CWE-425",
+      "title": "Exposed Admin Panel",
+      "description": "Admin panel accessible without authentication check",
+      "endpoint": "/admin",
+      "method": "GET",
+      "detection": {
+        "type": "access_control",
+        "expected_status_unauthenticated": 200
+      },
+      "nuclei_template": "exposed-panels/admin-panel.yaml",
+      "expected_by": ["nuclei", "bac_checks", "katana"]
+    },
+    "VERTICAL_PRIVILEGE_ESCALATION": {
+      "id": "VULN-014",
+      "severity": "high",
+      "cwe": "CWE-862",
+      "title": "Vertical Privilege Escalation - Admin Endpoints",
+      "description": "Regular users can access admin-only endpoints",
+      "endpoint": "/admin/users",
+      "method": "GET",
+      "detection": {
+        "type": "vertical_priv_esc",
+        "auth_as": "alice",
+        "expected_403": false
+      },
+      "nuclei_template": "vulnerabilities/bac/vertical-privilege-escalation.yaml",
+      "expected_by": ["bac_checks", "manual"]
+    },
+    "SENSITIVE_DATA_EXPOSURE": {
+      "id": "VULN-015",
+      "severity": "high",
+      "cwe": "CWE-200",
+      "title": "Sensitive Data in Admin Config",
+      "description": "Database credentials and secrets exposed in /admin/config",
+      "endpoint": "/admin/config",
+      "method": "GET",
+      "detection": {
+        "type": "sensitive_data",
+        "patterns": ["password", "secret", "api_key"]
+      },
+      "nuclei_template": "exposures/configs/sensitive-config.yaml",
+      "expected_by": ["nuclei", "katana", "manual"]
+    },
+    "DEBUG_ENDPOINT_EXPOSED": {
+      "id": "VULN-016",
+      "severity": "high",
+      "cwe": "CWE-215",
+      "title": "Internal Debug Endpoint Exposed",
+      "description": "Debug endpoint /api/internal/debug exposes sensitive data",
+      "endpoint": "/api/internal/debug",
+      "method": "GET",
+      "detection": {
+        "type": "access_control",
+        "expected_status_unauthenticated": 200
+      },
+      "expected_by": ["katana", "manual"]
+    },
+    "ROBOTS_TXT_DISCLOSURE": {
+      "id": "VULN-017",
+      "severity": "info",
+      "cwe": "CWE-200",
+      "title": "Sensitive Paths in robots.txt",
+      "description": "robots.txt reveals sensitive paths like /admin, /backup, /.git",
+      "endpoint": "/robots.txt",
+      "method": "GET",
+      "detection": {
+        "type": "content_check",
+        "patterns": ["/admin", "/backup", "/.git"]
+      },
+      "nuclei_template": "exposures/files/robots-txt.yaml",
+      "expected_by": ["nuclei", "katana", "fingerprints"]
+    },
+    "API_KEY_EXPOSURE": {
+      "id": "VULN-018",
+      "severity": "high",
+      "cwe": "CWE-312",
+      "title": "API Keys Exposed in User Response",
+      "description": "User API keys returned in /api/users/{id} response",
+      "endpoint": "/api/users/{id}",
+      "method": "GET",
+      "detection": {
+        "type": "response_content",
+        "pattern": "api_key"
+      },
+      "expected_by": ["manual"]
+    }
+  },
+  "test_scenarios": [
+    {
+      "name": "default_admin_login",
+      "description": "Verify default credentials work",
+      "steps": [
+        {"action": "POST", "endpoint": "/login", "body": {"username": "admin", "password": "admin"}},
+        {"action": "assert", "condition": "response.success == true"}
+      ]
+    },
+    {
+      "name": "idor_user_access",
+      "description": "Alice can access Bob's data",
+      "steps": [
+        {"action": "POST", "endpoint": "/login", "body": {"username": "alice", "password": "alice123"}},
+        {"action": "GET", "endpoint": "/api/users/3", "headers": {"Authorization": "Bearer {token}"}},
+        {"action": "assert", "condition": "response.username == 'bob'"}
+      ]
+    },
+    {
+      "name": "privilege_escalation",
+      "description": "Regular user can become admin",
+      "steps": [
+        {"action": "POST", "endpoint": "/login", "body": {"username": "alice", "password": "alice123"}},
+        {"action": "PUT", "endpoint": "/api/profile", "body": {"role": "admin"}},
+        {"action": "assert", "condition": "response.user.role == 'admin'"}
+      ]
+    },
+    {
+      "name": "jwt_none_bypass",
+      "description": "Access API with alg:none JWT",
+      "steps": [
+        {"action": "craft_jwt", "payload": {"user_id": 1, "role": "admin"}, "algorithm": "none"},
+        {"action": "GET", "endpoint": "/api/profile", "headers": {"Authorization": "Bearer {crafted_token}"}},
+        {"action": "assert", "condition": "response.role == 'admin'"}
+      ]
+    }
+  ],
+  "scanner_expectations": {
+    "nuclei": {
+      "minimum_findings": 5,
+      "expected_vuln_ids": ["VULN-001", "VULN-003", "VULN-005", "VULN-012", "VULN-013", "VULN-017"]
+    },
+    "katana": {
+      "minimum_urls": 10,
+      "must_find": ["/admin", "/api/users", "/api/orders", "/login", "/robots.txt"]
+    },
+    "bac_checks": {
+      "minimum_findings": 3,
+      "expected_vuln_ids": ["VULN-007", "VULN-008", "VULN-013", "VULN-014"]
+    },
+    "fingerprints": {
+      "expected_technologies": ["Python", "Flask"]
+    }
+  }
+}
+

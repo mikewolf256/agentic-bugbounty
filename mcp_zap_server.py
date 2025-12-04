@@ -2422,12 +2422,16 @@ def run_oauth_checks(req: OAuthChecksRequest):
             detail=f"oauth_discovery.py not found at {discovery_script}",
         )
     
-    # Create temp file for discovery output
+    # Create temp files (initialize before try block for proper cleanup)
     import tempfile
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        discovery_file = f.name
+    discovery_file = None
+    validation_file = None
     
     try:
+        # Create temp file for discovery output
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            discovery_file = f.name
+        
         # Run discovery
         cmd = [
             sys.executable,
@@ -2513,9 +2517,9 @@ def run_oauth_checks(req: OAuthChecksRequest):
         )
     
     finally:
-        # Cleanup temp files
+        # Cleanup temp files (check if variables are defined)
         for fpath in [discovery_file, validation_file]:
-            if os.path.exists(fpath):
+            if fpath and os.path.exists(fpath):
                 try:
                     os.unlink(fpath)
                 except Exception:
@@ -2554,17 +2558,22 @@ def run_race_checks(req: RaceChecksRequest):
             detail=f"race_discovery.py not found at {discovery_script}",
         )
     
-    # Create temp file for API endpoints
+    # Create temp files (initialize before try block for proper cleanup)
     import tempfile
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        api_endpoints_file = f.name
-        json.dump({"api_endpoints": api_endpoints}, f)
-    
-    # Create temp file for discovery output
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        discovery_file = f.name
+    api_endpoints_file = None
+    discovery_file = None
+    validation_file = None
     
     try:
+        # Create temp file for API endpoints
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            api_endpoints_file = f.name
+            json.dump({"api_endpoints": api_endpoints}, f)
+        
+        # Create temp file for discovery output
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            discovery_file = f.name
+        
         # Run discovery
         cmd = [
             sys.executable,
@@ -2653,9 +2662,9 @@ def run_race_checks(req: RaceChecksRequest):
         )
     
     finally:
-        # Cleanup temp files
+        # Cleanup temp files (check if variables are defined)
         for fpath in [discovery_file, validation_file, api_endpoints_file]:
-            if os.path.exists(fpath):
+            if fpath and os.path.exists(fpath):
                 try:
                     os.unlink(fpath)
                 except Exception:

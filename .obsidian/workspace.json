@@ -186,18 +186,19 @@
   },
   "active": "027b5ca3fff01ab0",
   "lastOpenFiles": [
+    "venv/bin/activate.fish",
+    "venv/bin/activate.csh",
+    "venv/bin/activate",
+    "venv/bin/Activate.ps1",
+    "venv/bin/pip3.11",
+    "venv/bin/pip3",
+    "venv/bin/pip",
+    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/packages/backports/__pycache__/makefile.cpython-311.pyc",
+    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/packages/backports/__pycache__/__init__.cpython-311.pyc",
+    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/contrib/_securetransport/__pycache__/low_level.cpython-311.pyc",
+    "venv/lib/python3.11/site-packages/pip/_vendor/urllib3/contrib/_securetransport/__pycache__/__init__.cpython-311.pyc",
     "MCP_ANALYSIS_REPORT.md",
-    "tests/test_mcp_lab_simulation.py",
-    "output_zap/program_run_1764819741.json",
-    "tools/ai_nuclei_triage.py",
-    "output_zap/katana_nuclei_httpbin.json",
-    "output_zap/katana_nuclei_reddit.json",
-    "output_zap/katana_nuclei_backup_leaks_fingerprint.json",
-    "output_zap/katana_nuclei_example.json",
-    "tmp_katana",
     "output_zap/cloud_findings_localhost:3000__Cloud_storage_surface_detected.md",
-    "output_zap/program_run_1764810693.json",
-    "tools/katana_wrapper.py",
     "output_zap/cloud_findings_juice-shop:3000__Cloud_storage_surface_detected.md",
     "ROADMAP.md",
     "nuclei-templates-main/http/osint/user-enumeration/README.md",
@@ -221,7 +222,6 @@
     "nuclei-templates-main/CONTRIBUTING.md",
     "nuclei-templates-main/CODE_OF_CONDUCT.md",
     "output_zap/cloud_findings_localhost:3000__Cloud_Storage_Surface_Detected.md",
-    "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md",
-    "P4.md"
+    "output_zap/cloud_findings_juice-shop:3000__Cloud_Storage_Surface_Detected.md"
   ]
 }

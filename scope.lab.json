@@ -1,0 +1,8 @@
+{
+  "program_name": "lab-xss_js_secrets",
+  "primary_targets": [
+    "http://xss_js_secrets:5000"
+  ],
+  "secondary_targets": [],
+  "rules": {}
+}

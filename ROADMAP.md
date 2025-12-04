@@ -1,40 +1,120 @@
-# P0 Bug Bounty & Red-Team Roadmap
+# Agentic Bug Bounty – Updated Roadmap (with Authenticated Katana Session Support)
 
-This roadmap tracks planned capabilities for the current P0 program across seven core bug bounty focus areas, plus red-team and platform features.
+## P0 – Core Pipeline Foundations
+- [x] Project Scaffolding & Repo Structure
+- [x] Core MCP endpoints (run_scan, fetch_scope, nuclei_scan, zap_scan)
+- [x] Kubernetes Worker Model & Container Templates
+- [x] Global Config Management (scopes.json, endpoints.json)
+- [x] Local + K8s Execution Modes
+- [x] Scan Orchestration Controller
+- [x] Artifact Output Folder Standardization
 
 ---
 
-## Now / Next / Later (Unified View)
+## P1 – High Priority Features (Critical to MVP)
 
-- **Now – P0: Core Findings + Evidence Automation**
-  - Core MCP + runner pipeline, host profiling, and host deltas implemented and tested (`P0.0`).
-  - ZAP scanning orchestration via MCP, multi-host scan orchestration, and host history.
-  - Dedupe + pre-filtering of findings (skip noisy/low-CVSS issues) before LLM triage.
-  - XSS + Dalfox behavior tightened to XSS-only, medium+ confidence with clean triage/Markdown (`P0.1`).
-  - SQLi validation wired via `/mcp/run_sqlmap` and triage + Markdown integration (`P0.2`).
-  - BAC v1 (`/mcp/run_bac_checks` + config + basic vertical/IDOR checks) and SSRF v1 (`/mcp/run_ssrf_checks`) enriched with engine metadata in triage and Markdown (`P0.3`, `P0.4`).
-  - Katana + Nuclei web recon wired via MCP `/mcp/run_katana_nuclei` and helper script (`P0.0`, `P0.1`, `P0.2`).
-  - JS miner for endpoints/keys (MCP `/mcp/run_js_miner` + background job) and reflection detector for XSS candidates.
-  - Backup hunter (HTTP-based, via `/mcp/run_backup_hunt`) for common backup/config file exposures, with hits surfaced in `host_profile.web.backups`.
-  - Artifact hygiene + structured outputs (triage JSONs, Markdown reports, `program_run_*.json`).
-- **Next – P1: Authenticated Testing + High-ROI Expansions**
-  - ZAP Auth Context + API tokens for authenticated spidering and scanning.
-  - ffuf/sqlmap authenticated mode (reuse auth contexts, session cookies, or tokens).
-  - Deeper business logic checks (IDOR, BOLA, mass assignment) building on BAC v1.
-  - Nuclei curated recon/attack template sets for high-signal coverage.
-  - Interactsh (or equivalent) for OOB payloads and SSRF/callback correlation.
-  - Secrets detection + redaction pipeline (beyond basic regex/entropy checks).
-- **Later – P2–P5: Intelligence, Scale, Red-Team, Platform**
-  - **P2 – Intelligence + RAG memory:** vector DB of past findings, pattern recognition on repeats, RAG-assisted second-stage scanning, and LLM-assisted payload mutation.
-  - **P3 – Distributed worker cluster:** Redis/Kafka work queue, K8s worker pods with autoscaling, job templates for ZAP/ffuf/sqlmap/nuclei, and per-scan isolation.
-  - **P4 – Red team / ASM mode:** Wayback machine URI mining, JS/source-map harvesting, technology fingerprinting, attack-path graph building, MITRE ATT&CK JSON export, and red-team report templates.
-  - **P5 – Commercial features:** tenant onboarding, one-click scanning portal, automated evidence-to-report pipeline (PDF/MD), billing and usage metering.
+### **P1.1 – Recon & Crawling Layer**
+- [x] Katana unauthenticated crawling integration
+- [x] Katana + JS Miner for endpoint extraction
+- [x] WaybackURL ingestion
+- [x] Param mine baseline
+- [ ] Basic fingerprinting (technologies, frameworks)
+- [ ] Add WhatWeb/Similar tech-fingerprinter fallback
 
-  - **P2/P3 – Training & Lab Harness:**
-    - Build a small library of dockerized vulnerable labs (reflected XSS, IDOR/BOLA, backup/config leaks, hard-coded JS secrets, SSRF) with `lab_metadata.json` describing expected findings.
-    - Add a lab runner script that spins up a lab, sets MCP scope, runs ZAP + helpers, then triages findings via `agentic_runner.py` and scores detection/report quality against `expected_findings`.
-    - Use lab runs as regression tests for the agentic pipeline ("can we still detect XSS/IDOR/backup leaks end-to-end?").
-    - Index high-quality public bug bounty reports and lab walkthroughs in a RAG store (tagged by bug_type/CWE/surface) to assist triage and report generation without immediate fine-tuning.
+---
+
+### **P1.2 – NEW: Authenticated Recon via Katana Active Browser Session (Added)**
+**Purpose:** Unlock full authenticated surface mapping using live Chrome session + DevTools WebSocket.
+
+**Tasks:**
+- [ ] MCP Endpoint: `/mcp/run_katana_auth`
+- [ ] Output directory: `artifacts/katana_auth/<host>/`
+- [ ] Chrome helper script (`--remote-debugging-port=9222`)
+- [ ] Auto-extract authenticated session cookies
+- [ ] Collect authenticated-only:
+  - URLs
+  - JS files
+  - API endpoints (XHR/fetch)
+  - GraphQL schemas
+  - POST bodies
+- [ ] Normalize results into unified recon DB
+- [ ] Feed authenticated URLs → ffuf/sqlmap/dalfox/ZAP
+- [ ] Tag resources in RAG knowledge store
+- [ ] Integrate into reporting pipeline
+
+---
+
+### **P1.3 – Nuclei Layer**
+- [x] Baseline nuclei scan integration
+- [ ] Curated template bundle for highest-paying bug classes
+- [ ] Add GraphQL templates
+- [ ] Add authenticated-template support
+- [ ] Severity post-processing
+
+---
+
+### **P1.4 – ZAP Integration**
+- [ ] ZAP baseline passive scan
+- [ ] Advanced script loader
+- [ ] Scripted authenticated scans
+- [ ] Normalize ZAP results
+
+---
+
+### **P1.5 – RAG Vulnerability Intelligence Pipeline**
+- [x] Embedding model selection
+- [ ] Unified schema:
+  - vuln_type
+  - attack_chain
+  - endpoint
+  - reproduction_steps
+  - payload
+  - impact
+- [ ] H1 ingestion pipeline
+- [ ] Fingerprinting correlations
+- [ ] Suggest exploit chains
+- [ ] Add SSRF, GraphQL, ReDoS, IDOR embeddings
+
+---
+
+## P2 – Medium Priority Features
+
+### **P2.1 – Worker Clustering**
+- [ ] Batch scheduler
+- [ ] Priority queue
+- [ ] Adaptive parallelism
+
+### **P2.2 – Enhanced Fingerprinting**
+- [ ] JS/tech-library detection
+- [ ] Backend/framework inference
+- [ ] Cloud-provider fingerprinting
+- [ ] Favicon hash → tech inference
+
+---
+
+## P3 – Reporting & Export Layer
+- [ ] Markdown report generator
+- [ ] JSON export
+- [ ] MITRE ATT&CK Navigator export
+- [ ] Authenticated recon sections
+
+---
+
+## P4 – Long-term/Stretch Features
+
+### **P4.1 – Fully Autonomous Red Team Mode**
+- [ ] Search-based exploitation planner
+- [ ] Multi-step attack simulations
+- [ ] Auto-chain SSRF → metadata → takeover
+- [ ] Attack path graph generator
+
+### **P4.2 – Red Team Service Offering Mode**
+- [ ] Client-ready deliverables
+- [ ] MITRE mapping
+- [ ] Executive report generation
+- [ ] External API mode
+
+---
 
 ---
 
@@ -54,6 +134,14 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - [x] Introduce Katana + Nuclei helper: `tools/katana_nuclei_recon.py`.
   - [x] Add `/mcp/run_katana_nuclei` endpoint to orchestrate Katana + Nuclei and emit JSON findings.
   - [x] Wire Katana+Nuclei findings into `full-scan` flow and unified triage automatically (basic integration).
+- **AI-driven Nuclei template selection**
+  - [x] Implement `tools/ai_nuclei_triage.py` - AI helper that analyzes host_profile and selects optimal templates.
+  - [x] Add `/mcp/triage_nuclei_templates` endpoint for AI-driven template selection based on tech stack.
+  - [x] Add `/mcp/run_targeted_nuclei` endpoint for running Nuclei with AI-selected templates.
+  - [x] Wire AI triage into `full-scan` orchestration (after Katana+WhatWeb, before final triage).
+  - [x] Template category mappings for 50+ technologies (WordPress, GraphQL, Spring, AWS, etc.).
+  - [x] Attack surface analysis (API detection, auth endpoints, file upload, admin panels).
+  - [x] Static fallback when LLM unavailable.
 
 ---
 
@@ -343,4 +431,380 @@ This roadmap tracks planned capabilities for the current P0 program across seven
   - [ ] Add global token-usage monitor with per-tenant budgets.
   - [ ] Configure alerts when thresholds are exceeded.
 - **Client Portal (Future UI)**
-  - [ ] Prototype a “client portal” UX (even as static-generated HTML) to browse findings, reports, and MITRE coverage.
+  - [ ] Prototype a "client portal" UX (even as static-generated HTML) to browse findings, reports, and MITRE coverage.
+
+---
+
+---
+
+# NEW FEATURE PROPOSALS (Dec 2024)
+
+## P1.6 – OAuth/OIDC Security Analyzer – P0/P1
+**Rationale:** OAuth misconfigurations are consistently high-paying ($5K-$50K). Most automation tools ignore this complex attack surface.
+
+- **Discovery**
+  - [ ] Detect OAuth/OIDC endpoints (`/oauth/authorize`, `/token`, `/.well-known/openid-configuration`).
+  - [ ] Extract and parse OAuth flows from JS (implicit, authorization code, PKCE).
+  - [ ] Identify state parameter handling, redirect_uri validation patterns.
+- **Validation**
+  - [ ] `/mcp/run_oauth_checks` endpoint:
+    - [ ] Open redirect via redirect_uri manipulation.
+    - [ ] State parameter fixation/missing checks.
+    - [ ] Token leakage via referrer header.
+    - [ ] Scope escalation attempts.
+    - [ ] PKCE downgrade attacks.
+  - [ ] Account takeover chain detection (OAuth → session).
+- **Triage & Reporting**
+  - [ ] OAuth-specific impact narratives (ATO, data exfil).
+  - [ ] Chain visualization (redirect → token steal → ATO).
+- **Profiles / Modes**
+  - [ ] `--profile oauth-heavy` for auth-focused programs.
+
+---
+
+## P1.7 – Race Condition / TOCTOU Detection – P0/P1
+**Rationale:** Race conditions often yield critical bugs ($10K+) and are underexplored due to testing complexity.
+
+- **Discovery**
+  - [ ] Identify race-prone endpoints:
+    - [ ] Financial transactions, balance updates, coupon redemption.
+    - [ ] Account creation, invitation systems.
+    - [ ] File operations, resource allocation.
+  - [ ] Detect non-idempotent state changes in API responses.
+- **Validation**
+  - [ ] `/mcp/run_race_checks` endpoint:
+    - [ ] Parallel request sender (configurable threads, timing).
+    - [ ] Response diffing to detect race success.
+    - [ ] Turbo Intruder-style single-packet attack support.
+  - [ ] Track balance/count deltas as evidence.
+- **Triage & Reporting**
+  - [ ] Timing diagrams in reports.
+  - [ ] Financial impact estimation.
+- **Profiles / Modes**
+  - [ ] `--profile race-heavy` for fintech/e-commerce targets.
+
+---
+
+## P1.8 – HTTP Request Smuggling Detection – P1
+**Rationale:** Request smuggling = Critical severity, often $10K-$100K bounties. Requires specialized detection.
+
+- **Discovery**
+  - [ ] Detect smuggling-prone architectures (CDN + origin, load balancers).
+  - [ ] Identify CL.TE, TE.CL, TE.TE variants via timing/response analysis.
+- **Validation**
+  - [ ] `/mcp/run_smuggling_checks` endpoint:
+    - [ ] Safe timing-based detection (no cache poisoning).
+    - [ ] Differential response analysis.
+    - [ ] Header normalization fingerprinting.
+  - [ ] Integration with smuggler.py or similar tools.
+- **Triage & Reporting**
+  - [ ] Architecture diagram (frontend/backend topology).
+  - [ ] Exploitation scenarios (cache poisoning, auth bypass).
+
+---
+
+## P1.9 – WebSocket Security Testing – P1/P2
+**Rationale:** WebSockets bypass many traditional security controls. Growing attack surface in modern apps.
+
+- **Discovery**
+  - [ ] Detect WebSocket endpoints from JS analysis.
+  - [ ] Extract message schemas and event handlers.
+  - [ ] Identify auth mechanisms (token in URL, headers, first message).
+- **Validation**
+  - [ ] `/mcp/run_websocket_checks` endpoint:
+    - [ ] CSWSH (Cross-Site WebSocket Hijacking) detection.
+    - [ ] Auth bypass via origin manipulation.
+    - [ ] Message injection and privilege escalation.
+    - [ ] Rate limit bypass via persistent connections.
+- **Triage & Reporting**
+  - [ ] WebSocket-specific impact (real-time data exfil, impersonation).
+
+---
+
+## P2.3 – Subdomain Takeover Pipeline – P1/P2
+**Rationale:** Easy wins, but requires continuous monitoring. Highly automatable.
+
+- **Discovery**
+  - [ ] Integrate with subdomain enumeration (subfinder, amass).
+  - [ ] CNAME fingerprinting for dangling records.
+  - [ ] Cloud service signature detection (S3, Azure, Heroku, GitHub Pages).
+- **Validation**
+  - [ ] `/mcp/run_takeover_checks` endpoint:
+    - [ ] Automated claim verification (safe, non-destructive).
+    - [ ] Screenshot + DNS evidence collection.
+  - [ ] Integration with `can-i-take-over-xyz` fingerprints.
+- **Continuous Monitoring**
+  - [ ] Delta alerting when new dangling CNAMEs appear.
+  - [ ] Historical tracking of subdomain changes.
+
+---
+
+## P2.4 – Cache Poisoning Detection – P1/P2
+**Rationale:** Web cache poisoning can escalate to mass user compromise. High-impact, often overlooked.
+
+- **Discovery**
+  - [ ] Detect caching layers (CDN fingerprinting, cache headers).
+  - [ ] Identify unkeyed inputs (headers, cookies, query params).
+- **Validation**
+  - [ ] `/mcp/run_cache_poison_checks` endpoint:
+    - [ ] Cache key detection via response analysis.
+    - [ ] Unkeyed header injection testing.
+    - [ ] XSS/redirect via cached response.
+  - [ ] Safe testing mode (unique cache busters per test).
+- **Triage & Reporting**
+  - [ ] Affected user scope estimation.
+  - [ ] Cache TTL and purge documentation.
+
+---
+
+## P2.5 – Business Logic Flaw Detection (AI-Assisted) – P2
+**Rationale:** Business logic bugs often pay the most but are hardest to automate. LLM can help identify patterns.
+
+- **Discovery**
+  - [ ] LLM analysis of API schemas and workflows.
+  - [ ] Detect price manipulation, quantity bypass, coupon abuse vectors.
+  - [ ] Identify multi-step processes (checkout, signup, approval flows).
+- **Validation**
+  - [ ] `/mcp/run_bizlogic_checks` endpoint:
+    - [ ] Negative quantity/price injection.
+    - [ ] Step-skipping in multi-stage flows.
+    - [ ] Coupon/discount stacking.
+    - [ ] Free trial abuse patterns.
+- **AI Triage**
+  - [ ] LLM-generated attack scenarios per discovered flow.
+  - [ ] Business impact estimation.
+
+---
+
+## P2.6 – Password Reset Flow Analyzer – P1/P2
+**Rationale:** Password reset bugs are common and often lead to ATO. Highly structured, automatable.
+
+- **Discovery**
+  - [ ] Detect password reset endpoints and flows.
+  - [ ] Extract token formats, expiration, and delivery mechanisms.
+- **Validation**
+  - [ ] `/mcp/run_reset_flow_checks` endpoint:
+    - [ ] Token predictability analysis (entropy, timestamp leakage).
+    - [ ] Host header injection for password reset poisoning.
+    - [ ] Token reuse after password change.
+    - [ ] Rate limiting and lockout bypass.
+    - [ ] Email parameter injection.
+- **Triage & Reporting**
+  - [ ] ATO chain documentation.
+  - [ ] Token sample evidence.
+
+---
+
+## P2.7 – GraphQL Deep Security Testing – P1/P2
+**Rationale:** GraphQL is increasingly common and has unique attack patterns (batching, introspection, DoS).
+
+- **Discovery**
+  - [ ] Full schema extraction via introspection.
+  - [ ] Mutation and query analysis for sensitive operations.
+  - [ ] Detect disabled introspection (field suggestion bypass).
+- **Validation**
+  - [ ] `/mcp/run_graphql_security` endpoint:
+    - [ ] Query depth/complexity attacks (DoS).
+    - [ ] Batching attacks for brute force.
+    - [ ] Field-level authorization testing.
+    - [ ] Alias-based rate limit bypass.
+    - [ ] Introspection data leakage assessment.
+- **AI Integration**
+  - [ ] LLM-generated attack queries from schema.
+  - [ ] IDOR detection via ID field enumeration.
+
+---
+
+## P2.8 – Mass Assignment / Parameter Pollution – P2
+**Rationale:** Common in REST APIs, especially with auto-binding frameworks (Rails, Django, Spring).
+
+- **Discovery**
+  - [ ] Detect frameworks with auto-binding (via fingerprinting).
+  - [ ] Extract model schemas from API responses.
+  - [ ] Identify privileged fields (role, admin, verified, balance).
+- **Validation**
+  - [ ] `/mcp/run_mass_assign_checks` endpoint:
+    - [ ] Inject privileged fields in POST/PUT/PATCH.
+    - [ ] HTTP Parameter Pollution (HPP) testing.
+    - [ ] Array/object injection in form data.
+- **Triage & Reporting**
+  - [ ] Before/after state comparison.
+  - [ ] Privilege escalation path documentation.
+
+---
+
+## P3.1 – Server-Side Template Injection (SSTI) – P2/P3
+**Rationale:** SSTI often leads to RCE. Framework-aware detection improves accuracy.
+
+- **Discovery**
+  - [ ] Detect template engines via error messages and behavior.
+  - [ ] Identify reflection points in rendered content.
+- **Validation**
+  - [ ] `/mcp/run_ssti_checks` endpoint:
+    - [ ] Framework-specific polyglot payloads (Jinja2, Twig, Freemarker, etc.).
+    - [ ] Blind SSTI via time-based detection.
+    - [ ] Safe RCE confirmation (hostname/id output).
+- **Triage & Reporting**
+  - [ ] Confirmed engine and exploitation path.
+  - [ ] RCE impact documentation.
+
+---
+
+## P3.2 – Path Traversal / LFI / RFI Testing – P2
+**Rationale:** File inclusion bugs remain common, especially in legacy code and file handling features.
+
+- **Discovery**
+  - [ ] Identify file-related parameters (file, path, template, include, page).
+  - [ ] Detect upload/download functionality.
+- **Validation**
+  - [ ] `/mcp/run_path_traversal_checks` endpoint:
+    - [ ] OS-aware traversal payloads (Windows/Linux).
+    - [ ] Encoding bypass attempts (URL, double, null byte).
+    - [ ] Known sensitive file targets (/etc/passwd, web.config, .env).
+    - [ ] RFI via external URL injection.
+- **Triage & Reporting**
+  - [ ] File content evidence (redacted if sensitive).
+  - [ ] Exploitation chain (LFI → log poisoning → RCE).
+
+---
+
+## P3.3 – Prototype Pollution Scanner (Client-Side) – P2/P3
+**Rationale:** Prototype pollution is a growing attack class, especially in Node.js and client-side JS.
+
+- **Discovery**
+  - [ ] Static analysis of JS for gadget patterns.
+  - [ ] Detect vulnerable libraries (lodash, jQuery.extend, etc.).
+- **Validation**
+  - [ ] `/mcp/run_prototype_pollution_checks` endpoint:
+    - [ ] DOM-based pollution detection.
+    - [ ] Server-side Node.js pollution (JSON parsing).
+    - [ ] Gadget chain identification for XSS/RCE.
+- **Triage & Reporting**
+  - [ ] Pollution vector and exploitable gadget.
+  - [ ] Impact escalation (XSS, bypass, RCE).
+
+---
+
+## P3.4 – HackerOne/Bugcrowd Platform Integration – P3
+**Rationale:** Streamline the submission workflow and reduce duplicates.
+
+- **Integration Features**
+  - [ ] H1/Bugcrowd API client for report submission drafts.
+  - [ ] Duplicate detection via similarity search against past reports.
+  - [ ] Scope change monitoring (new assets, wildcard additions).
+  - [ ] Program metadata ingestion (payout ranges, response times).
+- **Automation**
+  - [ ] Auto-format reports for platform markdown.
+  - [ ] Severity suggestion based on program payout history.
+  - [ ] Track submission status and responses.
+
+---
+
+## P3.5 – JWT Security Analyzer – P2
+**Rationale:** JWT misconfigurations are common and well-paying (alg:none, weak secrets, claim tampering).
+
+- **Discovery**
+  - [ ] Detect JWT usage in headers, cookies, and responses.
+  - [ ] Extract and decode tokens for claim analysis.
+- **Validation**
+  - [ ] `/mcp/run_jwt_checks` endpoint:
+    - [ ] Algorithm confusion attacks (none, HS256 with public key).
+    - [ ] Weak secret brute force (common wordlist).
+    - [ ] Claim tampering (sub, role, exp manipulation).
+    - [ ] JWK injection attacks.
+    - [ ] Kid parameter injection.
+- **Triage & Reporting**
+  - [ ] Token structure breakdown.
+  - [ ] Exploitation PoC with modified token.
+
+---
+
+## P4.6 – Insecure Deserialization Detection – P3/P4
+**Rationale:** Deserialization bugs often lead to RCE. Complex but high-value.
+
+- **Discovery**
+  - [ ] Detect serialization formats (Java, PHP, .NET, Python pickle).
+  - [ ] Identify endpoints accepting serialized data.
+- **Validation**
+  - [ ] `/mcp/run_deser_checks` endpoint:
+    - [ ] Framework-specific gadget chain payloads.
+    - [ ] DNS/HTTP callback for blind detection.
+    - [ ] Integration with ysoserial, phpggc.
+- **Triage & Reporting**
+  - [ ] Confirmed gadget chain and payload.
+  - [ ] RCE evidence (callback, command output).
+
+---
+
+## P4.7 – CI/CD & DevOps Security Surface – P3/P4
+**Rationale:** Exposed CI/CD systems are goldmines (Jenkins, GitLab CI, GitHub Actions artifacts).
+
+- **Discovery**
+  - [ ] Detect CI/CD panels (Jenkins, TeamCity, GitLab, CircleCI).
+  - [ ] Identify exposed build artifacts, logs, and credentials.
+  - [ ] GitHub Actions workflow analysis for secret exposure.
+- **Validation**
+  - [ ] `/mcp/run_cicd_checks` endpoint:
+    - [ ] Default credential testing.
+    - [ ] Public artifact enumeration.
+    - [ ] Workflow injection vectors.
+- **Triage & Reporting**
+  - [ ] Exposed secrets and their scope.
+  - [ ] Supply chain attack potential.
+
+---
+
+## P4.8 – API Fuzzing Engine (Schema-Aware) – P2/P3
+**Rationale:** Intelligent API fuzzing based on OpenAPI/Swagger/GraphQL schemas increases coverage.
+
+- **Discovery**
+  - [ ] Auto-detect and parse API specifications.
+  - [ ] Generate valid request templates from schemas.
+- **Validation**
+  - [ ] `/mcp/run_api_fuzz` endpoint:
+    - [ ] Type confusion fuzzing (string→int, array→object).
+    - [ ] Boundary value testing.
+    - [ ] Required field omission.
+    - [ ] Auth bypass via parameter manipulation.
+- **AI Enhancement**
+  - [ ] LLM-generated edge case inputs.
+  - [ ] Anomaly detection in responses.
+
+---
+
+## P5.1 – Real-Time Collaboration Mode – P4/P5
+**Rationale:** Enable team-based bug hunting with shared findings and deduplication.
+
+- **Features**
+  - [ ] Multi-user scan sessions with role-based access.
+  - [ ] Real-time finding synchronization.
+  - [ ] Team duplicate detection.
+  - [ ] Finding assignment and status tracking.
+- **Integration**
+  - [ ] Slack/Discord notifications for team findings.
+  - [ ] Shared knowledge base per program.
+
+---
+
+## Priority Summary (New Features)
+
+| Feature | Priority | Estimated Bounty Impact |
+|---------|----------|------------------------|
+| OAuth/OIDC Analyzer | P0/P1 | $5K-$50K per bug |
+| Race Condition Detection | P0/P1 | $10K-$100K per bug |
+| HTTP Request Smuggling | P1 | $10K-$100K per bug |
+| WebSocket Security | P1/P2 | $1K-$20K per bug |
+| Subdomain Takeover | P1/P2 | $500-$5K per bug |
+| Cache Poisoning | P1/P2 | $5K-$50K per bug |
+| Business Logic (AI) | P2 | $5K-$100K per bug |
+| Password Reset Analyzer | P1/P2 | $1K-$10K per bug |
+| GraphQL Deep Testing | P1/P2 | $1K-$20K per bug |
+| Mass Assignment | P2 | $1K-$10K per bug |
+| SSTI Detection | P2/P3 | $5K-$50K per bug |
+| Path Traversal/LFI | P2 | $1K-$20K per bug |
+| Prototype Pollution | P2/P3 | $1K-$15K per bug |
+| Platform Integration | P3 | Efficiency gain |
+| JWT Analyzer | P2 | $1K-$20K per bug |
+| Deserialization | P3/P4 | $10K-$100K per bug |
+| CI/CD Security | P3/P4 | $5K-$50K per bug |
+| API Fuzzing Engine | P2/P3 | $1K-$20K per bug |

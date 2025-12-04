@@ -1,46 +1,59 @@
-version: "3.9"
-
 services:
-  zap:
-    image: ghcr.io/zaproxy/zaproxy
-    command: [
-      "zap.sh",
-      "-daemon",
-      "-host", "0.0.0.0",
-      "-port", "8080",
-      "-config", "api.disablekey=true",
-      "-config", "api.addrs.addr.name=.*",
-      "-config", "api.addrs.addr.regex=true"
-    ]
-    ports:
-      - "8080:8080"
-
   mcp:
     build:
       context: .
       dockerfile: Dockerfile.mcp
     environment:
-      - ZAP_API_BASE=http://zap:8080
       - OUTPUT_DIR=/app/output_zap
       - NUCLEI_TEMPLATES_DIR=/app/nuclei-templates
       - PYTHONPATH=/app
+      # Docker network name for katana/nuclei to use
+      - DOCKER_NETWORK=agentic-bugbounty_lab_network
     ports:
       - "8000:8000"
     volumes:
       - ./output_zap:/app/output_zap
-      # Optionally mount your local nuclei templates:
-      # - ~/nuclei-templates:/app/nuclei-templates:ro
-    depends_on:
-      - zap
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - lab_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   juice-shop:
     image: bkimminich/juice-shop
     ports:
       - "3000:3000"
+    networks:
+      - lab_network
+
+  # ===== Lab Services =====
+  xss_js_secrets:
+    build:
+      context: ./labs/xss_js_secrets
+    ports:
+      - "5001:5000"
+    networks:
+      - lab_network
+
+  idor_auth:
+    build:
+      context: ./labs/idor_auth
+    ports:
+      - "5002:5000"
+    networks:
+      - lab_network
+
+  backup_leaks_fingerprint:
+    build:
+      context: ./labs/backup_leaks_fingerprint
+    ports:
+      - "5003:80"
+    networks:
+      - lab_network
+
+networks:
+  lab_network:
+    driver: bridge
 
 volumes:
   output_zap:
-
-# mcp_zap_server.py moved to a separate file: /home/mike/Documents/Cyber/agentic-bugbounty/mcp_zap_server.py
-
-

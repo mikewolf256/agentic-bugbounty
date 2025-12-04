@@ -8,7 +8,7 @@
 ## 🌐 Overview
 
 **Agentic Bug Bounty** is a modular framework for automated, AI-assisted security testing across public bug bounty programs.  
-It combines traditional scanners (ZAP, ffuf, Dalfox, etc.) with an LLM-based triage pipeline that filters, analyzes, and summarizes findings into clean, human-ready vulnerability reports.
+It combines traditional scanners (ffuf, Dalfox, Nuclei, Katana, etc.) with an LLM-based triage pipeline that filters, analyzes, and summarizes findings into clean, human-ready vulnerability reports.
 
 This project is designed to:
 - Run **continuously** against program scopes,
@@ -26,8 +26,8 @@ This project is designed to:
 │                  Agentic Bug Bounty Stack                 │
 ├───────────────────────────────────────────────────────────┤
 │ Scope Runner (Python)          → Feeds in-scope targets   │
-│ MCP (Modular Control Plane)    → Orchestrates scans (ZAP) │
-│ ZAP Spider / Active Scan       → Collects findings        │
+│ MCP (Modular Control Plane)    → Orchestrates recon/scans │
+│ Web Recon / Active Scans       → Collect findings         │
 │ Dedupe & Noise Filter          → Drops low-value alerts   │
 │ AI Triage (OpenAI / GPT-4o)    → Summarizes & scores CVSS │
 │ Dalfox / SQLmap / BAC / SSRF  → Validates key bug classes │
@@ -37,7 +37,7 @@ This project is designed to:
 
 **Data Flow:**
 1. **Scope ingestion:** A `scope.json` defines targets & rules.  
-2. **Scanning:** ZAP or other tools crawl each target and export findings.  
+2. **Scanning:** Recon tools crawl each target and export findings.  
 3. **Pre-processing:** `mcp_helpers/dedupe.py` removes noise and deduplicates results.  
 4. **AI triage:** Only meaningful findings are passed to the LLM for contextual scoring, impact, and bounty estimation.  
 5. **Validation:** Tools like **Dalfox** (XSS), **sqlmap** (SQLi), and MCP-powered **BAC/SSRF checks** re-validate high-value findings.  
@@ -59,6 +59,121 @@ This project is designed to:
 | **AI-Based Triage** | Summarizes findings, assigns CVSS vectors, and estimates bounty value. |
 | **Modular Control Plane (MCP)** | Provides API endpoints to start scans, triage, or check scope compliance. |
 | **Token-Efficient Design** | Filters findings *before* LLM inference to cut costs and scale affordably. |
+| **RAG Knowledge Base** | Semantic search over 8k+ historical HackerOne reports for context-aware triage. |
+
+---
+
+## 🧠 RAG Vulnerability Knowledge Base
+
+The system includes a RAG (Retrieval-Augmented Generation) pipeline that ingests historical HackerOne disclosed reports and uses them to enhance triage quality. During triage, similar historical vulnerabilities are automatically retrieved and injected into the LLM prompt, providing:
+
+- **Historical precedent** for severity and bounty estimation
+- **Proven payloads** and attack patterns
+- **Impact narratives** from accepted reports
+
+### RAG Architecture
+
+```
+GitHub Repo (8k+ reports) → Parser → Normalized Schema → OpenAI Embeddings → Supabase pgvector
+                                                                                    ↓
+                                              MCP Server ← /mcp/rag_search ← Triage Agent
+                                                     ↓
+                                          agentic_runner.py (auto-inject context)
+```
+
+### RAG Setup
+
+#### 1. Clone the reports repository
+
+```bash
+git clone https://github.com/marcotuliocnd/bugbounty-disclosed-reports.git
+```
+
+#### 2. Set up Supabase
+
+1. Create a free Supabase project at https://supabase.com
+2. Go to the SQL Editor and run the schema from `tools/rag_setup_supabase.sql`
+3. This creates the `vuln_reports` table with pgvector extension and HNSW index
+
+#### 3. Configure environment variables
+
+```bash
+export SUPABASE_URL="https://your-project.supabase.co"
+export SUPABASE_KEY="your-supabase-anon-or-service-key"
+export OPENAI_API_KEY="sk-..."  # Already required for triage
+```
+
+#### 4. Install RAG dependencies
+
+```bash
+pip install supabase tiktoken
+```
+
+#### 5. Run the ingestion (one-time, ~8k reports)
+
+```bash
+# Dry run to see what will be processed
+python tools/rag_ingest.py ingest \
+    --reports-dir ./bugbounty-disclosed-reports/reports \
+    --dry-run
+
+# Full ingestion (takes ~30-60 minutes)
+python tools/rag_ingest.py ingest \
+    --reports-dir ./bugbounty-disclosed-reports/reports
+
+# Verify ingestion
+python tools/rag_ingest.py verify
+```
+
+The ingestion is resumable - progress is saved to `rag_ingest_progress.json`.
+
+#### 6. Test the RAG search
+
+```bash
+# Search for similar vulnerabilities
+python tools/rag_client.py search "SSRF in image upload endpoint"
+
+# Search by vulnerability type
+python tools/rag_client.py by-type xss
+
+# Search by technology
+python tools/rag_client.py by-tech graphql nodejs
+
+# View database statistics
+python tools/rag_client.py stats
+```
+
+### RAG MCP Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /mcp/rag_search` | Semantic search for similar vulnerabilities |
+| `POST /mcp/rag_similar_vulns` | Find similar vulns for a scanner finding + get LLM context |
+| `GET /mcp/rag_stats` | Get knowledge base statistics |
+| `POST /mcp/rag_search_by_type` | Search by vulnerability type (xss, ssrf, etc.) |
+| `POST /mcp/rag_search_by_tech` | Search by technology stack |
+
+### RAG Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `RAG_ENABLED` | `true` | Enable/disable RAG context injection |
+| `RAG_MAX_EXAMPLES` | `3` | Max historical examples to inject per finding |
+| `SUPABASE_URL` | - | Supabase project URL |
+| `SUPABASE_KEY` | - | Supabase API key |
+
+### How RAG Improves Triage
+
+When RAG is enabled, the triage flow automatically:
+
+1. Extracts key indicators from each finding (title, CWE, tags)
+2. Queries the knowledge base for similar historical reports
+3. Injects the top 3 matches into the LLM prompt as context
+4. The LLM uses this context to improve:
+   - CVSS scoring based on historical precedent
+   - Impact descriptions from accepted reports
+   - Bounty estimation from similar payouts
+   - Payload suggestions that have worked before
 
 ---
 
@@ -84,8 +199,8 @@ This project is designed to:
 - [ ] Centralized results dashboard + S3 artifact storage  
 
 ### 🧠 Phase 4 — Autonomous Analyst
-- [ ] RAG-based training on previous findings for pattern recognition  
-- [ ] Secondary validation across other tools (Nuclei, sqlmap, etc.)  
+- [x] RAG-based training on previous findings for pattern recognition  
+- [x] Secondary validation across other tools (Nuclei, sqlmap, etc.)  
 - [ ] Self-tuning prompts for improved accuracy per bug class  
 
 ---

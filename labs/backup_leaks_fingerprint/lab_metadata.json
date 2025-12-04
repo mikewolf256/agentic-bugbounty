@@ -1,0 +1,15 @@
+{
+  "name": "backup_leaks_fingerprint",
+  "description": "Exposes backup-like config and .git data; PHP over Apache for fingerprinting.",
+  "base_url": "http://backup_leaks_fingerprint:80",
+  "expected_findings": {
+    "backups": [
+      "/config.php.bak",
+      "/.git/HEAD"
+    ],
+    "fingerprints": {
+      "min_tech_count": 1,
+      "expected_tech_substrings": ["Apache", "PHP"]
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "idor-api",
+  "description": "IDOR/BOLA vulnerabilities in a REST API",
+  "base_url": "http://localhost:9002",
+  "difficulty": "easy",
+  "expected_findings": [
+    {
+      "type": "idor",
+      "subtype": "horizontal",
+      "cwe": "CWE-639",
+      "description": "IDOR on user profile endpoint - can access other users",
+      "endpoint": "/api/users/{id}",
+      "parameter": "id"
+    },
+    {
+      "type": "idor",
+      "subtype": "horizontal",
+      "cwe": "CWE-639",
+      "description": "IDOR on user documents - can access other users' documents",
+      "endpoint": "/api/documents/{id}",
+      "parameter": "id"
+    },
+    {
+      "type": "bac",
+      "subtype": "vertical",
+      "cwe": "CWE-284",
+      "description": "Missing authentication on admin endpoint",
+      "endpoint": "/api/admin/users",
+      "parameter": null
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "API documentation"},
+    {"path": "/api/users/{id}", "method": "GET", "description": "Get user by ID (vulnerable)"},
+    {"path": "/api/documents/{id}", "method": "GET", "description": "Get document by ID (vulnerable)"},
+    {"path": "/api/admin/users", "method": "GET", "description": "List all users (missing auth)"}
+  ],
+  "test_credentials": {
+    "user_id": 1,
+    "token": "user1_token_abc123"
+  }
+}
+

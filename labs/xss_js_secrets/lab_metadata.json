@@ -1,0 +1,18 @@
+{
+  "name": "xss_js_secrets",
+  "description": "Reflected XSS in /search?q= and JS-exposed secrets in config.js",
+  "base_url": "http://xss_js_secrets:5000",
+  "expected_findings": {
+    "xss": [
+      {
+        "url": "/search?q=<script>alert(1)</script>",
+        "param": "q",
+        "pattern": "reflected unsanitized"
+      }
+    ],
+    "js_secrets": {
+      "min_count": 2,
+      "types": ["api_key", "jwt"]
+    }
+  }
+}

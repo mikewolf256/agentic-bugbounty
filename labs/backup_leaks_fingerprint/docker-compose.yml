@@ -1,0 +1,14 @@
+services:
+  backup_leaks_fingerprint:
+    build: .
+    ports:
+      - "5003:80"
+    networks:
+      - lab_network
+
+networks:
+  lab_network:
+    # Use external network when running from main docker-compose
+    # Falls back to creating local network when run standalone
+    name: agentic-bugbounty_lab_network
+    external: false

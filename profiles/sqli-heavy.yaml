@@ -1,0 +1,62 @@
+# SQLi-Heavy Profile
+# Focus on SQL Injection detection and validation
+
+name: sqli-heavy
+description: Focused SQL Injection detection with SQLmap validation
+
+# Nuclei configuration - SQLi-focused templates
+nuclei:
+  tags: [sqli, sql, injection, database, error]
+  exclude_tags: [dos, xss, ssrf]
+  severity: [critical, high, medium]
+  rate_limit: 50  # Lower rate for DB-heavy testing
+
+# Only SQLmap validator
+validators:
+  - sqlmap
+
+# Skip non-SQLi validators
+skip_modules:
+  - dalfox
+  - ssrf
+  - bac
+
+# AI triage settings
+ai_triage:
+  enabled: true
+  use_llm: true
+  confidence_threshold: medium
+  priority_cwes: [CWE-89, CWE-564]
+
+# Scan phases
+phases:
+  - recon       # Katana + fingerprinting
+  - nuclei      # SQLi templates
+  - validators  # SQLmap only
+  - triage      # LLM triage
+
+# Extra settings for SQLi scanning
+extra:
+  # SQLmap settings
+  sqlmap_level: 3
+  sqlmap_risk: 2
+  sqlmap_timeout: 60
+  # Focus on data endpoints
+  path_patterns:
+    - /api/
+    - /search
+    - /filter
+    - /query
+    - /user
+    - /product
+    - /order
+  # Parameter patterns to prioritize
+  param_patterns:
+    - id
+    - user_id
+    - product_id
+    - order_id
+    - category
+    - sort
+    - filter
+

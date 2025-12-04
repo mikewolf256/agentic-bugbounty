@@ -1,0 +1,53 @@
+# XSS-Heavy Profile
+# Focus on Cross-Site Scripting detection and validation
+
+name: xss-heavy
+description: Focused XSS detection with Dalfox validation
+
+# Nuclei configuration - XSS-focused templates
+nuclei:
+  tags: [xss, injection, reflected, stored, dom]
+  exclude_tags: [dos, sqli, ssrf]
+  severity: [critical, high, medium]
+  rate_limit: 100
+
+# Only Dalfox validator
+validators:
+  - dalfox
+
+# Skip non-XSS validators
+skip_modules:
+  - sqlmap
+  - ssrf
+  - bac
+
+# AI triage settings
+ai_triage:
+  enabled: true
+  use_llm: true
+  confidence_threshold: medium
+  # Focus triage on XSS findings
+  priority_cwes: [CWE-79, CWE-80]
+
+# Scan phases
+phases:
+  - recon       # Katana + fingerprinting
+  - nuclei      # XSS templates
+  - validators  # Dalfox only
+  - triage      # LLM triage
+
+# Extra settings for XSS scanning
+extra:
+  # Run Dalfox on all reflected parameters
+  dalfox_aggressive: true
+  # Check DOM-based XSS indicators
+  dom_analysis: true
+  # Focus on UI-heavy endpoints
+  path_patterns:
+    - /search
+    - /query
+    - /comment
+    - /message
+    - /profile
+    - /feedback
+

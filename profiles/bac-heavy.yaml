@@ -1,0 +1,62 @@
+# BAC-Heavy Profile
+# Focus on Broken Access Control and IDOR detection
+
+name: bac-heavy
+description: Focused Broken Access Control and IDOR testing
+
+# Nuclei configuration - access control templates
+nuclei:
+  tags: [idor, bac, auth, bypass, exposure, panel, admin]
+  exclude_tags: [dos, xss, sqli]
+  severity: [critical, high, medium]
+  rate_limit: 75
+
+# Only BAC validator
+validators:
+  - bac
+
+# Skip non-BAC validators
+skip_modules:
+  - dalfox
+  - sqlmap
+  - ssrf
+
+# AI triage settings
+ai_triage:
+  enabled: true
+  use_llm: true
+  confidence_threshold: medium
+  priority_cwes: [CWE-284, CWE-285, CWE-639, CWE-862]
+
+# Scan phases
+phases:
+  - recon       # Katana + fingerprinting
+  - nuclei      # Access control templates
+  - validators  # BAC checks only
+  - triage      # LLM triage
+
+# Extra settings for BAC testing
+extra:
+  # Require access_model.yaml for role-based testing
+  require_access_model: false
+  # Focus on privileged endpoints
+  path_patterns:
+    - /admin
+    - /internal
+    - /api/admin
+    - /manage
+    - /dashboard
+    - /settings
+    - /users
+    - /config
+  # Parameter patterns that might expose IDOR
+  idor_params:
+    - id
+    - user_id
+    - account_id
+    - org_id
+    - project_id
+    - tenant_id
+    - file_id
+    - document_id
+

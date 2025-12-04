@@ -2,24 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps
+# Install Docker CLI for running katana/whatweb containers
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git unzip \
+ && curl -fsSL https://get.docker.com -o get-docker.sh \
+ && sh get-docker.sh \
+ && rm get-docker.sh \
  && rm -rf /var/lib/apt/lists/*
 
-# Copy code (including vendored nuclei tarball)
 COPY . /app
 
-# Install nuclei from vendored tarball
 RUN unzip tools/nuclei_3.5.1_linux_amd64.zip -d /usr/local/bin \
  && chmod +x /usr/local/bin/nuclei
 
-# Python deps
 RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8000
-ENV ZAP_API_BASE="http://zap:8080"
 ENV OUTPUT_DIR="/app/output_zap"
 ENV NUCLEI_TEMPLATES_DIR="/app/nuclei-templates"
+ENV DOCKER_NETWORK="agentic-bugbounty_lab_network"
 
-CMD ["uvicorn", "mcp_zap_server:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8000"]

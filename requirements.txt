@@ -2,3 +2,8 @@ fastapi~=0.115
 uvicorn[standard]~=0.30
 requests~=2.32
 pydantic~=2.9
+PyYAML~=6.0
+
+# RAG dependencies (Supabase + OpenAI embeddings)
+supabase~=2.0
+tiktoken~=0.5

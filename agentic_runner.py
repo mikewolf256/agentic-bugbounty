@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import json
 import time
 import shlex
@@ -8,6 +9,7 @@ import argparse
 from typing import Tuple, Optional, Dict, Any, List
 
 import requests
+import yaml
 
 # ==== Config / Env ====
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -26,20 +28,201 @@ DALFOX_THREADS = int(os.environ.get("DALFOX_THREADS", "5"))  # dalfox -t
 _DALFOX_CACHE: Dict[Tuple[str, Optional[str]], Tuple[bool, dict]] = {}
 
 # MCP server config (for orchestrated scans / containerization)
+# Default port 8000 matches Dockerfile.mcp and docker-compose.yml
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000")
+
+# Profile configuration
+PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+ACTIVE_PROFILE: Optional[Dict[str, Any]] = None
+
+# Default profile settings (used when no profile specified)
+DEFAULT_PROFILE: Dict[str, Any] = {
+    "name": "default",
+    "description": "Default scan profile",
+    "nuclei": {
+        "tags": [],
+        "exclude_tags": ["dos"],
+        "severity": ["critical", "high", "medium"],
+        "rate_limit": 150,
+    },
+    "validators": ["dalfox", "sqlmap", "ssrf", "bac"],
+    "skip_modules": [],
+    "ai_triage": {
+        "enabled": True,
+        "use_llm": True,
+        "confidence_threshold": "medium",
+    },
+    "phases": ["recon", "nuclei", "validators", "triage"],
+}
+
+
+def load_profile(profile_name: str) -> Dict[str, Any]:
+    """Load a scan profile from YAML file.
+    
+    Args:
+        profile_name: Name of the profile (without .yaml extension)
+    
+    Returns:
+        Profile configuration dict
+    
+    Raises:
+        SystemExit if profile not found
+    """
+    profile_path = os.path.join(PROFILES_DIR, f"{profile_name}.yaml")
+    
+    if not os.path.exists(profile_path):
+        # List available profiles
+        available = []
+        if os.path.exists(PROFILES_DIR):
+            available = [f.replace(".yaml", "") for f in os.listdir(PROFILES_DIR) if f.endswith(".yaml")]
+        raise SystemExit(f"Profile '{profile_name}' not found at {profile_path}. Available: {', '.join(available)}")
+    
+    with open(profile_path, "r", encoding="utf-8") as f:
+        profile = yaml.safe_load(f)
+    
+    print(f"[PROFILE] Loaded profile: {profile.get('name', profile_name)} - {profile.get('description', 'No description')}")
+    return profile
+
+
+def get_profile_setting(key: str, default: Any = None) -> Any:
+    """Get a setting from the active profile or default.
+    
+    Args:
+        key: Dot-notation key like 'nuclei.tags' or 'validators'
+        default: Default value if key not found
+    
+    Returns:
+        Setting value
+    """
+    profile = ACTIVE_PROFILE or DEFAULT_PROFILE
+    
+    # Handle dot notation
+    parts = key.split(".")
+    value = profile
+    for part in parts:
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        else:
+            return default
+    
+    return value
+
+
+def should_skip_module(module_name: str) -> bool:
+    """Check if a module should be skipped based on profile."""
+    skip_modules = get_profile_setting("skip_modules", [])
+    return module_name in skip_modules
+
+
+def should_run_validator(validator_name: str) -> bool:
+    """Check if a validator should run based on profile."""
+    validators = get_profile_setting("validators", [])
+    skip = get_profile_setting("skip_modules", [])
+    
+    # If validators list is empty, run all (except skipped)
+    if not validators:
+        return validator_name not in skip
+    
+    return validator_name in validators and validator_name not in skip
+
 
 SYSTEM_PROMPT = """You are a senior web security engineer and bug bounty triager.
 Return STRICT JSON with keys: title, cvss_vector, cvss_score, summary, repro, impact, remediation, cwe, confidence, recommended_bounty_usd.
 Additionally, when the issue appears to be XSS-like (cross-site scripting), also include:
 - xss_type: one of ["reflected","stored","dom"]
 - xss_context: one of ["attribute","html_body","script_block","other"].
-Be conservative. If low-value/noisy, confidence="low", recommended_bounty_usd=0. No leaked-credential validation or SE."""
+Be conservative. If low-value/noisy, confidence="low", recommended_bounty_usd=0. No leaked-credential validation or SE.
+
+When historical vulnerability examples are provided, use them as reference for:
+- Severity assessment and CVSS scoring
+- Impact descriptions and exploitation scenarios
+- Recommended bounty ranges based on similar accepted reports
+- Reproduction steps and payload patterns that have worked before"""
+
 USER_TMPL = """Program scope:
 {scope}
 
 Finding JSON:
 {finding}
 """
+
+USER_TMPL_WITH_RAG = """Program scope:
+{scope}
+
+{rag_context}
+
+Finding JSON:
+{finding}
+"""
+
+# RAG configuration
+RAG_ENABLED = os.environ.get("RAG_ENABLED", "true").lower() in ("1", "true", "yes")
+RAG_MAX_EXAMPLES = int(os.environ.get("RAG_MAX_EXAMPLES", "3"))
+
+# Lazy-loaded RAG client
+_rag_client_instance = None
+
+
+def _get_rag_context(finding: Dict[str, Any], max_examples: int = 3) -> str:
+    """
+    Get RAG context for a finding.
+    
+    This function queries the RAG knowledge base for similar historical
+    vulnerabilities and returns a formatted context string for LLM injection.
+    
+    Returns empty string if RAG is disabled or fails.
+    """
+    global _rag_client_instance
+    
+    if not RAG_ENABLED:
+        return ""
+    
+    try:
+        # Try to use the RAG client directly
+        if _rag_client_instance is None:
+            try:
+                from tools.rag_client import RAGClient
+                _rag_client_instance = RAGClient()
+            except Exception as e:
+                print(f"[RAG] Failed to initialize client: {e}", file=sys.stderr)
+                return ""
+        
+        return _rag_client_instance.get_context_for_triage(
+            finding=finding,
+            max_examples=max_examples,
+        )
+    except Exception as e:
+        # RAG failures should not break triage
+        print(f"[RAG] Warning: Failed to get context: {e}", file=sys.stderr)
+        return ""
+
+
+def _get_rag_context_via_mcp(finding: Dict[str, Any], max_examples: int = 3) -> str:
+    """
+    Get RAG context via MCP endpoint (for when running in full-scan mode).
+    
+    Falls back to empty string if MCP is unavailable.
+    """
+    if not RAG_ENABLED:
+        return ""
+    
+    try:
+        url = MCP_SERVER_URL.rstrip("/") + "/mcp/rag_similar_vulns"
+        payload = {
+            "finding": finding,
+            "top_k": max_examples + 2,  # Get a few extra for filtering
+            "min_similarity": 0.35,
+        }
+        
+        resp = requests.post(url, json=payload, timeout=30)
+        if resp.status_code != 200:
+            return ""
+        
+        data = resp.json()
+        return data.get("context_string", "")
+    except Exception as e:
+        print(f"[RAG] Warning: MCP RAG call failed: {e}", file=sys.stderr)
+        return ""
 
 # ==== Helpers ====
 def map_mitre(t: Dict[str, Any]) -> Dict[str, Any]:
@@ -285,12 +468,22 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     - Run Katana+Nuclei web recon per host
     - Build host_profile, prioritize_host, and host_delta for each host
     - Return a summary object with per-host metadata and artifact paths
+    
+    Respects ACTIVE_PROFILE settings for module/validator selection.
     """
 
     wait_for_mcp_ready()
 
+    # Get profile settings
+    phases = get_profile_setting("phases", ["recon", "nuclei", "validators", "triage"])
+    use_llm = get_profile_setting("ai_triage.use_llm", True)
+    profile_name = get_profile_setting("name", "default")
+    
+    print(f"[RUNNER] Using profile: {profile_name}")
+    print(f"[RUNNER] Phases: {phases}")
+
     # container for overall run summary (including modules like katana_nuclei)
-    summary: Dict[str, Any] = {"scope": scope}
+    summary: Dict[str, Any] = {"scope": scope, "profile": profile_name}
 
     # 1) Set scope
     _mcp_post("/mcp/set_scope", scope)
@@ -396,6 +589,49 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[MCP] host_delta failed for {h}: {e}")
             delta = {}
 
+        # --- NEW: AI-driven targeted Nuclei scan ---
+        # After Katana+WhatWeb, use AI to select optimal templates and run a targeted scan
+        ai_triage_result: Dict[str, Any] = {}
+        targeted_nuclei_result: Dict[str, Any] = {}
+        
+        # Check if nuclei phase is enabled
+        run_nuclei = "nuclei" in phases
+        ai_triage_enabled = get_profile_setting("ai_triage.enabled", True)
+        
+        if profile and run_nuclei and ai_triage_enabled:
+            try:
+                print(f"[AI-TRIAGE] Selecting Nuclei templates for {h} (use_llm={use_llm})...")
+                ai_triage_result = _mcp_post("/mcp/triage_nuclei_templates", {"host": h, "use_llm": use_llm})
+                print(f"[AI-TRIAGE] Mode: {ai_triage_result.get('mode')}, Templates: {len(ai_triage_result.get('templates', []))}")
+                print(f"[AI-TRIAGE] Reasoning: {ai_triage_result.get('reasoning', 'N/A')}")
+                
+                # Run targeted Nuclei scan with AI-selected templates
+                templates = ai_triage_result.get("templates", [])
+                if templates:
+                    target_url = f"http://{h}"
+                    print(f"[AI-TRIAGE] Running targeted Nuclei scan on {target_url}...")
+                    targeted_nuclei_result = _mcp_post("/mcp/run_targeted_nuclei", {
+                        "target": target_url,
+                        "templates": templates,
+                        "tags": ai_triage_result.get("tags"),
+                        "exclude_tags": ai_triage_result.get("exclude_tags"),
+                        "severity": ai_triage_result.get("severity_filter"),
+                    })
+                    print(f"[AI-TRIAGE] Targeted scan complete: {targeted_nuclei_result.get('findings_count', 0)} findings")
+                else:
+                    print(f"[AI-TRIAGE] No specific templates selected, skipping targeted scan")
+                    
+            except SystemExit as e:
+                print(f"[AI-TRIAGE] Failed for {h}: {e}")
+            except Exception as e:
+                print(f"[AI-TRIAGE] Error for {h}: {e}")
+
+        # Store AI triage results in modules
+        summary.setdefault("modules", {})
+        summary["modules"].setdefault(h, {})
+        summary["modules"][h]["ai_triage"] = ai_triage_result
+        summary["modules"][h]["targeted_nuclei"] = targeted_nuclei_result
+
         summary_hosts.append(
             {
                 "host": h,
@@ -404,6 +640,16 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 "delta": delta,
                 # Compact view of JS-derived secrets from host_profile (if any)
                 "js_secrets": (profile.get("web", {}) or {}).get("js_secrets"),
+                # AI triage summary
+                "ai_triage": {
+                    "mode": ai_triage_result.get("mode"),
+                    "templates_count": len(ai_triage_result.get("templates", [])),
+                    "reasoning": ai_triage_result.get("reasoning"),
+                },
+                "targeted_nuclei": {
+                    "findings_count": targeted_nuclei_result.get("findings_count", 0),
+                    "findings_file": targeted_nuclei_result.get("findings_file"),
+                },
             }
         )
 
@@ -424,13 +670,38 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
     triaged = []
     for f in findings:
+        # Be defensive: ignore non-dict entries (e.g. summary objects)
+        if not isinstance(f, dict):
+            continue
+        
+        # Get RAG context for similar historical vulnerabilities
+        rag_context = ""
+        if RAG_ENABLED:
+            try:
+                rag_context = _get_rag_context(f, max_examples=RAG_MAX_EXAMPLES)
+                if rag_context:
+                    print(f"[RAG] Found similar historical vulnerabilities for finding", file=sys.stderr)
+            except Exception as e:
+                print(f"[RAG] Context retrieval failed: {e}", file=sys.stderr)
+        
+        # Build the user message with or without RAG context
+        if rag_context:
+            user_content = USER_TMPL_WITH_RAG.format(
+                scope=json.dumps(scope, indent=2),
+                rag_context=rag_context,
+                finding=json.dumps(f, indent=2),
+            )
+        else:
+            user_content = USER_TMPL.format(
+                scope=json.dumps(scope, indent=2),
+                finding=json.dumps(f, indent=2),
+            )
+        
         msgs = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": USER_TMPL.format(scope=json.dumps(scope, indent=2), finding=json.dumps(f, indent=2)),
-            },
+            {"role": "user", "content": user_content},
         ]
+        
         # LLM triage
         try:
             raw = openai_chat(msgs)
@@ -516,7 +787,18 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 or "cwe-80" in cwe
             )
 
-            if confidence not in ("medium", "high", "very_high", "very high") or not looks_xss:
+            # Check profile to see if Dalfox validator is enabled
+            if not should_run_validator("dalfox"):
+                t.setdefault("validation", {})
+                t["validation"]["dalfox"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "validation_confidence": "low",
+                    "raw_output": "",
+                    "cmd": None,
+                    "endpoint": None,
+                }
+                t["validation"]["dalfox_confirmed"] = False
+            elif confidence not in ("medium", "high", "very_high", "very high") or not looks_xss:
                 # Skip expensive Dalfox for clearly low-confidence / non-XSS findings
                 t.setdefault("validation", {})
                 t["validation"]["dalfox"] = {
@@ -563,7 +845,16 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 or "cwe-89" in cwe
             )
 
-            if looks_sqli and confidence in ("medium", "high", "very_high", "very high"):
+            # Check profile to see if SQLmap validator is enabled
+            if not should_run_validator("sqlmap"):
+                t.setdefault("validation", {})
+                t["validation"]["sqlmap"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "output_dir": None,
+                    "returncode": None,
+                    "endpoint": "/mcp/run_sqlmap",
+                }
+            elif looks_sqli and confidence in ("medium", "high", "very_high", "very high"):
                 url = f.get("url") or f.get("request", {}).get("url")
                 payload = {"target": url} if url else None
                 if payload:
@@ -648,7 +939,15 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 or "cwe-285" in cwe
             )
 
-            if looks_bac and confidence in ("medium", "high", "very_high", "very high"):
+            # Check profile to see if BAC validator is enabled
+            if not should_run_validator("bac"):
+                t.setdefault("validation", {})
+                t["validation"]["bac"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "endpoint": "/mcp/run_bac_checks",
+                    "host": None,
+                }
+            elif looks_bac and confidence in ("medium", "high", "very_high", "very high"):
                 host = (f.get("host") or f.get("request", {}).get("url") or "").split("//")[-1].split("/")[0]
                 payload = {"host": host} if host else None
                 if payload:
@@ -716,7 +1015,14 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                 or "cwe-918" in cwe
             )
 
-            if looks_ssrf and confidence in ("medium", "high", "very_high", "very high"):
+            # Check profile to see if SSRF validator is enabled
+            if not should_run_validator("ssrf"):
+                t.setdefault("validation", {})
+                t["validation"]["ssrf"] = {
+                    "engine_result": "skipped_profile_disabled",
+                    "endpoint": "/mcp/run_ssrf_checks",
+                }
+            elif looks_ssrf and confidence in ("medium", "high", "very_high", "very high"):
                 url = f.get("url") or f.get("request", {}).get("url") or ""
                 param = f.get("parameter") or f.get("param") or "url"
                 t.setdefault("validation", {})
@@ -1023,18 +1329,85 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
 
     return triage_path
 
-# ==== Main triage ====
+
+def _load_jsonl_findings(filepath: str) -> List[Dict[str, Any]]:
+    """Load findings from a JSONL file (one JSON object per line).
+    
+    Used for targeted nuclei output which uses JSONL format.
+    """
+    findings: List[Dict[str, Any]] = []
+    try:
+        with open(filepath, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    finding = json.loads(line)
+                    # Tag the finding source for tracking
+                    finding["_source"] = "targeted_nuclei"
+                    findings.append(finding)
+                except json.JSONDecodeError:
+                    continue
+    except Exception as e:
+        print(f"[RUNNER] Error loading JSONL from {filepath}: {e}")
+    return findings
+
+
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--findings_file", help="ZAP findings JSON (for triage mode)")
-    ap.add_argument("--scope_file", default="scope.json", help="Program scope JSON")
-    ap.add_argument(
+    parser = argparse.ArgumentParser(
+        description="Agentic Bug Bounty Runner - Orchestrate security scans and triage findings"
+    )
+    parser.add_argument("--findings_file", help="ZAP findings JSON (for triage mode)")
+    parser.add_argument("--scope_file", default="scope.json", help="Program scope JSON")
+    parser.add_argument(
         "--mode",
         choices=["triage", "full-scan"],
         default="triage",
         help="Runner mode: triage existing findings or orchestrate full scan via MCP",
     )
-    args = ap.parse_args()
+    parser.add_argument("--mcp-url", help="Base URL for MCP server (default from MCP_BASE env)")
+    parser.add_argument(
+        "--profile",
+        help="Scan profile to use (e.g., xss-heavy, sqli-heavy, full, recon-only)",
+    )
+    parser.add_argument(
+        "--list-profiles",
+        action="store_true",
+        help="List available scan profiles and exit",
+    )
+    args = parser.parse_args()
+
+    # Handle --list-profiles
+    if args.list_profiles:
+        print("Available scan profiles:")
+        if os.path.exists(PROFILES_DIR):
+            for fname in sorted(os.listdir(PROFILES_DIR)):
+                if fname.endswith(".yaml"):
+                    profile_path = os.path.join(PROFILES_DIR, fname)
+                    try:
+                        with open(profile_path, "r", encoding="utf-8") as f:
+                            p = yaml.safe_load(f)
+                        name = fname.replace(".yaml", "")
+                        desc = p.get("description", "No description")
+                        print(f"  {name:15} - {desc}")
+                    except Exception:
+                        print(f"  {fname.replace('.yaml', ''):15} - (error loading)")
+        else:
+            print("  No profiles directory found")
+        return
+
+    # Load scan profile if specified
+    global ACTIVE_PROFILE
+    if args.profile:
+        ACTIVE_PROFILE = load_profile(args.profile)
+    else:
+        print("[PROFILE] Using default profile settings")
+
+    # Allow overriding MCP server base URL at runtime
+    global MCP_SERVER_URL
+    if args.mcp_url:
+        MCP_SERVER_URL = args.mcp_url
 
     print(f"[TRIAGE] Using DALFOX_BIN={DALFOX_PATH} (docker={DALFOX_DOCKER})")
 
@@ -1050,15 +1423,55 @@ def main():
         json.dump(summary, open(summary_path, "w"), indent=2)
         print("[RUNNER] Wrote full-scan summary", summary_path)
 
-        # Auto-triage any zap_findings_*.json and cloud_findings_*.json files produced by the scans
+        # Auto-triage findings from all sources:
+        # - zap_findings_*.json - ZAP scan results
+        # - cloud_findings_*.json - Cloud recon results  
+        # - targeted_nuclei_*.json - AI-driven targeted nuclei scans (JSONL format)
+        # - katana_nuclei_*.json - Katana+Nuclei recon results
         for fname in os.listdir(out_dir):
             if not fname.endswith(".json"):
                 continue
-            if not (fname.startswith("zap_findings_") or fname.startswith("cloud_findings_")):
-                continue
+            
             findings_path = os.path.join(out_dir, fname)
-            print(f"[RUNNER] Auto-triaging findings from {findings_path}")
-            run_triage_for_findings(findings_path, scope, out_dir=out_dir)
+            
+            # Handle standard JSON findings (ZAP, cloud)
+            if fname.startswith("zap_findings_") or fname.startswith("cloud_findings_"):
+                print(f"[RUNNER] Auto-triaging findings from {findings_path}")
+                run_triage_for_findings(findings_path, scope, out_dir=out_dir)
+                continue
+            
+            # Handle targeted nuclei findings (JSONL format from AI-driven scans)
+            # Skip already-converted files to prevent reprocessing JSON arrays as JSONL
+            if fname.startswith("targeted_nuclei_") and not fname.endswith("_converted.json"):
+                print(f"[RUNNER] Processing targeted nuclei findings from {findings_path}")
+                nuclei_findings = _load_jsonl_findings(findings_path)
+                if nuclei_findings:
+                    # Write as standard JSON array for triage
+                    converted_path = findings_path.replace(".json", "_converted.json")
+                    with open(converted_path, "w", encoding="utf-8") as fh:
+                        json.dump(nuclei_findings, fh, indent=2)
+                    print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} targeted nuclei findings")
+                    run_triage_for_findings(converted_path, scope, out_dir=out_dir)
+                continue
+            
+            # Handle Katana+Nuclei findings (nested JSON structure)
+            if fname.startswith("katana_nuclei_") and not fname.endswith("_findings.json"):
+                print(f"[RUNNER] Processing katana+nuclei findings from {findings_path}")
+                try:
+                    with open(findings_path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    nuclei_findings = data.get("nuclei_findings", [])
+                    if nuclei_findings:
+                        # Write findings as separate file for triage (always overwrite with fresh data)
+                        findings_only_path = findings_path.replace(".json", "_findings.json")
+                        with open(findings_only_path, "w", encoding="utf-8") as fh:
+                            json.dump(nuclei_findings, fh, indent=2)
+                        print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} katana+nuclei findings")
+                        run_triage_for_findings(findings_only_path, scope, out_dir=out_dir)
+                except Exception as e:
+                    print(f"[RUNNER] Error processing {fname}: {e}")
+                continue
+        
         return
 
     # Triaging an existing findings file
@@ -1066,6 +1479,7 @@ def main():
         raise SystemExit("--findings_file is required in triage mode")
 
     run_triage_for_findings(args.findings_file, scope, out_dir=out_dir)
+
 
 if __name__ == "__main__":
     main()
@@ -1084,13 +1498,46 @@ def _load_katana_nuclei_findings(output_dir: str, host: str) -> list[dict]:
         data = json.load(fh)
     return data.get("nuclei_findings", []) or []
 
+
+def _load_targeted_nuclei_findings(output_dir: str, host: str) -> list[dict]:
+    """Load findings from AI-driven targeted Nuclei scans (JSONL format)."""
+    host_key = host.replace(":", "_").replace("/", "_")
+    files = [
+        f for f in os.listdir(output_dir)
+        if f.startswith("targeted_nuclei_") and host_key in f and f.endswith(".json")
+    ]
+    if not files:
+        return []
+    files.sort()
+    # Load the latest targeted nuclei output (JSONL format)
+    path = os.path.join(output_dir, files[-1])
+    findings: list[dict] = []
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                finding = json.loads(line)
+                # Tag the finding as coming from AI-targeted scan
+                finding["_source"] = "targeted_nuclei"
+                findings.append(finding)
+            except json.JSONDecodeError:
+                continue
+    return findings
+
+
 def gather_findings_for_triage(host: str, output_dir: str) -> list[dict]:
     findings: list[dict] = []
 
     # ...existing sources (cloud, zap, sqlmap, bac, ssrf, etc.)...
 
-    # --- NEW: nuclei findings from Katana run ---
+    # --- Nuclei findings from Katana run (recon-only) ---
     nuclei_from_katana = _load_katana_nuclei_findings(output_dir, host)
     findings.extend(nuclei_from_katana)
+
+    # --- NEW: Nuclei findings from AI-targeted scan ---
+    nuclei_from_targeted = _load_targeted_nuclei_findings(output_dir, host)
+    findings.extend(nuclei_from_targeted)
 
     return findings

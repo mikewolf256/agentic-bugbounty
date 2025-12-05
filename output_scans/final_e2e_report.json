@@ -1,0 +1,300 @@
+{
+  "test_summary": {
+    "tests_run": 11,
+    "tests_passed": 1,
+    "tests_failed": 14,
+    "total_findings": 1,
+    "expected_findings": 4,
+    "detection_rate": "25.0%"
+  },
+  "expected_findings": [
+    {
+      "type": "command_injection",
+      "subtype": "get_parameter",
+      "cwe": "CWE-78",
+      "description": "Command injection via GET parameter",
+      "endpoint": "/execute",
+      "parameter": "cmd"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "post_parameter",
+      "cwe": "CWE-78",
+      "description": "Command injection via POST parameter",
+      "endpoint": "/execute",
+      "parameter": "cmd"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "file_upload",
+      "cwe": "CWE-78",
+      "description": "Command injection via file upload filename",
+      "endpoint": "/upload",
+      "parameter": "filename"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "api_endpoint",
+      "cwe": "CWE-78",
+      "description": "Command injection via API endpoint",
+      "endpoint": "/api/run",
+      "parameter": "command"
+    }
+  ],
+  "detected_findings": [
+    {
+      "type": "command_injection",
+      "test": "command_injection",
+      "vulnerable": true,
+      "target_url": "http://localhost:5013/execute",
+      "injection_point": "cmd",
+      "evidence": {
+        "note": "Vulnerability detected by MCP endpoint"
+      }
+    }
+  ],
+  "validation": [
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "get_parameter",
+        "cwe": "CWE-78",
+        "description": "Command injection via GET parameter",
+        "endpoint": "/execute",
+        "parameter": "cmd"
+      },
+      "detected": true,
+      "matching_finding": {
+        "type": "command_injection",
+        "test": "command_injection",
+        "vulnerable": true,
+        "target_url": "http://localhost:5013/execute",
+        "injection_point": "cmd",
+        "evidence": {
+          "note": "Vulnerability detected by MCP endpoint"
+        }
+      }
+    },
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "post_parameter",
+        "cwe": "CWE-78",
+        "description": "Command injection via POST parameter",
+        "endpoint": "/execute",
+        "parameter": "cmd"
+      },
+      "detected": true,
+      "matching_finding": {
+        "type": "command_injection",
+        "test": "command_injection",
+        "vulnerable": true,
+        "target_url": "http://localhost:5013/execute",
+        "injection_point": "cmd",
+        "evidence": {
+          "note": "Vulnerability detected by MCP endpoint"
+        }
+      }
+    },
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "file_upload",
+        "cwe": "CWE-78",
+        "description": "Command injection via file upload filename",
+        "endpoint": "/upload",
+        "parameter": "filename"
+      },
+      "detected": false,
+      "matching_finding": null
+    },
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "api_endpoint",
+        "cwe": "CWE-78",
+        "description": "Command injection via API endpoint",
+        "endpoint": "/api/run",
+        "parameter": "command"
+      },
+      "detected": false,
+      "matching_finding": null
+    }
+  ],
+  "results_by_tester": {
+    "command_injection": {
+      "vulnerable": true,
+      "findings_count": 1,
+      "elapsed": 2.7662341594696045,
+      "result": {
+        "findings": [
+          {
+            "type": "command_injection",
+            "test": "command_injection",
+            "vulnerable": true,
+            "target_url": "http://localhost:5013/execute",
+            "injection_point": "cmd",
+            "evidence": {
+              "note": "Vulnerability detected by MCP endpoint"
+            }
+          }
+        ]
+      }
+    },
+    "path_traversal": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 1.0402076244354248,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/path_traversal_localhost_1764977004.json",
+        "vulnerable": false,
+        "inclusion_type": null,
+        "files_read": [],
+        "meta": {
+          "param_tested": "auto-discovered",
+          "file_paths_tested": "default",
+          "tests_run": 1,
+          "findings_count": 0,
+          "callback_used": false
+        }
+      }
+    },
+    "file_upload": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.11385011672973633,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/file_upload_localhost_1764977004.json",
+        "vulnerable": false,
+        "bypass_methods": [],
+        "uploaded_files": [],
+        "rce_confirmed": false,
+        "meta": {
+          "upload_endpoint": "auto-discovered",
+          "tests_run": 1,
+          "findings_count": 0,
+          "callback_used": false
+        }
+      }
+    },
+    "nosql_injection": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.06298208236694336,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/nosql_injection_localhost_1764977004.json",
+        "vulnerable": false,
+        "db_type": null,
+        "injection_method": null,
+        "meta": {
+          "tests_run": 1,
+          "callback_used": false
+        }
+      }
+    },
+    "ldap_injection": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.021337270736694336,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/ldap_injection_localhost_1764977004.json",
+        "vulnerable": false,
+        "injection_method": null,
+        "auth_bypass": false,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "ssi_injection": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.018899917602539062,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/ssi_injection_localhost_1764977004.json",
+        "vulnerable": false,
+        "injection_method": null,
+        "rce_confirmed": false,
+        "meta": {
+          "tests_run": 1,
+          "callback_used": false
+        }
+      }
+    },
+    "crypto_weakness": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.00706028938293457,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/crypto_localhost_1764977004.json",
+        "weak_algorithms": [],
+        "predictable_tokens": [],
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "parameter_pollution": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.0058863162994384766,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/parameter_pollution_localhost_1764977004.json",
+        "vulnerable": false,
+        "pollution_method": null,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "dns_rebinding": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 3.1031503677368164,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/dns_rebinding_localhost_1764977007.json",
+        "vulnerable": false,
+        "internal_access": false,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "cache_poisoning": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.006000995635986328,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/cache_poisoning_localhost_1764977008.json",
+        "vulnerable": false,
+        "poisoning_method": null,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "random_generation": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.008567571640014648,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/random_generation_localhost_1764977008.json",
+        "predictable": false,
+        "token_type": null,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    }
+  }
+}

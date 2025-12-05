@@ -1,0 +1,17 @@
+{
+  "program_name": "command_injection_lab",
+  "primary_targets": [
+    "http://localhost:5013",
+    "http://command_injection_lab:5000"
+  ],
+  "secondary_targets": [],
+  "rules": {},
+  "in_scope": [
+    {"url": "http://localhost:5013"},
+    {"url": "http://command_injection_lab:5000"},
+    {"url": "localhost:5013"},
+    {"url": "command_injection_lab:5000"},
+    {"url": "localhost"},
+    {"url": "command_injection_lab"}
+  ]
+}

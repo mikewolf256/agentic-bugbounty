@@ -1,0 +1,441 @@
+{
+  "test_summary": {
+    "tests_run": 13,
+    "tests_passed": 1,
+    "tests_failed": 14,
+    "total_findings": 3,
+    "expected_findings": 4,
+    "detection_rate": "75.0%"
+  },
+  "expected_findings": [
+    {
+      "type": "command_injection",
+      "subtype": "get_parameter",
+      "cwe": "CWE-78",
+      "description": "Command injection via GET parameter",
+      "endpoint": "/execute",
+      "parameter": "cmd"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "post_parameter",
+      "cwe": "CWE-78",
+      "description": "Command injection via POST parameter",
+      "endpoint": "/execute",
+      "parameter": "cmd"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "file_upload",
+      "cwe": "CWE-78",
+      "description": "Command injection via file upload filename",
+      "endpoint": "/upload",
+      "parameter": "filename"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "api_endpoint",
+      "cwe": "CWE-78",
+      "description": "Command injection via API endpoint",
+      "endpoint": "/api/run",
+      "parameter": "command"
+    }
+  ],
+  "detected_findings": [
+    {
+      "test": "command_injection",
+      "vulnerable": true,
+      "injection_point": "cmd",
+      "evidence": {
+        "payload": "id",
+        "payload_type": "unix_id",
+        "status_code": 200,
+        "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+        "text_content_snippet": "\n \n \n \n     Command Injection Lab \n     \n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .error { background: #fee; color: #c00; paddin",
+        "indicator": "uid=",
+        "note": "Command output detected in response (HTML parsing improved)"
+      },
+      "rce_confirmed": false,
+      "target_url": "http://localhost:5013/execute"
+    },
+    {
+      "test": "command_injection_file_upload",
+      "vulnerable": true,
+      "injection_point": "filename",
+      "evidence": {
+        "filename": "test`id`.jpg",
+        "payload_type": "backtick",
+        "status_code": 200,
+        "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+        "indicator": "uid=",
+        "note": "Command output detected in file upload response"
+      },
+      "rce_confirmed": false,
+      "target_url": "http://localhost:5013/upload"
+    },
+    {
+      "test": "command_injection_json",
+      "vulnerable": true,
+      "injection_point": "command",
+      "evidence": {
+        "payload": "id",
+        "payload_type": "unix_id",
+        "status_code": 200,
+        "response_snippet": "{\n  \"command\": \"id\",\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"uid=0(root) gid=0(root) groups=0(root)\\n\"\n}\n",
+        "indicator": "uid=",
+        "note": "Command output detected in JSON API response"
+      },
+      "rce_confirmed": false,
+      "target_url": "http://localhost:5013/api/run"
+    }
+  ],
+  "validation": [
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "get_parameter",
+        "cwe": "CWE-78",
+        "description": "Command injection via GET parameter",
+        "endpoint": "/execute",
+        "parameter": "cmd"
+      },
+      "detected": true,
+      "matching_finding": {
+        "test": "command_injection",
+        "vulnerable": true,
+        "injection_point": "cmd",
+        "evidence": {
+          "payload": "id",
+          "payload_type": "unix_id",
+          "status_code": 200,
+          "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+          "text_content_snippet": "\n \n \n \n     Command Injection Lab \n     \n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .error { background: #fee; color: #c00; paddin",
+          "indicator": "uid=",
+          "note": "Command output detected in response (HTML parsing improved)"
+        },
+        "rce_confirmed": false,
+        "target_url": "http://localhost:5013/execute"
+      }
+    },
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "post_parameter",
+        "cwe": "CWE-78",
+        "description": "Command injection via POST parameter",
+        "endpoint": "/execute",
+        "parameter": "cmd"
+      },
+      "detected": true,
+      "matching_finding": {
+        "test": "command_injection",
+        "vulnerable": true,
+        "injection_point": "cmd",
+        "evidence": {
+          "payload": "id",
+          "payload_type": "unix_id",
+          "status_code": 200,
+          "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+          "text_content_snippet": "\n \n \n \n     Command Injection Lab \n     \n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .error { background: #fee; color: #c00; paddin",
+          "indicator": "uid=",
+          "note": "Command output detected in response (HTML parsing improved)"
+        },
+        "rce_confirmed": false,
+        "target_url": "http://localhost:5013/execute"
+      }
+    },
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "file_upload",
+        "cwe": "CWE-78",
+        "description": "Command injection via file upload filename",
+        "endpoint": "/upload",
+        "parameter": "filename"
+      },
+      "detected": true,
+      "matching_finding": {
+        "test": "command_injection_file_upload",
+        "vulnerable": true,
+        "injection_point": "filename",
+        "evidence": {
+          "filename": "test`id`.jpg",
+          "payload_type": "backtick",
+          "status_code": 200,
+          "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+          "indicator": "uid=",
+          "note": "Command output detected in file upload response"
+        },
+        "rce_confirmed": false,
+        "target_url": "http://localhost:5013/upload"
+      }
+    },
+    {
+      "expected": {
+        "type": "command_injection",
+        "subtype": "api_endpoint",
+        "cwe": "CWE-78",
+        "description": "Command injection via API endpoint",
+        "endpoint": "/api/run",
+        "parameter": "command"
+      },
+      "detected": true,
+      "matching_finding": {
+        "test": "command_injection_json",
+        "vulnerable": true,
+        "injection_point": "command",
+        "evidence": {
+          "payload": "id",
+          "payload_type": "unix_id",
+          "status_code": 200,
+          "response_snippet": "{\n  \"command\": \"id\",\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"uid=0(root) gid=0(root) groups=0(root)\\n\"\n}\n",
+          "indicator": "uid=",
+          "note": "Command output detected in JSON API response"
+        },
+        "rce_confirmed": false,
+        "target_url": "http://localhost:5013/api/run"
+      }
+    }
+  ],
+  "results_by_tester": {
+    "command_injection": {
+      "vulnerable": true,
+      "findings_count": 3,
+      "elapsed": 1.572084903717041,
+      "result": {
+        "findings": [
+          {
+            "test": "command_injection",
+            "vulnerable": true,
+            "injection_point": "cmd",
+            "evidence": {
+              "payload": "id",
+              "payload_type": "unix_id",
+              "status_code": 200,
+              "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+              "text_content_snippet": "\n \n \n \n     Command Injection Lab \n     \n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .error { background: #fee; color: #c00; paddin",
+              "indicator": "uid=",
+              "note": "Command output detected in response (HTML parsing improved)"
+            },
+            "rce_confirmed": false,
+            "target_url": "http://localhost:5013/execute"
+          },
+          {
+            "test": "command_injection_file_upload",
+            "vulnerable": true,
+            "injection_point": "filename",
+            "evidence": {
+              "filename": "test`id`.jpg",
+              "payload_type": "backtick",
+              "status_code": 200,
+              "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+              "indicator": "uid=",
+              "note": "Command output detected in file upload response"
+            },
+            "rce_confirmed": false,
+            "target_url": "http://localhost:5013/upload"
+          },
+          {
+            "test": "command_injection_json",
+            "vulnerable": true,
+            "injection_point": "command",
+            "evidence": {
+              "payload": "id",
+              "payload_type": "unix_id",
+              "status_code": 200,
+              "response_snippet": "{\n  \"command\": \"id\",\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"uid=0(root) gid=0(root) groups=0(root)\\n\"\n}\n",
+              "indicator": "uid=",
+              "note": "Command output detected in JSON API response"
+            },
+            "rce_confirmed": false,
+            "target_url": "http://localhost:5013/api/run"
+          }
+        ]
+      }
+    },
+    "path_traversal": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.5417056083679199,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/path_traversal_localhost_1764977786.json",
+        "vulnerable": false,
+        "inclusion_type": null,
+        "files_read": [],
+        "meta": {
+          "param_tested": "auto-discovered",
+          "file_paths_tested": "default",
+          "tests_run": 1,
+          "findings_count": 0,
+          "callback_used": false
+        }
+      }
+    },
+    "file_upload": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.08736419677734375,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/file_upload_localhost_1764977786.json",
+        "vulnerable": false,
+        "bypass_methods": [],
+        "uploaded_files": [],
+        "rce_confirmed": false,
+        "meta": {
+          "upload_endpoint": "auto-discovered",
+          "tests_run": 1,
+          "findings_count": 0,
+          "callback_used": false
+        }
+      }
+    },
+    "nosql_injection": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.04204440116882324,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/nosql_injection_localhost_1764977786.json",
+        "vulnerable": false,
+        "db_type": null,
+        "injection_method": null,
+        "meta": {
+          "tests_run": 1,
+          "callback_used": false
+        }
+      }
+    },
+    "ldap_injection": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.019740581512451172,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/ldap_injection_localhost_1764977786.json",
+        "vulnerable": false,
+        "injection_method": null,
+        "auth_bypass": false,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "ssi_injection": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.012259244918823242,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/ssi_injection_localhost_1764977786.json",
+        "vulnerable": false,
+        "injection_method": null,
+        "rce_confirmed": false,
+        "meta": {
+          "tests_run": 1,
+          "callback_used": false
+        }
+      }
+    },
+    "csrf": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.008892059326171875,
+      "result": {
+        "host": "localhost:5013",
+        "findings_file": "/app/output_zap/default/csrf_localhost_5013_1764977786.json",
+        "vulnerable_endpoints": [],
+        "poc_html": [],
+        "meta": {
+          "tests_run": 0
+        }
+      }
+    },
+    "mass_assignment": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.005435466766357422,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/mass_assignment_localhost_1764977786.json",
+        "vulnerable": false,
+        "manipulated_fields": [],
+        "privilege_escalation": false,
+        "meta": {
+          "tests_run": 0
+        }
+      }
+    },
+    "crypto_weakness": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.005108356475830078,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/crypto_localhost_1764977786.json",
+        "weak_algorithms": [],
+        "predictable_tokens": [],
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "parameter_pollution": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.00670170783996582,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/parameter_pollution_localhost_1764977786.json",
+        "vulnerable": false,
+        "pollution_method": null,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "dns_rebinding": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 3.075584650039673,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/dns_rebinding_localhost_1764977789.json",
+        "vulnerable": false,
+        "internal_access": false,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "cache_poisoning": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.005599021911621094,
+      "result": {
+        "target_url": "http://localhost:5013/upload",
+        "findings_file": "/app/output_zap/default/cache_poisoning_localhost_1764977789.json",
+        "vulnerable": false,
+        "poisoning_method": null,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    },
+    "random_generation": {
+      "vulnerable": false,
+      "findings_count": 0,
+      "elapsed": 0.004179477691650391,
+      "result": {
+        "target_url": "http://localhost:5013",
+        "findings_file": "/app/output_zap/default/random_generation_localhost_1764977789.json",
+        "predictable": false,
+        "token_type": null,
+        "meta": {
+          "tests_run": 1
+        }
+      }
+    }
+  }
+}

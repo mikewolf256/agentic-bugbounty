@@ -1,0 +1,30 @@
+{
+  "name": "parameter_pollution_lab",
+  "description": "HTTP parameter pollution vulnerabilities - duplicate parameters, parameter override",
+  "base_url": "http://parameter_pollution_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "parameter_pollution",
+      "subtype": "duplicate_params",
+      "cwe": "CWE-235",
+      "description": "Parameter pollution detected",
+      "endpoint": "/api/user",
+      "parameter": "user"
+    },
+    {
+      "type": "parameter_pollution",
+      "subtype": "parameter_override",
+      "cwe": "CWE-235",
+      "description": "Parameter override confirmed",
+      "endpoint": "/api/action",
+      "parameter": "action"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/api/user", "method": "GET", "description": "Vulnerable user endpoint"},
+    {"path": "/api/action", "method": "POST", "description": "Vulnerable action endpoint"}
+  ]
+}
+

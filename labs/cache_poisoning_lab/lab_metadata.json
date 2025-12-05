@@ -1,0 +1,30 @@
+{
+  "name": "cache_poisoning_lab",
+  "description": "Cache poisoning vulnerabilities - cache key injection, header-based poisoning",
+  "base_url": "http://cache_poisoning_lab:5000",
+  "difficulty": "hard",
+  "expected_findings": [
+    {
+      "type": "cache_poisoning",
+      "subtype": "header_injection",
+      "cwe": "CWE-840",
+      "description": "Cache poisoning via header injection",
+      "endpoint": "/page",
+      "parameter": "X-Forwarded-Host"
+    },
+    {
+      "type": "cache_poisoning",
+      "subtype": "cache_key",
+      "cwe": "CWE-840",
+      "description": "Cache key manipulation",
+      "endpoint": "/api/data",
+      "parameter": "X-Forwarded-Host"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Cacheable homepage"},
+    {"path": "/page", "method": "GET", "description": "Cacheable page endpoint"},
+    {"path": "/api/data", "method": "GET", "description": "API endpoint with caching"}
+  ]
+}
+

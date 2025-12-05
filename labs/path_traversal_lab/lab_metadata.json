@@ -1,0 +1,49 @@
+{
+  "name": "path_traversal_lab",
+  "description": "Path traversal vulnerabilities - directory traversal, local file inclusion (LFI), remote file inclusion (RFI)",
+  "base_url": "http://path_traversal_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "path_traversal",
+      "subtype": "lfi",
+      "cwe": "CWE-22",
+      "description": "Local file inclusion via path traversal",
+      "endpoint": "/read",
+      "parameter": "file"
+    },
+    {
+      "type": "path_traversal",
+      "subtype": "lfi",
+      "cwe": "CWE-22",
+      "description": "Local file inclusion via include endpoint",
+      "endpoint": "/include",
+      "parameter": "file"
+    },
+    {
+      "type": "path_traversal",
+      "subtype": "rfi",
+      "cwe": "CWE-22",
+      "description": "Remote file inclusion via callback URL",
+      "endpoint": "/include",
+      "parameter": "file"
+    },
+    {
+      "type": "path_traversal",
+      "subtype": "api",
+      "cwe": "CWE-22",
+      "description": "Path traversal via API endpoint",
+      "endpoint": "/api/file",
+      "parameter": "file"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/read", "method": "GET", "description": "File reading form"},
+    {"path": "/read", "method": "POST", "description": "Vulnerable file reading"},
+    {"path": "/include", "method": "GET", "description": "File inclusion form"},
+    {"path": "/include", "method": "POST", "description": "Vulnerable file inclusion"},
+    {"path": "/api/file", "method": "GET", "description": "API file reading endpoint"}
+  ]
+}
+

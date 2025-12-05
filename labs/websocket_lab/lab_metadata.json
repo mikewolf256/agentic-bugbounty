@@ -1,0 +1,38 @@
+{
+  "name": "websocket_lab",
+  "description": "WebSocket security vulnerabilities - missing authentication, message injection, missing origin validation",
+  "base_url": "http://websocket_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "websocket",
+      "subtype": "auth_bypass",
+      "cwe": "CWE-306",
+      "description": "WebSocket authentication bypass",
+      "endpoint": "ws://websocket_lab:5000/socket.io",
+      "parameter": "connection"
+    },
+    {
+      "type": "websocket",
+      "subtype": "message_injection",
+      "cwe": "CWE-79",
+      "description": "WebSocket message injection",
+      "endpoint": "ws://websocket_lab:5000/socket.io",
+      "parameter": "message"
+    },
+    {
+      "type": "websocket",
+      "subtype": "missing_origin",
+      "cwe": "CWE-942",
+      "description": "Missing origin validation",
+      "endpoint": "ws://websocket_lab:5000/socket.io",
+      "parameter": "Origin"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage with WebSocket client"},
+    {"path": "/socket.io/", "method": "GET", "description": "WebSocket endpoint"},
+    {"path": "ws://websocket_lab:5000/socket.io", "method": "WebSocket", "description": "WebSocket connection"}
+  ]
+}
+

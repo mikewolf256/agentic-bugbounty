@@ -1,0 +1,49 @@
+{
+  "name": "file_upload_lab",
+  "description": "Insecure file upload vulnerabilities - file type validation bypass, MIME spoofing, path traversal, executable uploads",
+  "base_url": "http://file_upload_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "file_upload",
+      "subtype": "double_extension",
+      "cwe": "CWE-434",
+      "description": "File upload bypass via double extension (.php.jpg)",
+      "endpoint": "/upload",
+      "parameter": "file"
+    },
+    {
+      "type": "file_upload",
+      "subtype": "mime_spoofing",
+      "cwe": "CWE-434",
+      "description": "File upload bypass via MIME type spoofing",
+      "endpoint": "/upload",
+      "parameter": "file"
+    },
+    {
+      "type": "file_upload",
+      "subtype": "path_traversal",
+      "cwe": "CWE-434",
+      "description": "Path traversal in uploaded filename",
+      "endpoint": "/upload",
+      "parameter": "filename"
+    },
+    {
+      "type": "file_upload",
+      "subtype": "executable_upload",
+      "cwe": "CWE-434",
+      "description": "Executable file upload (PHP shell)",
+      "endpoint": "/upload",
+      "parameter": "file"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/upload", "method": "GET", "description": "File upload form"},
+    {"path": "/upload", "method": "POST", "description": "Vulnerable file upload"},
+    {"path": "/uploads", "method": "GET", "description": "List uploaded files"},
+    {"path": "/uploads/<filename>", "method": "GET", "description": "Access uploaded file"},
+    {"path": "/api/upload", "method": "POST", "description": "API upload endpoint"}
+  ]
+}
+

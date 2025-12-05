@@ -1,0 +1,40 @@
+{
+  "name": "random_generation_lab",
+  "description": "Random number generation vulnerabilities - predictable tokens, sequential IDs, weak random",
+  "base_url": "http://random_generation_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "random_generation",
+      "subtype": "predictable_token",
+      "cwe": "CWE-330",
+      "description": "Predictable session tokens",
+      "endpoint": "/login",
+      "parameter": "token"
+    },
+    {
+      "type": "random_generation",
+      "subtype": "sequential_token",
+      "cwe": "CWE-330",
+      "description": "Sequential token generation",
+      "endpoint": "/api/token",
+      "parameter": "token"
+    },
+    {
+      "type": "random_generation",
+      "subtype": "predictable_id",
+      "cwe": "CWE-330",
+      "description": "Predictable user IDs",
+      "endpoint": "/api/user",
+      "parameter": "user_id"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/login", "method": "GET", "description": "Login form"},
+    {"path": "/login", "method": "POST", "description": "Login with predictable tokens"},
+    {"path": "/api/token", "method": "GET", "description": "Sequential token generation"},
+    {"path": "/api/user", "method": "POST", "description": "User creation with predictable IDs"}
+  ]
+}
+

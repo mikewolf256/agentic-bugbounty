@@ -1,0 +1,42 @@
+{
+  "name": "mass_assignment_lab",
+  "description": "Mass assignment vulnerabilities - privilege escalation, sensitive field manipulation",
+  "base_url": "http://mass_assignment_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "mass_assignment",
+      "subtype": "privilege_escalation",
+      "cwe": "CWE-915",
+      "description": "Mass assignment privilege escalation",
+      "endpoint": "/api/user/create",
+      "parameter": "admin"
+    },
+    {
+      "type": "mass_assignment",
+      "subtype": "role_manipulation",
+      "cwe": "CWE-915",
+      "description": "Admin field manipulation",
+      "endpoint": "/api/user/update",
+      "parameter": "role"
+    },
+    {
+      "type": "mass_assignment",
+      "subtype": "field_manipulation",
+      "cwe": "CWE-915",
+      "description": "Role field manipulation",
+      "endpoint": "/api/profile",
+      "parameter": "admin"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/login", "method": "GET", "description": "Login form"},
+    {"path": "/login", "method": "POST", "description": "Login endpoint"},
+    {"path": "/api/user/create", "method": "POST", "description": "Vulnerable user creation"},
+    {"path": "/api/user/update", "method": "PUT", "description": "Vulnerable user update"},
+    {"path": "/api/profile", "method": "GET", "description": "Profile endpoint"},
+    {"path": "/api/profile", "method": "POST", "description": "Vulnerable profile update"}
+  ]
+}
+

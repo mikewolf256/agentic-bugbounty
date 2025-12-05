@@ -1,0 +1,19 @@
+{
+  "lab_name": "command_injection_lab",
+  "timestamp": 1764973232,
+  "total_expected": 4,
+  "total_found": 0,
+  "matched": [],
+  "missed": [
+    {
+      "type": "command_injection",
+      "subtype": "api_endpoint",
+      "cwe": "CWE-78",
+      "description": "Command injection via API endpoint",
+      "endpoint": "/api/run",
+      "parameter": "command"
+    }
+  ],
+  "extra": [],
+  "detection_rate": 0.0
+}

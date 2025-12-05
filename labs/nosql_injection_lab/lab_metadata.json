@@ -1,0 +1,41 @@
+{
+  "name": "nosql_injection_lab",
+  "description": "NoSQL injection vulnerabilities - MongoDB injection, authentication bypass, data extraction",
+  "base_url": "http://nosql_injection_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "nosql_injection",
+      "subtype": "auth_bypass",
+      "cwe": "CWE-943",
+      "description": "NoSQL injection authentication bypass",
+      "endpoint": "/login",
+      "parameter": "username"
+    },
+    {
+      "type": "nosql_injection",
+      "subtype": "data_extraction",
+      "cwe": "CWE-943",
+      "description": "NoSQL injection data extraction",
+      "endpoint": "/api/search",
+      "parameter": "query"
+    },
+    {
+      "type": "nosql_injection",
+      "subtype": "mongodb_injection",
+      "cwe": "CWE-943",
+      "description": "MongoDB injection confirmed",
+      "endpoint": "/api/user",
+      "parameter": "filter"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/login", "method": "GET", "description": "Login form"},
+    {"path": "/login", "method": "POST", "description": "Vulnerable login endpoint"},
+    {"path": "/api/search", "method": "POST", "description": "Vulnerable search endpoint"},
+    {"path": "/api/user", "method": "GET", "description": "User endpoint"},
+    {"path": "/api/user", "method": "POST", "description": "Vulnerable user endpoint"}
+  ]
+}
+

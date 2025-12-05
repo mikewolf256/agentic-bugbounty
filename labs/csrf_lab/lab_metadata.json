@@ -1,0 +1,50 @@
+{
+  "name": "csrf_lab",
+  "description": "CSRF vulnerabilities - missing CSRF tokens, weak validation, missing SameSite protection, missing Origin/Referer validation",
+  "base_url": "http://csrf_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "csrf",
+      "subtype": "missing_token",
+      "cwe": "CWE-352",
+      "description": "CSRF vulnerability on user update endpoint",
+      "endpoint": "/api/user/update",
+      "parameter": "POST"
+    },
+    {
+      "type": "csrf",
+      "subtype": "missing_token",
+      "cwe": "CWE-352",
+      "description": "CSRF vulnerability on purchase endpoint",
+      "endpoint": "/api/purchase",
+      "parameter": "POST"
+    },
+    {
+      "type": "csrf",
+      "subtype": "missing_token",
+      "cwe": "CWE-352",
+      "description": "CSRF vulnerability on transfer endpoint",
+      "endpoint": "/api/transfer",
+      "parameter": "POST"
+    },
+    {
+      "type": "csrf",
+      "subtype": "missing_origin_check",
+      "cwe": "CWE-352",
+      "description": "Missing Origin/Referer header validation",
+      "endpoint": "/api/user/update",
+      "parameter": "Origin"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/login", "method": "GET", "description": "Login form"},
+    {"path": "/login", "method": "POST", "description": "Login endpoint"},
+    {"path": "/api/user/update", "method": "POST", "description": "Vulnerable user update"},
+    {"path": "/api/user/delete", "method": "DELETE", "description": "Vulnerable user deletion"},
+    {"path": "/api/purchase", "method": "POST", "description": "Vulnerable purchase endpoint"},
+    {"path": "/api/transfer", "method": "POST", "description": "Vulnerable money transfer"}
+  ]
+}
+

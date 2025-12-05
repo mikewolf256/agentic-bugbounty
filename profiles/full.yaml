@@ -31,6 +31,27 @@ ai_triage:
 phases:
   - recon       # Katana + fingerprinting
   - nuclei      # AI-selected templates
-  - validators  # Run all validators
+  - validators  # Run all validators (includes new 15 testers)
   - triage      # LLM triage and reporting
+
+# Phase 2: Targeted Vulnerability Tests Configuration
+targeted_vuln_tests:
+  enabled: true  # Enable all targeted vulnerability testers
+  use_callback: false  # Set to true to enable OOB detection for SSRF, XXE, etc.
+  # Individual tester configuration (optional - defaults to enabled if not specified)
+  # command_injection: true
+  # path_traversal: true
+  # file_upload: true
+  # nosql_injection: true
+  # ldap_injection: true
+  # ssi_injection: true
+  # csrf: true
+  # mass_assignment: true
+  # secret_exposure: true
+  # websocket: true
+  # crypto_weakness: true
+  # parameter_pollution: true
+  # dns_rebinding: true
+  # cache_poisoning: true
+  # random_generation: true
 

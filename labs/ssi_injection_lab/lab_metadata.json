@@ -1,0 +1,31 @@
+{
+  "name": "ssi_injection_lab",
+  "description": "SSI injection vulnerabilities - command execution, file inclusion",
+  "base_url": "http://ssi_injection_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "ssi_injection",
+      "subtype": "command_execution",
+      "cwe": "CWE-96",
+      "description": "SSI injection command execution",
+      "endpoint": "/page",
+      "parameter": "page"
+    },
+    {
+      "type": "ssi_injection",
+      "subtype": "file_inclusion",
+      "cwe": "CWE-96",
+      "description": "SSI injection file inclusion",
+      "endpoint": "/render",
+      "parameter": "template"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/page", "method": "GET", "description": "Vulnerable page endpoint"},
+    {"path": "/render", "method": "GET", "description": "Template rendering form"},
+    {"path": "/render", "method": "POST", "description": "Vulnerable template rendering"}
+  ]
+}
+

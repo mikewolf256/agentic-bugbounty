@@ -20,16 +20,16 @@ BASE_TEMPLATE = """
 <head>
     <title>XSS Lab - {title}</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .container { max-width: 800px; margin: 0 auto; }
-        h1 { color: #333; }
-        .search-box { padding: 10px; margin: 20px 0; }
-        input[type="text"] { padding: 8px; width: 300px; }
-        button { padding: 8px 16px; }
-        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; }
-        .error { background: #fee; color: #c00; padding: 15px; margin: 10px 0; }
-        nav { margin-bottom: 30px; }
-        nav a { margin-right: 15px; color: #0066cc; }
+        body {{ font-family: Arial, sans-serif; margin: 40px; }}
+        .container {{ max-width: 800px; margin: 0 auto; }}
+        h1 {{ color: #333; }}
+        .search-box { padding: 10px; margin: 20px 0; }}
+        input[type="text"] { padding: 8px; width: 300px; }}
+        button {{ padding: 8px 16px; }}
+        .result {{ background: #f5f5f5; padding: 15px; margin: 10px 0; }}
+        .error {{ background: #fee; color: #c00; padding: 15px; margin: 10px 0; }}
+        nav { margin-bottom: 30px; }}
+        nav a { margin-right: 15px; color: #0066cc; }}
     </style>
 </head>
 <body>

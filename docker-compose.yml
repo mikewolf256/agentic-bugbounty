@@ -61,6 +61,64 @@ services:
     networks:
       - lab_network
 
+  # New vulnerability type labs
+  xxe_lab:
+    build:
+      context: ./labs/xxe_lab
+    ports:
+      - "5005:5000"
+    networks:
+      - lab_network
+
+  business_logic_lab:
+    build:
+      context: ./labs/business_logic_lab
+    ports:
+      - "5006:5000"
+    networks:
+      - lab_network
+
+  cloud_lab:
+    build:
+      context: ./labs/cloud_lab
+    ports:
+      - "5007:5000"
+    networks:
+      - lab_network
+
+  template_injection_lab:
+    build:
+      context: ./labs/template_injection_lab
+    ports:
+      - "5008:5000"
+    networks:
+      - lab_network
+
+  deserialization_lab:
+    build:
+      context: ./labs/deserialization_lab
+    ports:
+      - "5009:5000"
+    networks:
+      - lab_network
+
+  graphql_lab:
+    build:
+      context: ./labs/graphql_lab
+    ports:
+      - "5010:5000"
+    networks:
+      - lab_network
+
+  grpc_lab:
+    build:
+      context: ./labs/grpc_lab
+    ports:
+      - "5011:5000"
+      - "5012:50051"
+    networks:
+      - lab_network
+
 networks:
   lab_network:
     driver: bridge

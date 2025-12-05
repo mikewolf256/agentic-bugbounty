@@ -1,0 +1,41 @@
+{
+  "name": "deserialization_lab",
+  "description": "Deserialization vulnerabilities - Python pickle RCE, YAML deserialization",
+  "base_url": "http://deserialization_lab:5000",
+  "difficulty": "high",
+  "expected_findings": [
+    {
+      "type": "deserialization",
+      "subtype": "pickle",
+      "cwe": "CWE-502",
+      "description": "Python pickle deserialization RCE",
+      "endpoint": "/pickle",
+      "parameter": "data"
+    },
+    {
+      "type": "deserialization",
+      "subtype": "yaml",
+      "cwe": "CWE-502",
+      "description": "YAML deserialization with unsafe loader",
+      "endpoint": "/yaml",
+      "parameter": "data"
+    },
+    {
+      "type": "deserialization",
+      "subtype": "api",
+      "cwe": "CWE-502",
+      "description": "Deserialization in API endpoint",
+      "endpoint": "/api/deserialize",
+      "parameter": "data"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/pickle", "method": "GET", "description": "Pickle deserialize form"},
+    {"path": "/pickle", "method": "POST", "description": "Vulnerable pickle deserializer"},
+    {"path": "/yaml", "method": "GET", "description": "YAML deserialize form"},
+    {"path": "/yaml", "method": "POST", "description": "Vulnerable YAML deserializer"},
+    {"path": "/api/deserialize", "method": "POST", "description": "API deserializer (vulnerable)"}
+  ]
+}
+

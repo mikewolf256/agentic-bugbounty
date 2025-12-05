@@ -1,0 +1,41 @@
+name: business-logic-heavy
+description: Focus on business logic vulnerabilities - pricing manipulation, workflow bypasses, state transitions
+
+enabled_tools:
+  - business_logic_analyzer
+  - workflow_validator
+  - katana_nuclei  # For endpoint discovery
+  - api_recon      # For API endpoint discovery
+
+disabled_tools:
+  - sqlmap  # Less relevant for business logic
+  - dalfox  # Less relevant for business logic
+
+priority:
+  - pricing_manipulation
+  - workflow_bypass
+  - rate_limit_bypass
+  - state_transition
+  - permission_escalation
+
+# Focus on endpoints that might have business logic
+focus_keywords:
+  - cart
+  - checkout
+  - payment
+  - order
+  - purchase
+  - register
+  - verify
+  - activate
+  - create
+  - publish
+  - approve
+  - review
+
+# Rate limiting - be conservative for business logic testing
+rate_limit: 5  # requests per second
+
+# Authentication context (if available)
+auth_required: false  # Can test without auth, but auth helps
+

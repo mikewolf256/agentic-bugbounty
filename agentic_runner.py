@@ -11,12 +11,29 @@ from typing import Tuple, Optional, Dict, Any, List
 import requests
 import yaml
 
+# Retry helper for resilient API calls
+try:
+    from tools.retry_helper import retry_with_backoff
+except ImportError:
+    # Fallback if retry_helper not available
+    def retry_with_backoff(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 # ==== Config / Env ====
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
 if not OPENAI_API_KEY:
     raise SystemExit("Set OPENAI_API_KEY env var.")
+
+# Hybrid model triage configuration
+LLM_MODEL_ADVANCED = os.environ.get("LLM_MODEL_ADVANCED", "gpt-4o")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+USE_HYBRID_TRIAGE = os.environ.get("USE_HYBRID_TRIAGE", "true").lower() in ("true", "1", "yes")
+HYBRID_CVSS_THRESHOLD = float(os.environ.get("HYBRID_CVSS_THRESHOLD", "7.0"))
+HYBRID_BOUNTY_THRESHOLD = float(os.environ.get("HYBRID_BOUNTY_THRESHOLD", "5000"))
 
 # Dalfox config
 DALFOX_PATH = os.environ.get("DALFOX_BIN", os.path.expanduser("~/go/bin/dalfox"))
@@ -30,6 +47,15 @@ _DALFOX_CACHE: Dict[Tuple[str, Optional[str]], Tuple[bool, dict]] = {}
 # MCP server config (for orchestrated scans / containerization)
 # Default port 8000 matches Dockerfile.mcp and docker-compose.yml
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8000")
+
+# K8s mode support
+LOCAL_K8S_MODE = os.environ.get("LOCAL_K8S_MODE", "false").lower() in ("true", "1", "yes")
+try:
+    from tools.local_executor import LocalExecutor, is_local_k8s_mode
+    K8S_AVAILABLE = True
+except ImportError:
+    K8S_AVAILABLE = False
+    LocalExecutor = None
 
 # Profile configuration
 PROFILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
@@ -307,15 +333,307 @@ def map_mitre(t: Dict[str, Any]) -> Dict[str, Any]:
         "notes": "static_mapping_v1",
     }
 
+# Model usage statistics tracking
+_model_usage_stats: Dict[str, int] = {}
+
+
+def is_complex_vulnerability(finding: Dict[str, Any]) -> bool:
+    """Check if a finding represents a complex vulnerability type requiring advanced model.
+    
+    Args:
+        finding: Finding dictionary
+        
+    Returns:
+        True if finding is complex, False otherwise
+    """
+    name = (finding.get("name") or "").lower()
+    vuln_type = (finding.get("type") or finding.get("vulnerability_type") or "").lower()
+    description = (finding.get("description") or "").lower()
+    
+    # Complex vulnerability keywords
+    complex_keywords = [
+        "business logic",
+        "chain",
+        "graphql",
+        "oauth",
+        "oidc",
+        "race condition",
+        "request smuggling",
+        "deserialization",
+        "template injection",
+        "prototype pollution",
+        "jwt",
+        "authentication bypass",
+        "privilege escalation",
+        "multi-step",
+        "exploitation chain",
+    ]
+    
+    # Check name and type
+    text_to_check = f"{name} {vuln_type} {description}"
+    if any(keyword in text_to_check for keyword in complex_keywords):
+        return True
+    
+    # Check if finding is part of a chain
+    if finding.get("chain_id") or finding.get("exploitability_score"):
+        return True
+    
+    # Check correlation graph data
+    if finding.get("_correlation") or finding.get("_chain_member"):
+        return True
+    
+    return False
+
+
+def get_model_for_finding(finding: Dict[str, Any]) -> str:
+    """Determine which LLM model to use for triaging a finding.
+    
+    Uses advanced model for high-value/complex findings, otherwise uses base model.
+    
+    Args:
+        finding: Finding dictionary
+        
+    Returns:
+        Model name to use
+    """
+    if not USE_HYBRID_TRIAGE:
+        return LLM_MODEL
+    
+    # Check CVSS score
+    cvss_score = None
+    for field in ("cvss_score", "cvss", "cvss_v3", "cvss3", "cvss3_score"):
+        val = finding.get(field)
+        if val is not None:
+            try:
+                if isinstance(val, str) and "/" in val:
+                    # CVSS vector string - extract score if possible
+                    # For now, assume high if vector present
+                    cvss_score = 7.0
+                else:
+                    cvss_score = float(val)
+                break
+            except (ValueError, TypeError):
+                continue
+    
+    if cvss_score is not None and cvss_score >= HYBRID_CVSS_THRESHOLD:
+        return LLM_MODEL_ADVANCED
+    
+    # Check estimated bounty
+    bounty_estimate = finding.get("bounty_estimate", {})
+    if isinstance(bounty_estimate, dict):
+        estimated = bounty_estimate.get("estimated", 0)
+        if estimated >= HYBRID_BOUNTY_THRESHOLD:
+            return LLM_MODEL_ADVANCED
+    
+    # Check recommended_bounty_usd
+    recommended_bounty = finding.get("recommended_bounty_usd", 0)
+    if recommended_bounty and recommended_bounty >= HYBRID_BOUNTY_THRESHOLD:
+        return LLM_MODEL_ADVANCED
+    
+    # Check if complex vulnerability type
+    if is_complex_vulnerability(finding):
+        return LLM_MODEL_ADVANCED
+    
+    # Default to base model
+    return LLM_MODEL
+
+
+def anthropic_chat(msgs: List[Dict[str, str]], model: str = "claude-3-5-sonnet-20241022", context: Optional[str] = None) -> str:
+    """Call Anthropic Claude API for chat completion.
+    
+    Args:
+        msgs: List of message dicts in OpenAI format
+        model: Claude model name
+        
+    Returns:
+        Response content string
+        
+    Raises:
+        SystemExit if API key not set or request fails
+    """
+    if not ANTHROPIC_API_KEY:
+        raise SystemExit("ANTHROPIC_API_KEY not set. Cannot use Claude models.")
+    
+    # Convert OpenAI format to Anthropic format
+    # Anthropic uses system/user/assistant roles, similar format
+    anthropic_messages = []
+    system_message = None
+    
+    for msg in msgs:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        
+        if role == "system":
+            system_message = content
+        elif role in ("user", "assistant"):
+            anthropic_messages.append({
+                "role": role,
+                "content": content
+            })
+    
+    # Build Anthropic API request
+    payload = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": anthropic_messages,
+    }
+    
+    if system_message:
+        payload["system"] = system_message
+    
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=180,
+        )
+        r.raise_for_status()
+        response_data = r.json()
+        
+        # Track token usage from Anthropic response
+        try:
+            from tools.token_tracker import get_tracker
+            tracker = get_tracker()
+            usage = response_data.get("usage", {})
+            tokens_in = usage.get("input_tokens", 0)
+            tokens_out = usage.get("output_tokens", 0)
+            tracker.track_call(model, tokens_in, tokens_out, context)
+        except Exception as e:
+            # Non-fatal if tracking fails
+            print(f"[TOKEN-TRACKER] Warning: Failed to track tokens: {e}", file=sys.stderr)
+        
+        # Extract content from Anthropic response
+        # Anthropic returns content as array of text blocks
+        content_blocks = response_data.get("content", [])
+        if content_blocks and isinstance(content_blocks, list):
+            # Get first text block
+            text_content = content_blocks[0].get("text", "")
+            return text_content.strip()
+        else:
+            return ""
+            
+    except requests.exceptions.RequestException as e:
+        print(f"[ANTHROPIC] API error: {e}", file=sys.stderr)
+        # Fallback to OpenAI if Anthropic fails
+        print(f"[ANTHROPIC] Falling back to OpenAI model: {LLM_MODEL}", file=sys.stderr)
+        return llm_chat(msgs, model=LLM_MODEL)
+
+
+def llm_chat(msgs: List[Dict[str, str]], model: Optional[str] = None, context: Optional[str] = None) -> str:
+    """Call LLM API (OpenAI or Anthropic) based on model name.
+    
+    Args:
+        msgs: List of message dicts
+        model: Model name (defaults to LLM_MODEL). If starts with "claude-", uses Anthropic API.
+        context: Optional context for token tracking (e.g., "triage", "rag_search")
+        
+    Returns:
+        Response content string
+    """
+    if model is None:
+        model = LLM_MODEL
+    
+    # Track model usage
+    _model_usage_stats[model] = _model_usage_stats.get(model, 0) + 1
+    
+    # Route to appropriate API based on model name
+    if model.startswith("claude-"):
+        return anthropic_chat(msgs, model=model, context=context)
+    else:
+        # OpenAI API
+        # Estimate input tokens (rough: ~4 chars per token)
+        input_text = json.dumps(msgs)
+        estimated_tokens_in = len(input_text) // 4
+        
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type":"application/json"},
+            json={"model": model, "messages": msgs, "temperature": 0.0, "max_tokens": 1600},
+            timeout=180,
+        )
+        r.raise_for_status()
+        response = r.json()
+        
+        # Extract actual token usage from response
+        usage = response.get("usage", {})
+        tokens_in = usage.get("prompt_tokens", estimated_tokens_in)
+        tokens_out = usage.get("completion_tokens", 0)
+        
+        # Track token usage
+        try:
+            from tools.token_tracker import get_tracker
+            tracker = get_tracker()
+            tracker.track_call(model, tokens_in, tokens_out, context)
+        except Exception as e:
+            # Non-fatal if tracking fails
+            print(f"[TOKEN-TRACKER] Warning: Failed to track tokens: {e}", file=sys.stderr)
+        
+        return response["choices"][0]["message"]["content"].strip()
+
+
+# Backward compatibility alias
 def openai_chat(msgs):
-    r = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type":"application/json"},
-        json={"model": LLM_MODEL, "messages": msgs, "temperature": 0.0, "max_tokens": 1600},
-        timeout=180,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"].strip()
+    """Backward compatibility wrapper for openai_chat."""
+    return llm_chat(msgs, model=LLM_MODEL)
+
+
+def _calculate_validation_quality(triaged_finding: Dict[str, Any]) -> Dict[str, Any]:
+    """Calculate validation quality score for a triaged finding.
+    
+    Returns:
+        Dict with:
+        - quality: "validated", "likely", or "possible"
+        - confidence: "high", "medium", or "low"
+        - evidence_count: Number of validation engines that provided evidence
+        - score: Numeric score 0.0-1.0
+    """
+    validation = triaged_finding.get("validation", {})
+    validation_status = triaged_finding.get("validation_status", "unknown")
+    
+    # Count validation engines with evidence
+    evidence_count = 0
+    high_confidence_count = 0
+    
+    for engine_name, engine_data in validation.items():
+        if not isinstance(engine_data, dict):
+            continue
+        
+        engine_result = str(engine_data.get("engine_result", "")).lower()
+        confidence = str(engine_data.get("validation_confidence", "")).lower()
+        
+        # Check if engine provided evidence
+        if engine_result in ("confirmed", "vulnerable", "ran") and confidence:
+            evidence_count += 1
+            if confidence == "high":
+                high_confidence_count += 1
+    
+    # Determine quality level
+    if validation_status == "validated" or high_confidence_count > 0:
+        quality = "validated"
+        confidence_level = "high"
+        score = 1.0
+    elif evidence_count > 0 or validation_status == "planned":
+        quality = "likely"
+        confidence_level = "medium"
+        score = 0.6
+    else:
+        quality = "possible"
+        confidence_level = "low"
+        score = 0.3
+    
+    return {
+        "quality": quality,
+        "confidence": confidence_level,
+        "evidence_count": evidence_count,
+        "high_confidence_count": high_confidence_count,
+        "score": score,
+    }
+
 
 def run_dalfox_check(target_url: str, param_name: Optional[str] = None) -> Tuple[bool, dict]:
     """
@@ -406,30 +724,39 @@ def run_dalfox_check(target_url: str, param_name: Optional[str] = None) -> Tuple
 
 
 # ==== MCP client helpers ====
+class MCPError(Exception):
+    """Custom exception for MCP errors that should be retried."""
+    pass
+
+
+@retry_with_backoff(max_retries=3, initial_delay=1.0, retryable_exceptions=(MCPError, requests.RequestException))
 def _mcp_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """POST to MCP server endpoint with retry logic."""
     url = MCP_SERVER_URL.rstrip("/") + path
-    r = requests.post(url, json=payload, timeout=600)
     try:
+        r = requests.post(url, json=payload, timeout=600)
         r.raise_for_status()
-    except Exception:
-        raise SystemExit(f"MCP POST {url} failed: {r.status_code} {r.text[:4000]}")
+    except requests.RequestException as e:
+        raise MCPError(f"MCP POST {url} failed: {e}")
     try:
         return r.json()
-    except ValueError:
-        raise SystemExit(f"MCP POST {url} returned non-JSON: {r.text[:4000]}")
+    except ValueError as e:
+        raise MCPError(f"MCP POST {url} returned non-JSON: {r.text[:4000]}")
 
 
+@retry_with_backoff(max_retries=3, initial_delay=1.0, retryable_exceptions=(MCPError, requests.RequestException))
 def _mcp_get(path: str) -> Dict[str, Any]:
+    """GET from MCP server endpoint with retry logic."""
     url = MCP_SERVER_URL.rstrip("/") + path
-    r = requests.get(url, timeout=600)
     try:
+        r = requests.get(url, timeout=600)
         r.raise_for_status()
-    except Exception:
-        raise SystemExit(f"MCP GET {url} failed: {r.status_code} {r.text[:4000]}")
+    except requests.RequestException as e:
+        raise MCPError(f"MCP GET {url} failed: {e}")
     try:
         return r.json()
-    except ValueError:
-        raise SystemExit(f"MCP GET {url} returned non-JSON: {r.text[:4000]}")
+    except ValueError as e:
+        raise MCPError(f"MCP GET {url} returned non-JSON: {r.text[:4000]}")
 
 
 def wait_for_mcp_ready(max_wait: int = 30) -> None:
@@ -463,7 +790,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
 
     High-level steps (all best-effort):
     - Call /mcp/set_scope with the provided scope.json
-    - For each in-scope host, start a ZAP scan (basic) and poll until done
+    - For each in-scope host, run Katana+Nuclei recon (replaces legacy ZAP scans)
     - Optionally run nuclei recon for each host
     - Run Katana+Nuclei web recon per host
     - Build host_profile, prioritize_host, and host_delta for each host
@@ -473,6 +800,14 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     """
 
     wait_for_mcp_ready()
+
+    # Start token tracking
+    try:
+        from tools.token_tracker import get_tracker
+        tracker = get_tracker()
+        tracker.start_scan()
+    except Exception:
+        pass  # Non-fatal if tracking unavailable
 
     # Get profile settings
     phases = get_profile_setting("phases", ["recon", "nuclei", "validators", "triage"])
@@ -497,36 +832,58 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
 
     summary_hosts: List[Dict[str, Any]] = []
 
-    # 2) Start ZAP scans for each host
-    zap_scans: Dict[str, str] = {}
+    # 2) Run Katana+Nuclei recon for each host (replaces legacy ZAP scans)
+    katana_nuclei_scans: Dict[str, Dict[str, Any]] = {}
     for h in hosts:
-        body = {"targets": [h]}
         try:
-            resp = _mcp_post("/mcp/start_zap_scan", body)
-            zap_scans[h] = resp.get("scan_id") or ""
+            print(f"[RECON] Running Katana+Nuclei recon for {h}...")
+            resp = _mcp_post("/mcp/run_katana_nuclei", {
+                "target": h,
+                "mode": "recon"
+            })
+            katana_nuclei_scans[h] = {
+                "katana_count": resp.get("katana_count", 0),
+                "findings_count": resp.get("findings_count", 0),
+                "findings_file": resp.get("findings_file", ""),
+            }
+            print(f"[RECON] Katana+Nuclei completed for {h}: {resp.get('findings_count', 0)} findings")
         except SystemExit as e:
-            print(f"[MCP] Failed to start ZAP scan for {h}: {e}")
-
-    # 3) Poll ZAP scans
-    for h, scan_id in zap_scans.items():
-        if not scan_id:
-            continue
-        while True:
-            time.sleep(3)
-            try:
-                status = _mcp_get(f"/mcp/poll_zap?scan_id={scan_id}")
-            except SystemExit as e:
-                print(f"[MCP] poll_zap error for {h}: {e}")
-                break
-            if status.get("status") in ("done", "error"):
-                break
+            print(f"[RECON] Failed to run Katana+Nuclei for {h}: {e}")
+            katana_nuclei_scans[h] = {"error": str(e)}
+        except Exception as e:
+            print(f"[RECON] Katana+Nuclei error for {h}: {e}")
+            katana_nuclei_scans[h] = {"error": str(e)}
 
     # 4) Nuclei recon per host (best-effort)
-    for h in hosts:
+    # Try K8s mode first if available
+    if LOCAL_K8S_MODE and K8S_AVAILABLE and is_local_k8s_mode():
         try:
-            _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
-        except SystemExit as e:
-            print(f"[MCP] nuclei recon failed for {h}: {e}")
+            executor = LocalExecutor()
+            for h in hosts:
+                try:
+                    print(f"[K8S] Running Nuclei recon for {h}...")
+                    result = executor.submit_and_wait("nuclei", h, options={"mode": "recon"})
+                    if result:
+                        print(f"[K8S] Nuclei recon completed for {h}")
+                except Exception as e:
+                    print(f"[K8S] Nuclei recon failed for {h}: {e}, falling back to MCP")
+                    try:
+                        _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
+                    except SystemExit:
+                        pass
+        except Exception as e:
+            print(f"[K8S] K8s executor failed: {e}, using MCP")
+            for h in hosts:
+                try:
+                    _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
+                except SystemExit as e:
+                    print(f"[MCP] nuclei recon failed for {h}: {e}")
+    else:
+        for h in hosts:
+            try:
+                _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
+            except SystemExit as e:
+                print(f"[MCP] nuclei recon failed for {h}: {e}")
 
     # 4b) Cloud recon per host (best-effort)
     for h in hosts:
@@ -539,10 +896,31 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     for host in hosts:
         target_url = f"http://{host}"
         # Katana/Nuclei recon
-        try:
-            katana_result = _run_katana_stage(MCP_SERVER_URL, target_url)
-        except Exception as e:
-            katana_result = {"error": str(e)}
+        # Try K8s mode first if available
+        katana_result = None
+        if LOCAL_K8S_MODE and K8S_AVAILABLE and is_local_k8s_mode():
+            try:
+                executor = LocalExecutor()
+                print(f"[K8S] Running Katana for {target_url}...")
+                katana_result_k8s = executor.submit_and_wait("katana", target_url)
+                if katana_result_k8s:
+                    # Also run nuclei via k8s
+                    print(f"[K8S] Running Nuclei for {target_url}...")
+                    nuclei_result_k8s = executor.submit_and_wait("nuclei", target_url)
+                    katana_result = {
+                        "katana": katana_result_k8s,
+                        "nuclei": nuclei_result_k8s,
+                        "source": "k8s"
+                    }
+            except Exception as e:
+                print(f"[K8S] K8s execution failed for {target_url}: {e}, falling back to MCP")
+        
+        # Fall back to MCP if K8s didn't work
+        if not katana_result:
+            try:
+                katana_result = _run_katana_stage(MCP_SERVER_URL, target_url)
+            except Exception as e:
+                katana_result = {"error": str(e)}
 
         # stash in full-scan summary structure under modules
         summary.setdefault("modules", {})
@@ -590,26 +968,62 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         except SystemExit as e:
             print(f"[MCP] backup_hunt failed for {host}: {e}")
 
-    # 5) Build host_profile, prioritize_host, and host_delta per host
-    for h in hosts:
+    # 5) Build host_profile, prioritize_host, and host_delta per host (PARALLEL)
+    def process_host_profile(h: str) -> tuple[str, Dict[str, Any]]:
+        """Process host profile and return results."""
+        host_data = {"host": h}
+        
         try:
             profile = _mcp_post("/mcp/host_profile", {"host": h, "llm_view": True})
-        except SystemExit as e:
-            print(f"[MCP] host_profile failed for {h}: {e}")
-            profile = {}
-
+            host_data["host_profile"] = profile
+        except Exception as e:
+            print(f"[MCP] host_profile failed for {h}: {e}, continuing with other hosts")
+            host_data["host_profile"] = {}
+        
         try:
             prio = _mcp_post("/mcp/prioritize_host", {"host": h})
-        except SystemExit as e:
-            print(f"[MCP] prioritize_host failed for {h}: {e}")
-            prio = {}
-
+            host_data["prioritization"] = prio
+        except Exception as e:
+            print(f"[MCP] prioritize_host failed for {h}: {e}, continuing with other hosts")
+            host_data["prioritization"] = {}
+        
         try:
             delta = _mcp_post("/mcp/host_delta", {"host": h})
-        except SystemExit as e:
-            print(f"[MCP] host_delta failed for {h}: {e}")
-            delta = {}
-
+            host_data["delta"] = delta
+        except Exception as e:
+            print(f"[MCP] host_delta failed for {h}: {e}, continuing with other hosts")
+            host_data["delta"] = {}
+        
+        return h, host_data
+    
+    # Parallel execution for host profiling
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        max_workers = min(len(hosts), 5)  # Limit to 5 concurrent operations
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_host = {executor.submit(process_host_profile, h): h for h in hosts}
+            
+            for future in as_completed(future_to_host):
+                h, host_data = future.result()
+                summary_hosts.append(host_data)
+    except ImportError:
+        # Fallback to sequential
+        for h in hosts:
+            _, host_data = process_host_profile(h)
+            summary_hosts.append(host_data)
+    
+    # Continue with AI triage and other per-host operations (sequential for now)
+    # Get profile data from summary_hosts (populated by parallel execution)
+    host_data_map = {hd["host"]: hd for hd in summary_hosts}
+    
+    for h in hosts:
+        # Get profile data from parallel execution results
+        host_data = host_data_map.get(h, {"host": h, "host_profile": {}, "prioritization": {}, "delta": {}})
+        profile = host_data.get("host_profile", {})
+        prio = host_data.get("prioritization", {})
+        delta = host_data.get("delta", {})
+        
         # --- NEW: AI-driven targeted Nuclei scan ---
         # After Katana+WhatWeb, use AI to select optimal templates and run a targeted scan
         ai_triage_result: Dict[str, Any] = {}
@@ -795,35 +1209,105 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         
         summary["modules"][h]["race"] = race_results
 
-        summary_hosts.append(
-            {
-                "host": h,
-                "host_profile": profile,
-                "prioritization": prio,
-                "delta": delta,
-                # Compact view of JS-derived secrets from host_profile (if any)
-                "js_secrets": (profile.get("web", {}) or {}).get("js_secrets"),
-                # AI triage summary
-                "ai_triage": {
-                    "mode": ai_triage_result.get("mode"),
-                    "templates_count": len(ai_triage_result.get("templates", [])),
-                    "reasoning": ai_triage_result.get("reasoning"),
-                },
-                "targeted_nuclei": {
-                    "findings_count": targeted_nuclei_result.get("findings_count", 0),
-                    "findings_file": targeted_nuclei_result.get("findings_file"),
-                },
-            }
-        )
+        # Update existing host_data with additional information
+        host_data["js_secrets"] = (profile.get("web", {}) or {}).get("js_secrets")
+        host_data["ai_triage"] = {
+            "mode": ai_triage_result.get("mode"),
+            "templates_count": len(ai_triage_result.get("templates", [])),
+            "reasoning": ai_triage_result.get("reasoning"),
+        }
+        host_data["targeted_nuclei"] = {
+            "findings_count": targeted_nuclei_result.get("findings_count", 0),
+            "findings_file": targeted_nuclei_result.get("findings_file"),
+        }
+        
+        # Ensure host_data is in summary_hosts (update if exists, append if not)
+        if h not in host_data_map:
+            summary_hosts.append(host_data)
 
     summary["hosts"] = summary_hosts
-    summary["zap_scans"] = zap_scans
+    summary["katana_nuclei_scans"] = katana_nuclei_scans
+    
+    # End token tracking and add cost summary
+    try:
+        from tools.token_tracker import get_tracker
+        tracker = get_tracker()
+        token_summary = tracker.end_scan()
+        summary["token_usage"] = token_summary
+        summary["scan_cost"] = token_summary.get("total_cost", 0.0)
+    except Exception:
+        pass  # Non-fatal if tracking unavailable
+    
+    # Send scan completion alert
+    try:
+        from tools.alerting import get_alert_manager
+        manager = get_alert_manager()
+        program_name = scope.get("program_name") or "unknown"
+        
+        # Count findings from modules (where they're actually stored)
+        findings_count = 0
+        high_severity_count = 0
+        
+        modules = summary.get("modules", {})
+        for host, host_modules in modules.items():
+            # Count from katana_nuclei
+            katana_nuclei = host_modules.get("katana_nuclei", {})
+            if isinstance(katana_nuclei, dict):
+                findings_count += katana_nuclei.get("findings_count", 0)
+                # Load findings file to check CVSS scores
+                findings_file = katana_nuclei.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    try:
+                        with open(findings_file, "r") as f:
+                            findings = json.load(f)
+                            if isinstance(findings, list):
+                                high_severity_count += sum(
+                                    1 for f in findings
+                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                )
+                    except Exception:
+                        pass
+            
+            # Count from targeted_nuclei
+            targeted_nuclei = host_modules.get("targeted_nuclei", {})
+            if isinstance(targeted_nuclei, dict):
+                findings_count += targeted_nuclei.get("findings_count", 0)
+                findings_file = targeted_nuclei.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    try:
+                        with open(findings_file, "r") as f:
+                            findings = json.load(f)
+                            if isinstance(findings, list):
+                                high_severity_count += sum(
+                                    1 for f in findings
+                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                )
+                    except Exception:
+                        pass
+            
+            # Count from other modules that might have findings
+            for module_name, module_data in host_modules.items():
+                if module_name in ["katana_nuclei", "targeted_nuclei"]:
+                    continue  # Already counted
+                if isinstance(module_data, dict) and "findings_count" in module_data:
+                    findings_count += module_data.get("findings_count", 0)
+        
+        scan_summary = {
+            "findings_count": findings_count,
+            "high_severity_count": high_severity_count,
+            "scan_cost": summary.get("scan_cost", 0.0),
+        }
+        
+        manager.alert_scan_complete(program_name, scan_summary)
+    except Exception:
+        pass  # Non-fatal if alerting unavailable
+    
     return summary
 
 
 # ==== Triage helpers ====
 def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: str = "output_zap") -> str:
-    """Run LLM + Dalfox triage for a single ZAP findings JSON file.
+    """Run LLM + Dalfox triage for a findings JSON file (Katana+Nuclei, cloud, etc.).
 
     Returns the path to the written triage JSON file.
     """
@@ -846,6 +1330,61 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             print(f"[CORRELATION] Vulnerability chains detected: {len(dedup_result['correlation_graph'].get('chains_detected', []))}", file=sys.stderr)
     except Exception as e:
         print(f"[DEDUP] Deduplication failed, continuing with original findings: {e}", file=sys.stderr)
+    
+    # Pre-filter findings by scope before triage
+    original_count = len(findings)
+    try:
+        from tools.scope_validator import filter_findings_by_scope
+        findings = filter_findings_by_scope(findings, scope)
+        if len(findings) < original_count:
+            print(f"[SCOPE] Filtered to {len(findings)} in-scope findings (removed {original_count - len(findings)} out-of-scope)", file=sys.stderr)
+    except ImportError:
+        print("[SCOPE] scope_validator not available, skipping scope filtering", file=sys.stderr)
+    except Exception as e:
+        print(f"[SCOPE] Scope filtering failed: {e}, continuing with all findings", file=sys.stderr)
+    
+    # Filter excluded vulnerability types (program rules enforcement)
+    rules = scope.get("rules", {})
+    excluded_types = rules.get("excluded_vuln_types", [])
+    requires_poc = rules.get("requires_poc", False)
+    
+    if excluded_types:
+        original_count = len(findings)
+        excluded_lower = [t.lower() for t in excluded_types]
+        findings = [
+            f for f in findings
+            if not any(
+                excluded in str(f.get("name", "")).lower() or
+                excluded in str(f.get("type", "")).lower() or
+                excluded in str(f.get("cwe", "")).lower()
+                for excluded in excluded_lower
+            )
+        ]
+        if len(findings) < original_count:
+            print(f"[RULES] Filtered out {original_count - len(findings)} findings matching excluded types: {excluded_types}", file=sys.stderr)
+    
+    # Cost optimization: CVSS gating - only triage findings with CVSS >= 6.0 (or estimated high severity)
+    original_count = len(findings)
+    findings = [
+        f for f in findings
+        if (f.get("cvss_score") or 0.0) >= 6.0 or
+        f.get("severity", "").lower() in ("high", "critical") or
+        f.get("confidence", "").lower() in ("high", "very_high")
+    ]
+    if len(findings) < original_count:
+        print(f"[COST-OPT] CVSS gating: Filtered out {original_count - len(findings)} low-severity findings (CVSS < 6.0) to reduce LLM costs", file=sys.stderr)
+    
+    # Filter findings without PoC if requires_poc is true
+    if requires_poc:
+        original_count = len(findings)
+        findings = [
+            f for f in findings
+            if f.get("validation_status") == "validated" or
+            f.get("validation_confidence") == "high" or
+            f.get("validation_evidence")
+        ]
+        if len(findings) < original_count:
+            print(f"[RULES] Filtered out {original_count - len(findings)} findings without PoC (requires_poc=true)", file=sys.stderr)
 
     triaged = []
     for f in findings:
@@ -881,9 +1420,17 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             {"role": "user", "content": user_content},
         ]
         
+        # Determine which model to use for this finding
+        if USE_HYBRID_TRIAGE:
+            model = get_model_for_finding(f)
+            finding_name = f.get("name", "unknown")
+            print(f"[TRIAGE] Using {model} for finding: {finding_name}", file=sys.stderr)
+        else:
+            model = LLM_MODEL
+        
         # LLM triage
         try:
-            raw = openai_chat(msgs)
+            raw = llm_chat(msgs, model=model, context="triage")
 
             # Strip common Markdown code fences (```json ... ```)
             txt = raw.strip()
@@ -923,6 +1470,26 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         except Exception:
             # Keep failures non-fatal; missing MITRE is fine
             t["mitre"] = {"techniques": [], "tactics": [], "notes": "mapping_error"}
+        
+        # Calculate business impact score and bounty estimate
+        try:
+            from tools.impact_scorer import calculate_impact_score
+            from tools.bounty_estimator import estimate_bounty
+            
+            # Merge triage result with raw finding for impact calculation
+            finding_with_triage = {**f, **t}
+            impact_score = calculate_impact_score(finding_with_triage)
+            t["business_impact_score"] = impact_score
+            
+            # Estimate bounty
+            bounty_estimate = estimate_bounty(finding_with_triage)
+            t["bounty_estimate"] = bounty_estimate
+            # Update recommended_bounty if not set or if estimate is higher
+            if not t.get("recommended_bounty_usd") or bounty_estimate.get("estimated", 0) > t.get("recommended_bounty_usd", 0):
+                t["recommended_bounty_usd"] = bounty_estimate.get("estimated", t.get("recommended_bounty_usd", 0))
+        except Exception as e:
+            # Impact scoring failures should not break triage
+            print(f"[IMPACT] Warning: Failed to calculate impact score: {e}", file=sys.stderr)
 
         # Skip Dalfox/SQLmap for cloud storage findings
         name = (f.get("name") or "").lower()
@@ -1562,11 +2129,49 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         t["validation_status"] = status
         t["validation_engines"] = sorted(engines) if engines else []
         t["validation_per_engine"] = per_engine_summaries
-        # === end SQLi validation ===
+        
+        # Calculate overall validation quality score
+        validation_quality = _calculate_validation_quality(t)
+        t["validation_quality"] = validation_quality
+        t["validation_confidence"] = validation_quality.get("confidence", "low")
+        # === end validation ===
 
         triaged.append(t)
         time.sleep(0.4)
 
+    # === Report Quality Check ===
+    # Check report quality before finalizing
+    try:
+        from tools.report_quality_checker import score_report_quality
+        print("[QUALITY-CHECKER] Checking report quality...", file=sys.stderr)
+        
+        # Score each triaged finding
+        for t in triaged:
+            quality_score = score_report_quality(t, scope=scope)
+            t["quality_score"] = quality_score.get("total_score", 0)
+            t["quality_rating"] = quality_score.get("quality_rating", "unknown")
+            t["quality_check"] = quality_score
+    except Exception as e:
+        print(f"[QUALITY-CHECKER] Warning: Quality check failed: {e}", file=sys.stderr)
+    
+    # === Delta Analysis ===
+    # Analyze new findings compared to previous scans
+    try:
+        from tools.delta_analyzer import analyze_scan_delta
+        program_name = scope.get("program_name") or "unknown"
+        delta_result = analyze_scan_delta(program_name, triaged, out_dir)
+        
+        # Add delta info to summary
+        if "delta" in delta_result:
+            print(f"[DELTA] New findings: {delta_result['delta'].get('new_count', 0)}, "
+                  f"High severity: {delta_result['delta'].get('high_severity_count', 0)}", file=sys.stderr)
+            
+            # Log alerts
+            for alert in delta_result.get("alerts", []):
+                print(f"[ALERT] [{alert['level'].upper()}] {alert['message']}", file=sys.stderr)
+    except Exception as e:
+        print(f"[DELTA] Warning: Delta analysis failed: {e}", file=sys.stderr)
+    
     # === POC Validation Gate ===
     # Validate POCs before including in reports
     try:
@@ -1597,10 +2202,34 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
     except Exception as e:
         print(f"[POC-VALIDATOR] POC validation failed: {e}, continuing with all findings", file=sys.stderr)
 
-    scan_id = os.path.basename(findings_file).replace("zap_findings_", "").replace(".json", "")
+    # Extract scan ID from various finding file formats
+    scan_id = os.path.basename(findings_file)
+    for prefix in ["zap_findings_", "katana_nuclei_", "cloud_findings_", "findings_"]:
+        if scan_id.startswith(prefix):
+            scan_id = scan_id.replace(prefix, "").replace(".json", "")
+            break
     triage_path = os.path.join(out_dir, f"triage_{scan_id}.json")
-    json.dump(triaged, open(triage_path, "w"), indent=2)
+    
+    # Sort by business impact score (if available) or CVSS score
+    try:
+        from tools.impact_scorer import score_findings
+        triaged = score_findings(triaged)
+        print("[IMPACT] Findings prioritized by business impact", file=sys.stderr)
+    except Exception as e:
+        # Fallback to CVSS sorting
+        triaged.sort(key=lambda x: float(x.get("cvss_score", 0) or 0), reverse=True)
+        print(f"[IMPACT] Impact scoring failed, using CVSS: {e}", file=sys.stderr)
+    
+    with open(triage_path, "w") as f:
+        json.dump(triaged, f, indent=2)
     print("[TRIAGE] Wrote", triage_path)
+    
+    # Log model usage statistics
+    if _model_usage_stats:
+        stats_str = ", ".join([f"{model}: {count}" for model, count in sorted(_model_usage_stats.items())])
+        print(f"[TRIAGE] Model usage: {stats_str}", file=sys.stderr)
+        # Reset stats for next run
+        _model_usage_stats.clear()
 
     # Markdown rendering
     def md(t, scope_obj):
@@ -1953,7 +2582,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Agentic Bug Bounty Runner - Orchestrate security scans and triage findings"
     )
-    parser.add_argument("--findings_file", help="ZAP findings JSON (for triage mode)")
+    parser.add_argument("--findings_file", help="Findings JSON file (Katana+Nuclei, cloud, etc.) for triage mode")
     parser.add_argument("--scope_file", default="scope.json", help="Program scope JSON")
     parser.add_argument(
         "--mode",
@@ -2019,7 +2648,8 @@ def main():
         print("[RUNNER] Wrote full-scan summary", summary_path)
 
         # Auto-triage findings from all sources:
-        # - zap_findings_*.json - ZAP scan results
+        # - katana_nuclei_*.json - Katana+Nuclei recon results
+        # - cloud_findings_*.json - Cloud recon results
         # - cloud_findings_*.json - Cloud recon results  
         # - targeted_nuclei_*.json - AI-driven targeted nuclei scans (JSONL format)
         # - katana_nuclei_*.json - Katana+Nuclei recon results
@@ -2029,8 +2659,8 @@ def main():
             
             findings_path = os.path.join(out_dir, fname)
             
-            # Handle standard JSON findings (ZAP, cloud)
-            if fname.startswith("zap_findings_") or fname.startswith("cloud_findings_"):
+            # Handle standard JSON findings (Katana+Nuclei, cloud, etc.)
+            if fname.startswith("katana_nuclei_") or fname.startswith("cloud_findings_") or fname.startswith("zap_findings_"):
                 print(f"[RUNNER] Auto-triaging findings from {findings_path}")
                 run_triage_for_findings(findings_path, scope, out_dir=out_dir)
                 continue
@@ -2125,7 +2755,7 @@ def _load_targeted_nuclei_findings(output_dir: str, host: str) -> list[dict]:
 def gather_findings_for_triage(host: str, output_dir: str) -> list[dict]:
     findings: list[dict] = []
 
-    # ...existing sources (cloud, zap, sqlmap, bac, ssrf, etc.)...
+    # ...existing sources (cloud, katana_nuclei, sqlmap, bac, ssrf, etc.)...
 
     # --- Nuclei findings from Katana run (recon-only) ---
     nuclei_from_katana = _load_katana_nuclei_findings(output_dir, host)

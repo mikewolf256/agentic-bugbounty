@@ -57,9 +57,14 @@ cd k8s/local
 # 4. Test job submission
 export LOCAL_K8S_MODE=true
 ./scripts/test-job-submission.sh whatweb http://example.com
+
+# 5. Run multi-scope scanning
+export LOCAL_K8S_MODE=true
+python ../tools/multi_scope_runner.py --scopes-dir ../scopes/ --max-concurrent 3
 ```
 
 📖 **Full guide:** [Local K8s Setup Guide](../docs/LOCAL_K8S_SETUP.md)
+📖 **Multi-scope guide:** [Multi-Scope K8s Scanning](../docs/MULTI_SCOPE_K8S.md)
 
 ### AWS EKS Setup (Production)
 
@@ -103,4 +108,32 @@ python ../tools/job_submitter.py --tool whatweb --target http://example.com
 | Katana | `katana-worker` | 15 min |
 | Dalfox | `dalfox-worker` | 10 min |
 | ffuf | `ffuf-worker` | 20 min |
+
+## Multi-Scope Scanning
+
+Once the infrastructure is set up, you can scan multiple bug bounty scopes in parallel:
+
+```bash
+# Scan multiple scopes
+export LOCAL_K8S_MODE=true
+python tools/multi_scope_runner.py \
+  --scopes scopes/23andme_bbp.json scopes/hackerone.json \
+  --max-concurrent 3
+
+# Scan all scopes in a directory
+python tools/multi_scope_runner.py \
+  --scopes-dir scopes/ \
+  --max-concurrent 3
+
+# Validate the pipeline
+python tests/validate_k8s_scan_pipeline.py
+```
+
+The multi-scope runner will:
+- Submit scan jobs to K8s workers for each scope
+- Run reconnaissance tools (WhatWeb, Katana, Nuclei) in parallel
+- Poll for results and run AI triage
+- Generate reports with PoC validation
+
+See [Multi-Scope K8s Scanning Guide](../docs/MULTI_SCOPE_K8S.md) for detailed documentation.
 

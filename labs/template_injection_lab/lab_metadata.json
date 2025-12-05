@@ -1,0 +1,40 @@
+{
+  "name": "template_injection_lab",
+  "description": "Server-Side Template Injection (SSTI) vulnerabilities - Jinja2 template injection",
+  "base_url": "http://template_injection_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "ssti",
+      "subtype": "jinja2",
+      "cwe": "CWE-94",
+      "description": "Jinja2 template injection in render endpoint",
+      "endpoint": "/render",
+      "parameter": "template"
+    },
+    {
+      "type": "ssti",
+      "subtype": "jinja2",
+      "cwe": "CWE-94",
+      "description": "Jinja2 template injection in search results",
+      "endpoint": "/search",
+      "parameter": "q"
+    },
+    {
+      "type": "ssti",
+      "subtype": "jinja2",
+      "cwe": "CWE-94",
+      "description": "Jinja2 template injection in API endpoint",
+      "endpoint": "/api/render",
+      "parameter": "template"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/render", "method": "GET", "description": "Template render form"},
+    {"path": "/render", "method": "POST", "description": "Vulnerable template renderer"},
+    {"path": "/search", "method": "GET", "description": "Search with template injection"},
+    {"path": "/api/render", "method": "POST", "description": "API template renderer (vulnerable)"}
+  ]
+}
+

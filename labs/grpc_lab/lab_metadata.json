@@ -1,0 +1,43 @@
+{
+  "name": "grpc_lab",
+  "description": "gRPC vulnerabilities - unauthenticated endpoints, service enumeration, sensitive data exposure",
+  "base_url": "http://grpc_lab:5000",
+  "grpc_endpoint": "grpc_lab:50051",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "grpc",
+      "subtype": "unauthenticated",
+      "cwe": "CWE-306",
+      "description": "Unauthenticated gRPC endpoints",
+      "endpoint": "grpc_lab:50051",
+      "service": "UserService"
+    },
+    {
+      "type": "grpc",
+      "subtype": "enumeration",
+      "cwe": "CWE-200",
+      "description": "Service enumeration - can list all services",
+      "endpoint": "grpc_lab:50051",
+      "service": null
+    },
+    {
+      "type": "grpc",
+      "subtype": "data_exposure",
+      "cwe": "CWE-200",
+      "description": "Sensitive data exposure - API keys and secrets",
+      "endpoint": "grpc_lab:50051",
+      "service": "UserService.GetUserData"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "grpc_lab:50051", "protocol": "gRPC", "description": "gRPC service endpoint"}
+  ],
+  "services": [
+    {"name": "UserService.GetUser", "description": "Get user by ID (no auth)"},
+    {"name": "UserService.ListUsers", "description": "List all users (no auth)"},
+    {"name": "UserService.GetUserData", "description": "Get user data with secrets (no auth)"}
+  ]
+}
+

@@ -1,0 +1,12 @@
+{
+  "name": "New Labs Test",
+  "primary_targets": [
+    "localhost:5005",
+    "localhost:5006",
+    "localhost:5007",
+    "localhost:5008",
+    "localhost:5009",
+    "localhost:5010",
+    "localhost:5011"
+  ],
+  "secondary_targets": []

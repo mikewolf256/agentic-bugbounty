@@ -1,0 +1,67 @@
+{
+  "name": "business_logic_lab",
+  "description": "Business logic vulnerabilities - pricing manipulation, workflow bypasses, rate limits, state transitions",
+  "base_url": "http://business_logic_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "business_logic",
+      "subtype": "pricing_manipulation",
+      "cwe": "CWE-840",
+      "description": "Price manipulation - accepts user-provided prices",
+      "endpoint": "/cart",
+      "parameter": "price"
+    },
+    {
+      "type": "business_logic",
+      "subtype": "pricing_manipulation",
+      "cwe": "CWE-840",
+      "description": "Price manipulation via API",
+      "endpoint": "/api/purchase",
+      "parameter": "price"
+    },
+    {
+      "type": "business_logic",
+      "subtype": "workflow_bypass",
+      "cwe": "CWE-840",
+      "description": "Workflow bypass - can skip payment step",
+      "endpoint": "/api/complete-order",
+      "parameter": "skip_payment"
+    },
+    {
+      "type": "business_logic",
+      "subtype": "rate_limit_bypass",
+      "cwe": "CWE-307",
+      "description": "Rate limit bypass via X-Forwarded-For header",
+      "endpoint": "/api/rate-limit",
+      "parameter": "X-Forwarded-For"
+    },
+    {
+      "type": "business_logic",
+      "subtype": "state_transition",
+      "cwe": "CWE-840",
+      "description": "Invalid state transition - can set any order status",
+      "endpoint": "/api/state-transition",
+      "parameter": "state"
+    },
+    {
+      "type": "business_logic",
+      "subtype": "quantity_manipulation",
+      "cwe": "CWE-840",
+      "description": "Quantity manipulation - negative quantities accepted",
+      "endpoint": "/cart",
+      "parameter": "quantity"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/cart", "method": "GET", "description": "Cart page"},
+    {"path": "/cart", "method": "POST", "description": "Add item to cart (vulnerable)"},
+    {"path": "/checkout", "method": "GET", "description": "Checkout page"},
+    {"path": "/checkout", "method": "POST", "description": "Checkout process"},
+    {"path": "/api/purchase", "method": "POST", "description": "Direct purchase API (vulnerable)"},
+    {"path": "/api/rate-limit", "method": "GET", "description": "Rate limit test (vulnerable)"},
+    {"path": "/api/state-transition", "method": "POST", "description": "State transition (vulnerable)"}
+  ]
+}
+

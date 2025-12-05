@@ -87,8 +87,8 @@ def home():
     <title>Secrets Lab</title>
     <script src="/static/config.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .container { max-width: 800px; margin: 0 auto; }
+        body {{ font-family: Arial, sans-serif; margin: 40px; }}
+        .container {{ max-width: 800px; margin: 0 auto; }}
     </style>
 </head>
 <body>

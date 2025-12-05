@@ -847,7 +847,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 "findings_file": resp.get("findings_file", ""),
             }
             print(f"[RECON] Katana+Nuclei completed for {h}: {resp.get('findings_count', 0)} findings")
-        except SystemExit as e:
+        except MCPError as e:
             print(f"[RECON] Failed to run Katana+Nuclei for {h}: {e}")
             katana_nuclei_scans[h] = {"error": str(e)}
         except Exception as e:
@@ -1263,7 +1263,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                             if isinstance(findings, list):
                                 high_severity_count += sum(
                                     1 for f in findings
-                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                    if (f.get("cvss_score") or 0.0) >= 7.0 or f.get("info", {}).get("severity") == "high"
                                 )
                     except Exception:
                         pass
@@ -1280,7 +1280,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                             if isinstance(findings, list):
                                 high_severity_count += sum(
                                     1 for f in findings
-                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                    if (f.get("cvss_score") or 0.0) >= 7.0 or f.get("info", {}).get("severity") == "high"
                                 )
                     except Exception:
                         pass

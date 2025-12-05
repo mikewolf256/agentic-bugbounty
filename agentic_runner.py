@@ -642,7 +642,9 @@ def run_dalfox_check(target_url: str, param_name: Optional[str] = None) -> Tuple
     """
     evidence = {"engine_result": None, "payload": None, "proof_snippet": None, "raw_output": None, "cmd": None}
     safe_payload = "<svg/onload=console.log('h1-xss')>"
-    tmp_out = os.path.join("output_zap", f"dalfox_{int(time.time())}.json")
+    # Use OUTPUT_DIR from environment (matches MCP server) or default to output_scans
+    output_dir = os.environ.get("OUTPUT_DIR", "output_scans")
+    tmp_out = os.path.join(output_dir, f"dalfox_{int(time.time())}.json")
 
     # --- ensure run_url contains FUZZ ---
     from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
@@ -920,27 +922,27 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
                     print(f"[K8S] Nuclei recon failed for {h}: {e}, falling back to MCP")
                     try:
                         _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
-                    except SystemExit:
+                    except MCPError:
                         pass
         except Exception as e:
             print(f"[K8S] K8s executor failed: {e}, using MCP")
             for h in hosts:
                 try:
                     _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
-                except SystemExit as e:
+                except MCPError as e:
                     print(f"[MCP] nuclei recon failed for {h}: {e}")
     else:
         for h in hosts:
             try:
                 _mcp_post("/mcp/run_nuclei", {"target": h, "mode": "recon"})
-            except SystemExit as e:
+            except MCPError as e:
                 print(f"[MCP] nuclei recon failed for {h}: {e}")
 
     # 4b) Cloud recon per host (best-effort)
     for h in hosts:
         try:
             _mcp_post("/mcp/run_cloud_recon", {"host": h})
-        except SystemExit as e:
+        except MCPError as e:
             print(f"[MCP] cloud recon failed for {h}: {e}")
 
     # --- NEW: Katana + Nuclei web recon stage ---
@@ -1172,7 +1174,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
                 else:
                     print(f"[AI-TRIAGE] No specific templates selected, skipping targeted scan")
                     
-            except SystemExit as e:
+            except MCPError as e:
                 print(f"[AI-TRIAGE] Failed for {h}: {e}")
             except Exception as e:
                 print(f"[AI-TRIAGE] Error for {h}: {e}")
@@ -1240,7 +1242,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
                     }
                     if oauth_result.get("vulnerable_count", 0) > 0:
                         print(f"[OAUTH] Found {oauth_result['vulnerable_count']} OAuth vulnerabilities")
-                except SystemExit as e:
+                except MCPError as e:
                     print(f"[OAUTH] OAuth checks failed for {h}: {e}")
                 except Exception as e:
                     print(f"[OAUTH] OAuth checks error for {h}: {e}")
@@ -1318,7 +1320,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
                 }
                 if race_result.get("vulnerable_count", 0) > 0:
                     print(f"[RACE] Found {race_result['vulnerable_count']} race condition vulnerabilities")
-            except SystemExit as e:
+            except MCPError as e:
                 print(f"[RACE] Race checks failed for {h}: {e}")
             except Exception as e:
                 print(f"[RACE] Race checks error for {h}: {e}")
@@ -1495,12 +1497,21 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
 
 
 # ==== Triage helpers ====
-def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: str = "output_zap") -> str:
+def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: Optional[str] = None) -> str:
     """Run LLM + Dalfox triage for a findings JSON file (Katana+Nuclei, cloud, etc.).
 
     Returns the path to the written triage JSON file.
     """
-
+    # If out_dir not provided, derive from findings_file path or use OUTPUT_DIR env var
+    if out_dir is None:
+        # Try to extract directory from findings_file path
+        findings_dir = os.path.dirname(os.path.abspath(findings_file))
+        if findings_dir and os.path.exists(findings_dir):
+            out_dir = findings_dir
+        else:
+            # Fall back to OUTPUT_DIR environment variable or default
+            out_dir = os.environ.get("OUTPUT_DIR", "output_scans")
+    
     os.makedirs(out_dir, exist_ok=True)
     findings = json.load(open(findings_file))
 
@@ -1823,7 +1834,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                             sqlmap_meta["validation_confidence"] = "medium"
 
                         t["validation"]["sqlmap"] = sqlmap_meta
-                    except SystemExit as e:
+                    except MCPError as e:
                         t.setdefault("validation", {})
                         t["validation"]["sqlmap"] = {
                             "engine_result": "error",
@@ -1911,7 +1922,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                             bac_meta["validation_confidence"] = "medium"
 
                         t["validation"]["bac"] = bac_meta
-                    except SystemExit as e:
+                    except MCPError as e:
                         t.setdefault("validation", {})
                         t["validation"]["bac"] = {
                             "engine_result": "error",
@@ -1989,7 +2000,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                         ssrf_meta["validation_confidence"] = "medium"
 
                     t["validation"]["ssrf"] = ssrf_meta
-                except SystemExit as e:
+                except MCPError as e:
                     t["validation"]["ssrf"] = {
                         "engine_result": "error",
                         "error": str(e),
@@ -2045,7 +2056,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                         else:
                             oauth_meta["validation_confidence"] = "medium"
                         t["validation"]["oauth"] = oauth_meta
-                    except SystemExit as e:
+                    except MCPError as e:
                         t.setdefault("validation", {})
                         t["validation"]["oauth"] = {
                             "engine_result": "error",
@@ -2104,7 +2115,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                         else:
                             race_meta["validation_confidence"] = "medium"
                         t["validation"]["race"] = race_meta
-                    except SystemExit as e:
+                    except MCPError as e:
                         t.setdefault("validation", {})
                         t["validation"]["race"] = {
                             "engine_result": "error",
@@ -2162,7 +2173,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                         else:
                             smuggling_meta["validation_confidence"] = "medium"
                         t["validation"]["smuggling"] = smuggling_meta
-                    except SystemExit as e:
+                    except MCPError as e:
                         t.setdefault("validation", {})
                         t["validation"]["smuggling"] = {
                             "engine_result": "error",
@@ -2218,7 +2229,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                     else:
                         graphql_meta["validation_confidence"] = "medium"
                     t["validation"]["graphql"] = graphql_meta
-                except SystemExit as e:
+                except MCPError as e:
                     t.setdefault("validation", {})
                     t["validation"]["graphql"] = {
                         "engine_result": "error",
@@ -2825,7 +2836,8 @@ def main():
     print(f"[TRIAGE] Using DALFOX_BIN={DALFOX_PATH} (docker={DALFOX_DOCKER})")
 
     scope = json.load(open(args.scope_file))
-    out_dir = "output_zap"
+    # Use OUTPUT_DIR from environment (matches MCP server) or default to output_scans
+    out_dir = os.environ.get("OUTPUT_DIR", "output_scans")
     os.makedirs(out_dir, exist_ok=True)
 
     if args.mode == "full-scan":

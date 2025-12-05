@@ -276,6 +276,81 @@ class DeserChecksRequest(BaseModel):
     format_type: Optional[str] = "auto"  # Format to test (java, python, dotnet, yaml, auto)
     callback_url: Optional[str] = None  # Optional callback URL for RCE validation
 
+class CommandInjectionRequest(BaseModel):
+    target_url: str  # Target URL to test
+    params: Optional[List[str]] = None  # Parameters to test (if None, will discover)
+    use_callback: bool = True  # Whether to use callback for OOB validation
+
+class PathTraversalRequest(BaseModel):
+    target_url: str  # Target URL to test
+    param: Optional[str] = None  # Parameter to test (if None, will discover)
+    file_paths: Optional[List[str]] = None  # File paths to test
+    use_callback: bool = True  # Whether to use callback for blind detection
+
+class FileUploadRequest(BaseModel):
+    target_url: str  # Target URL
+    upload_endpoint: Optional[str] = None  # Specific upload endpoint (if None, will discover)
+    use_callback: bool = True  # Whether to use callback for execution validation
+
+class CsrfChecksRequest(BaseModel):
+    host: str  # Target host
+    endpoints: Optional[List[Dict[str, Any]]] = None  # Optional endpoints to test
+    auth_context: Optional[Dict[str, Any]] = None  # Optional authentication context
+
+class SecretExposureRequest(BaseModel):
+    host: str  # Target host
+    scan_js: bool = True  # Whether to scan JavaScript files
+    scan_responses: bool = True  # Whether to scan HTTP responses
+    validate_secrets: bool = True  # Whether to validate found secrets
+
+class NoSqlInjectionRequest(BaseModel):
+    target_url: str  # Target URL
+    param: Optional[str] = None  # Parameter to test
+    db_type: Optional[str] = "auto"  # Database type (mongodb, couchdb, auto)
+    use_callback: bool = True  # Whether to use callback
+
+class LdapInjectionRequest(BaseModel):
+    target_url: str  # Target URL
+    param: Optional[str] = None  # Parameter to test
+    endpoint_type: Optional[str] = "auth"  # Endpoint type (auth, search)
+
+class MassAssignmentRequest(BaseModel):
+    target_url: str  # Target URL
+    endpoint: str  # API endpoint
+    object_schema: Optional[Dict[str, Any]] = None  # Optional object schema
+
+class WebSocketChecksRequest(BaseModel):
+    endpoint: str  # WebSocket endpoint URL
+    origin: Optional[str] = None  # Origin header value
+    subprotocols: Optional[List[str]] = None  # Subprotocols to test
+
+class SsiInjectionRequest(BaseModel):
+    target_url: str  # Target URL
+    param: Optional[str] = None  # Parameter to test
+    use_callback: bool = True  # Whether to use callback
+
+class CryptoChecksRequest(BaseModel):
+    target_url: str  # Target URL
+    tokens: Optional[List[str]] = None  # Optional tokens to analyze
+    cookies: Optional[Dict[str, str]] = None  # Optional cookies to analyze
+
+class ParameterPollutionRequest(BaseModel):
+    target_url: str  # Target URL
+    params: Optional[Dict[str, str]] = None  # Parameters to test
+
+class DnsRebindingRequest(BaseModel):
+    target_url: str  # Target URL
+    internal_target: Optional[str] = "127.0.0.1"  # Internal target to test
+
+class CachePoisoningRequest(BaseModel):
+    target_url: str  # Target URL
+    cache_headers: Optional[Dict[str, str]] = None  # Optional cache headers
+
+class RandomGenerationRequest(BaseModel):
+    target_url: str  # Target URL
+    tokens: Optional[List[str]] = None  # Optional tokens to analyze
+    auth_context: Optional[Dict[str, Any]] = None  # Optional authentication context
+
 class NucleiRequest(BaseModel):
     target: str
     templates: Optional[List[str]] = None
@@ -421,6 +496,120 @@ class DeserChecksResult(BaseModel):
     findings_file: str
     vulnerable: bool
     format_type: Optional[str] = None
+    meta: Dict[str, Any]
+
+class CommandInjectionResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    injection_point: Optional[str] = None
+    rce_confirmed: bool = False
+    meta: Dict[str, Any]
+
+class PathTraversalResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    inclusion_type: Optional[str] = None  # lfi, rfi
+    files_read: List[str] = []
+    meta: Dict[str, Any]
+
+class FileUploadResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    bypass_methods: List[str] = []
+    uploaded_files: List[Dict[str, Any]] = []
+    rce_confirmed: bool = False
+    meta: Dict[str, Any]
+
+class CsrfChecksResult(BaseModel):
+    host: str
+    findings_file: str
+    vulnerable_endpoints: List[Dict[str, Any]] = []
+    poc_html: List[Dict[str, Any]] = []
+    meta: Dict[str, Any]
+
+class SecretExposureResult(BaseModel):
+    host: str
+    findings_file: str
+    secrets_found: List[Dict[str, Any]] = []
+    validated_secrets: List[Dict[str, Any]] = []
+    severity: str = "low"
+    meta: Dict[str, Any]
+
+class NoSqlInjectionResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    db_type: Optional[str] = None
+    injection_method: Optional[str] = None
+    meta: Dict[str, Any]
+
+class LdapInjectionResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    injection_method: Optional[str] = None
+    auth_bypass: bool = False
+    meta: Dict[str, Any]
+
+class MassAssignmentResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    manipulated_fields: List[str] = []
+    privilege_escalation: bool = False
+    meta: Dict[str, Any]
+
+class WebSocketChecksResult(BaseModel):
+    endpoint: str
+    findings_file: str
+    vulnerable: bool
+    issues: List[str] = []
+    meta: Dict[str, Any]
+
+class SsiInjectionResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    injection_method: Optional[str] = None
+    rce_confirmed: bool = False
+    meta: Dict[str, Any]
+
+class CryptoChecksResult(BaseModel):
+    target_url: str
+    findings_file: str
+    weak_algorithms: List[str] = []
+    predictable_tokens: List[Dict[str, Any]] = []
+    meta: Dict[str, Any]
+
+class ParameterPollutionResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    pollution_method: Optional[str] = None
+    meta: Dict[str, Any]
+
+class DnsRebindingResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    internal_access: bool = False
+    meta: Dict[str, Any]
+
+class CachePoisoningResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    poisoning_method: Optional[str] = None
+    meta: Dict[str, Any]
+
+class RandomGenerationResult(BaseModel):
+    target_url: str
+    findings_file: str
+    predictable: bool = False
+    token_type: Optional[str] = None
     meta: Dict[str, Any]
 
 
@@ -3930,6 +4119,662 @@ def run_deser_checks(req: DeserChecksRequest):
             "findings_count": len(result.get("findings", [])),
             "callback_url_used": callback_url is not None,
         }
+    )
+
+
+@app.post("/mcp/run_command_injection_checks", response_model=CommandInjectionResult)
+def run_command_injection_checks(req: CommandInjectionRequest):
+    """
+    Run command injection vulnerability checks.
+    
+    Tests for OS command injection in:
+    - GET/POST parameters
+    - File upload filenames
+    - System calls
+    
+    Uses time-based detection and callback-based RCE validation.
+    """
+    from urllib.parse import urlparse
+    
+    # Enforce scope
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Get callback server URL if callback enabled
+    callback_server_url = None
+    if req.use_callback:
+        callback_server_url = os.environ.get("CALLBACK_SERVER_URL")
+    
+    # Run tester
+    try:
+        from tools.command_injection_tester import validate_command_injection
+        discovery_data = {"target": req.target_url}
+        result = validate_command_injection(discovery_data, callback_server_url)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Command injection tester failed: {e}",
+        )
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"command_injection_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    # Extract injection point and RCE confirmation from findings
+    injection_point = None
+    rce_confirmed = False
+    if result.get("findings"):
+        for finding in result.get("findings", []):
+            if finding.get("injection_point"):
+                injection_point = finding.get("injection_point")
+            if finding.get("rce_confirmed") or finding.get("type") == "command_injection_callback_confirmed":
+                rce_confirmed = True
+    
+    findings = {
+        "target_url": req.target_url,
+        "vulnerable": result.get("vulnerable", False),
+        "injection_point": injection_point,
+        "rce_confirmed": rce_confirmed,
+        "findings": result.get("findings", []),
+        "timestamp": ts,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(findings, fh, indent=2)
+    
+    return CommandInjectionResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        injection_point=injection_point,
+        rce_confirmed=rce_confirmed,
+        meta={
+            "params_tested": req.params or "auto-discovered",
+            "tests_run": result.get("tests_run", 0),
+            "findings_count": len(result.get("findings", [])),
+            "callback_used": callback_server_url is not None,
+        }
+    )
+
+
+@app.post("/mcp/run_path_traversal_checks", response_model=PathTraversalResult)
+def run_path_traversal_checks(req: PathTraversalRequest):
+    """
+    Run path traversal / LFI / RFI vulnerability checks.
+    
+    Tests for:
+    - Directory traversal (../, ..\\, encoded variants)
+    - Local file inclusion (LFI)
+    - Remote file inclusion (RFI)
+    
+    Uses callback-based validation for blind LFI detection.
+    """
+    from urllib.parse import urlparse
+    
+    # Enforce scope
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Get callback server URL if callback enabled
+    callback_server_url = None
+    if req.use_callback:
+        callback_server_url = os.environ.get("CALLBACK_SERVER_URL")
+    
+    # Run tester
+    try:
+        from tools.path_traversal_tester import validate_path_traversal
+        discovery_data = {"target": req.target_url}
+        result = validate_path_traversal(discovery_data, callback_server_url)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Path traversal tester failed: {e}",
+        )
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"path_traversal_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    # Extract inclusion type and files read from findings
+    inclusion_type = None
+    files_read = []
+    if result.get("findings"):
+        for finding in result.get("findings", []):
+            if finding.get("inclusion_type"):
+                inclusion_type = finding.get("inclusion_type")
+            if finding.get("files_read"):
+                files_read.extend(finding.get("files_read", []))
+    
+    findings = {
+        "target_url": req.target_url,
+        "vulnerable": result.get("vulnerable", False),
+        "inclusion_type": inclusion_type,
+        "files_read": list(set(files_read)),  # Deduplicate
+        "findings": result.get("findings", []),
+        "timestamp": ts,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(findings, fh, indent=2)
+    
+    return PathTraversalResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        inclusion_type=inclusion_type,
+        files_read=list(set(files_read)),
+        meta={
+            "param_tested": req.param or "auto-discovered",
+            "file_paths_tested": req.file_paths or "default",
+            "tests_run": result.get("tests_run", 0),
+            "findings_count": len(result.get("findings", [])),
+            "callback_used": callback_server_url is not None,
+        }
+    )
+
+
+@app.post("/mcp/run_file_upload_checks", response_model=FileUploadResult)
+def run_file_upload_checks(req: FileUploadRequest):
+    """
+    Run insecure file upload vulnerability checks.
+    
+    Tests for:
+    - File type validation bypass (double extensions, MIME spoofing)
+    - Path traversal in filenames
+    - Executable file uploads (PHP, JSP, ASP, etc.)
+    - Upload success and execution validation
+    
+    Uses callback-based validation for RCE confirmation.
+    """
+    from urllib.parse import urlparse
+    
+    # Enforce scope
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Get callback server URL if callback enabled
+    callback_server_url = None
+    if req.use_callback:
+        callback_server_url = os.environ.get("CALLBACK_SERVER_URL")
+    
+    # Run tester
+    try:
+        from tools.file_upload_tester import validate_file_upload
+        discovery_data = {"target": req.target_url}
+        if req.upload_endpoint:
+            discovery_data["api_endpoints"] = [{"url": req.upload_endpoint, "method": "POST"}]
+        result = validate_file_upload(discovery_data, callback_server_url)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"File upload tester failed: {e}",
+        )
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"file_upload_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    # Extract bypass methods, uploaded files, and RCE confirmation from findings
+    bypass_methods = []
+    uploaded_files = []
+    rce_confirmed = False
+    if result.get("findings"):
+        for finding in result.get("findings", []):
+            if finding.get("bypass_methods"):
+                bypass_methods.extend(finding.get("bypass_methods", []))
+            if finding.get("uploaded_files"):
+                uploaded_files.extend(finding.get("uploaded_files", []))
+            if finding.get("rce_confirmed") or finding.get("type") == "file_upload_callback_confirmed":
+                rce_confirmed = True
+    
+    findings = {
+        "target_url": req.target_url,
+        "upload_endpoint": req.upload_endpoint,
+        "vulnerable": result.get("vulnerable", False),
+        "bypass_methods": list(set(bypass_methods)),  # Deduplicate
+        "uploaded_files": uploaded_files,
+        "rce_confirmed": rce_confirmed,
+        "findings": result.get("findings", []),
+        "timestamp": ts,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(findings, fh, indent=2)
+    
+    return FileUploadResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        bypass_methods=list(set(bypass_methods)),
+        uploaded_files=uploaded_files,
+        rce_confirmed=rce_confirmed,
+        meta={
+            "upload_endpoint": req.upload_endpoint or "auto-discovered",
+            "tests_run": result.get("tests_run", 0),
+            "findings_count": len(result.get("findings", [])),
+            "callback_used": callback_server_url is not None,
+        }
+    )
+
+
+@app.post("/mcp/run_csrf_checks", response_model=CsrfChecksResult)
+def run_csrf_checks(req: CsrfChecksRequest):
+    """Run CSRF vulnerability checks."""
+    _enforce_scope(req.host)
+    try:
+        from tools.csrf_tester import validate_csrf
+        from tools.csrf_discovery import discover_state_changing_endpoints
+        
+        discovery_data = discover_state_changing_endpoints(f"https://{req.host}", {"api_endpoints": req.endpoints} if req.endpoints else None)
+        result = validate_csrf(discovery_data, req.auth_context)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"CSRF tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = req.host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"csrf_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    return CsrfChecksResult(
+        host=req.host,
+        findings_file=out_path,
+        vulnerable_endpoints=[f for f in result.get("findings", []) if f.get("vulnerable")],
+        poc_html=result.get("poc_html", []),
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_secret_exposure_checks", response_model=SecretExposureResult)
+def run_secret_exposure_checks(req: SecretExposureRequest):
+    """Run secret exposure checks."""
+    _enforce_scope(req.host)
+    try:
+        from tools.secret_exposure_tester import validate_secret_exposure
+        result = validate_secret_exposure(f"https://{req.host}", req.scan_js, req.scan_responses, req.validate_secrets)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Secret exposure tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = req.host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"secret_exposure_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    return SecretExposureResult(
+        host=req.host,
+        findings_file=out_path,
+        secrets_found=result.get("secrets_found", []),
+        validated_secrets=result.get("validated_secrets", []),
+        severity=result.get("severity", "low"),
+        meta={"high_severity_count": result.get("high_severity_count", 0)}
+    )
+
+
+@app.post("/mcp/run_nosql_injection_checks", response_model=NoSqlInjectionResult)
+def run_nosql_injection_checks(req: NoSqlInjectionRequest):
+    """Run NoSQL injection checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    callback_server_url = None
+    if req.use_callback:
+        callback_server_url = os.environ.get("CALLBACK_SERVER_URL")
+    
+    try:
+        from tools.nosql_injection_tester import validate_nosql_injection
+        result = validate_nosql_injection({"target": req.target_url}, callback_server_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"NoSQL injection tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"nosql_injection_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    db_type = None
+    injection_method = None
+    if result.get("findings"):
+        finding = result["findings"][0]
+        db_type = finding.get("db_type")
+        injection_method = finding.get("injection_method")
+    
+    return NoSqlInjectionResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        db_type=db_type,
+        injection_method=injection_method,
+        meta={"tests_run": result.get("tests_run", 0), "callback_used": callback_server_url is not None}
+    )
+
+
+@app.post("/mcp/run_ldap_injection_checks", response_model=LdapInjectionResult)
+def run_ldap_injection_checks(req: LdapInjectionRequest):
+    """Run LDAP injection checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.ldap_injection_tester import validate_ldap_injection
+        result = validate_ldap_injection({"target": req.target_url})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LDAP injection tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"ldap_injection_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    injection_method = None
+    auth_bypass = False
+    if result.get("findings"):
+        finding = result["findings"][0]
+        injection_method = finding.get("injection_method")
+        auth_bypass = finding.get("auth_bypass", False)
+    
+    return LdapInjectionResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        injection_method=injection_method,
+        auth_bypass=auth_bypass,
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_mass_assignment_checks", response_model=MassAssignmentResult)
+def run_mass_assignment_checks(req: MassAssignmentRequest):
+    """Run mass assignment checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.mass_assignment_tester import validate_mass_assignment
+        result = validate_mass_assignment({"target": req.target_url, "api_endpoints": [{"url": req.endpoint, "method": "POST"}]})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Mass assignment tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"mass_assignment_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    manipulated_fields = []
+    privilege_escalation = False
+    if result.get("findings"):
+        finding = result["findings"][0]
+        manipulated_fields = finding.get("manipulated_fields", [])
+        privilege_escalation = finding.get("privilege_escalation", False)
+    
+    return MassAssignmentResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        manipulated_fields=manipulated_fields,
+        privilege_escalation=privilege_escalation,
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_websocket_checks", response_model=WebSocketChecksResult)
+def run_websocket_checks(req: WebSocketChecksRequest):
+    """Run WebSocket security checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.endpoint)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.websocket_security_tester import validate_websocket_security
+        import asyncio
+        result = asyncio.run(validate_websocket_security({"websocket_endpoints": [req.endpoint]}))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WebSocket tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"websocket_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    issues = []
+    if result.get("findings"):
+        issues = result["findings"][0].get("issues", [])
+    
+    return WebSocketChecksResult(
+        endpoint=req.endpoint,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        issues=issues,
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_ssi_injection_checks", response_model=SsiInjectionResult)
+def run_ssi_injection_checks(req: SsiInjectionRequest):
+    """Run SSI injection checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    callback_server_url = None
+    if req.use_callback:
+        callback_server_url = os.environ.get("CALLBACK_SERVER_URL")
+    
+    try:
+        from tools.ssi_injection_tester import validate_ssi_injection
+        result = validate_ssi_injection({"target": req.target_url}, callback_server_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"SSI injection tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"ssi_injection_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    injection_method = None
+    rce_confirmed = False
+    if result.get("findings"):
+        finding = result["findings"][0]
+        injection_method = finding.get("injection_method")
+        rce_confirmed = finding.get("rce_confirmed", False)
+    
+    return SsiInjectionResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        injection_method=injection_method,
+        rce_confirmed=rce_confirmed,
+        meta={"tests_run": result.get("tests_run", 0), "callback_used": callback_server_url is not None}
+    )
+
+
+@app.post("/mcp/run_crypto_checks", response_model=CryptoChecksResult)
+def run_crypto_checks(req: CryptoChecksRequest):
+    """Run cryptographic weakness checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.crypto_weakness_tester import validate_crypto_weakness
+        result = validate_crypto_weakness({"target": req.target_url, "tokens": req.tokens, "cookies": req.cookies})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Crypto weakness tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"crypto_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    weak_algorithms = []
+    predictable_tokens = []
+    if result.get("findings"):
+        finding = result["findings"][0]
+        weak_algorithms = finding.get("weak_algorithms", [])
+        predictable_tokens = finding.get("predictable_tokens", [])
+    
+    return CryptoChecksResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        weak_algorithms=weak_algorithms,
+        predictable_tokens=predictable_tokens,
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_parameter_pollution_checks", response_model=ParameterPollutionResult)
+def run_parameter_pollution_checks(req: ParameterPollutionRequest):
+    """Run parameter pollution checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.parameter_pollution_tester import validate_parameter_pollution
+        result = validate_parameter_pollution({"target": req.target_url})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Parameter pollution tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"parameter_pollution_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    pollution_method = None
+    if result.get("findings"):
+        pollution_method = result["findings"][0].get("pollution_method")
+    
+    return ParameterPollutionResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        pollution_method=pollution_method,
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_dns_rebinding_checks", response_model=DnsRebindingResult)
+def run_dns_rebinding_checks(req: DnsRebindingRequest):
+    """Run DNS rebinding checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.dns_rebinding_tester import validate_dns_rebinding
+        result = validate_dns_rebinding({"target": req.target_url})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DNS rebinding tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"dns_rebinding_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    internal_access = False
+    if result.get("findings"):
+        internal_access = result["findings"][0].get("internal_access", False)
+    
+    return DnsRebindingResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        internal_access=internal_access,
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_cache_poisoning_checks", response_model=CachePoisoningResult)
+def run_cache_poisoning_checks(req: CachePoisoningRequest):
+    """Run cache poisoning checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.cache_poisoning_tester import validate_cache_poisoning
+        result = validate_cache_poisoning({"target": req.target_url})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cache poisoning tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"cache_poisoning_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    poisoning_method = None
+    if result.get("findings"):
+        poisoning_method = result["findings"][0].get("poisoning_method")
+    
+    return CachePoisoningResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        poisoning_method=poisoning_method,
+        meta={"tests_run": result.get("tests_run", 0)}
+    )
+
+
+@app.post("/mcp/run_random_generation_checks", response_model=RandomGenerationResult)
+def run_random_generation_checks(req: RandomGenerationRequest):
+    """Run random number generation checks."""
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    try:
+        from tools.random_generation_tester import validate_random_generation
+        result = validate_random_generation({"target": req.target_url, "tokens": req.tokens, "auth_context": req.auth_context})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Random generation tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"random_generation_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    token_type = None
+    if result.get("findings"):
+        token_type = result["findings"][0].get("token_type")
+    
+    return RandomGenerationResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        predictable=result.get("vulnerable", False),
+        token_type=token_type,
+        meta={"tests_run": result.get("tests_run", 0)}
     )
 
 

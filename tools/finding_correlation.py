@@ -37,6 +37,66 @@ CHAIN_PATTERNS = [
         "steps": ["authentication_bypass", "privilege_escalation"],
         "description": "Authentication bypass leading to privilege escalation",
     },
+    {
+        "name": "file_upload_to_path_traversal_rce",
+        "steps": ["file_upload", "path_traversal", "rce"],
+        "description": "File upload with path traversal leading to RCE",
+    },
+    {
+        "name": "file_upload_to_xxe_ssrf",
+        "steps": ["file_upload", "xxe", "ssrf"],
+        "description": "File upload with XXE leading to SSRF",
+    },
+    {
+        "name": "ssrf_to_command_injection_rce",
+        "steps": ["ssrf", "command_injection", "rce"],
+        "description": "SSRF leading to command injection and RCE",
+    },
+    {
+        "name": "nosql_injection_to_auth_bypass",
+        "steps": ["nosql_injection", "authentication_bypass", "privilege_escalation"],
+        "description": "NoSQL injection leading to authentication bypass and privilege escalation",
+    },
+    {
+        "name": "ldap_injection_to_auth_bypass",
+        "steps": ["ldap_injection", "authentication_bypass", "privilege_escalation"],
+        "description": "LDAP injection leading to authentication bypass and privilege escalation",
+    },
+    {
+        "name": "mass_assignment_to_privilege_escalation",
+        "steps": ["mass_assignment", "privilege_escalation", "data_access"],
+        "description": "Mass assignment leading to privilege escalation and data access",
+    },
+    {
+        "name": "websocket_to_message_injection",
+        "steps": ["websocket", "message_injection", "xss"],
+        "description": "WebSocket message injection leading to XSS or RCE",
+    },
+    {
+        "name": "weak_crypto_to_token_prediction",
+        "steps": ["weak_crypto", "token_prediction", "session_hijacking"],
+        "description": "Weak cryptography leading to token prediction and session hijacking",
+    },
+    {
+        "name": "dns_rebinding_to_internal_network",
+        "steps": ["dns_rebinding", "internal_network_access", "cloud_metadata"],
+        "description": "DNS rebinding leading to internal network access and cloud metadata exposure",
+    },
+    {
+        "name": "cache_poisoning_to_xss",
+        "steps": ["cache_poisoning", "xss", "account_takeover"],
+        "description": "Cache poisoning leading to XSS and account takeover",
+    },
+    {
+        "name": "predictable_tokens_to_session_hijacking",
+        "steps": ["predictable_tokens", "session_hijacking", "account_takeover"],
+        "description": "Predictable tokens leading to session hijacking and account takeover",
+    },
+    {
+        "name": "secret_exposure_to_cloud_takeover",
+        "steps": ["secret_exposure", "cloud_takeover"],
+        "description": "Secret exposure leading to cloud account takeover",
+    },
 ]
 
 

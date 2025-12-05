@@ -74,6 +74,59 @@ def normalize_target(t: str) -> str:
         host = t.split("/")[0]
     return host.lower().strip().rstrip(".")
 
+
+def translate_url_for_docker(url: str) -> str:
+    """Translate localhost URLs to Docker service names when MCP runs in Docker.
+    
+    Maps common lab ports to Docker service names:
+    - localhost:5013 -> command_injection_lab:5000
+    - localhost:5014 -> path_traversal_lab:5000
+    - etc.
+    
+    Args:
+        url: Original URL (may be localhost:PORT)
+        
+    Returns:
+        Translated URL (Docker service name) or original URL if no mapping
+    """
+    # Lab port to service name mapping
+    lab_port_map = {
+        "5013": "command_injection_lab",
+        "5014": "path_traversal_lab",
+        "5015": "file_upload_lab",
+        "5016": "csrf_lab",
+        "5017": "nosql_injection_lab",
+        "5018": "ldap_injection_lab",
+        "5019": "mass_assignment_lab",
+        "5020": "websocket_lab",
+        "5022": "ssi_injection_lab",
+        "5023": "crypto_weakness_lab",
+        "5024": "parameter_pollution_lab",
+        "5025": "dns_rebinding_lab",
+        "5026": "cache_poisoning_lab",
+        "5027": "random_generation_lab",
+    }
+    
+    parsed = urlparse(url)
+    host = parsed.netloc or parsed.path.split("/")[0]
+    
+    # Check if it's localhost with a mapped port
+    if "localhost" in host.lower() or "127.0.0.1" in host:
+        if ":" in host:
+            port = host.split(":")[1]
+            if port in lab_port_map:
+                service_name = lab_port_map[port]
+                # Replace host with Docker service name, keep port as 5000 (internal port)
+                new_netloc = f"{service_name}:5000"
+                new_url = f"{parsed.scheme}://{new_netloc}{parsed.path}"
+                if parsed.query:
+                    new_url += f"?{parsed.query}"
+                if parsed.fragment:
+                    new_url += f"#{parsed.fragment}"
+                return new_url
+    
+    return url
+
 # ---------- CONFIG ----------
 
 H1_ALIAS = os.environ.get("H1_ALIAS", "h1yourusername@wearehackerone.com")
@@ -504,6 +557,7 @@ class CommandInjectionResult(BaseModel):
     vulnerable: bool
     injection_point: Optional[str] = None
     rce_confirmed: bool = False
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response for orchestrator
     meta: Dict[str, Any]
 
 class PathTraversalResult(BaseModel):
@@ -854,8 +908,20 @@ def _scope_allowed_host(host_or_url: str) -> bool:
             "in_scope": _SCOPE_CONFIG.get("in_scope", []) if _SCOPE_CONFIG else [],
         }
         
+        # Check original URL
         is_in_scope, _ = is_url_in_scope(host_or_url, scope_dict)
-        return is_in_scope
+        if is_in_scope:
+            return True
+        
+        # Also check translated Docker service name (for lab testing)
+        # This allows localhost:5013 to match command_injection_lab:5000 in scope
+        translated_url = translate_url_for_docker(host_or_url)
+        if translated_url != host_or_url:
+            is_in_scope_translated, _ = is_url_in_scope(translated_url, scope_dict)
+            if is_in_scope_translated:
+                return True
+        
+        return False
     except ImportError:
         # Fallback to basic matching if scope_validator not available
         host = normalize_target(host_or_url)
@@ -4136,7 +4202,7 @@ def run_command_injection_checks(req: CommandInjectionRequest):
     """
     from urllib.parse import urlparse
     
-    # Enforce scope
+    # Enforce scope (check original URL before translation)
     parsed = urlparse(req.target_url)
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
@@ -4149,8 +4215,10 @@ def run_command_injection_checks(req: CommandInjectionRequest):
     # Run tester
     try:
         from tools.command_injection_tester import validate_command_injection
-        discovery_data = {"target": req.target_url}
-        result = validate_command_injection(discovery_data, callback_server_url)
+        # Translate URL for Docker if needed (MCP server runs in Docker, needs service names)
+        translated_url = translate_url_for_docker(req.target_url)
+        discovery_data = {"target": translated_url}
+        result = validate_command_injection(discovery_data, callback_server_url, params=req.params)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -4185,19 +4253,23 @@ def run_command_injection_checks(req: CommandInjectionRequest):
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(findings, fh, indent=2)
     
-    return CommandInjectionResult(
-        target_url=req.target_url,
-        findings_file=out_path,
-        vulnerable=result.get("vulnerable", False),
-        injection_point=injection_point,
-        rce_confirmed=rce_confirmed,
-        meta={
+    # Include findings in response for orchestrator to extract
+    response_data = {
+        "target_url": req.target_url,
+        "findings_file": out_path,
+        "vulnerable": result.get("vulnerable", False),
+        "injection_point": injection_point,
+        "rce_confirmed": rce_confirmed,
+        "findings": result.get("findings", []),  # Include findings in response
+        "meta": {
             "params_tested": req.params or "auto-discovered",
             "tests_run": result.get("tests_run", 0),
             "findings_count": len(result.get("findings", [])),
             "callback_used": callback_server_url is not None,
         }
-    )
+    }
+    
+    return CommandInjectionResult(**response_data)
 
 
 @app.post("/mcp/run_path_traversal_checks", response_model=PathTraversalResult)

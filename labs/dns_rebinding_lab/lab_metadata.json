@@ -1,0 +1,31 @@
+{
+  "name": "dns_rebinding_lab",
+  "description": "DNS rebinding vulnerabilities - internal network access, cloud metadata access",
+  "base_url": "http://dns_rebinding_lab:5000",
+  "difficulty": "hard",
+  "expected_findings": [
+    {
+      "type": "dns_rebinding",
+      "subtype": "internal_network",
+      "cwe": "CWE-918",
+      "description": "DNS rebinding detected",
+      "endpoint": "/fetch",
+      "parameter": "url"
+    },
+    {
+      "type": "dns_rebinding",
+      "subtype": "cloud_metadata",
+      "cwe": "CWE-918",
+      "description": "Internal network access confirmed",
+      "endpoint": "/fetch",
+      "parameter": "url"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/fetch", "method": "GET", "description": "Fetch form"},
+    {"path": "/fetch", "method": "POST", "description": "Vulnerable SSRF-like endpoint"},
+    {"path": "/internal", "method": "GET", "description": "Internal endpoint simulation"}
+  ]
+}
+

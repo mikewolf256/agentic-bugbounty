@@ -1,0 +1,32 @@
+{
+  "name": "ldap_injection_lab",
+  "description": "LDAP injection vulnerabilities - authentication bypass, information disclosure",
+  "base_url": "http://ldap_injection_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "ldap_injection",
+      "subtype": "auth_bypass",
+      "cwe": "CWE-90",
+      "description": "LDAP injection authentication bypass",
+      "endpoint": "/login",
+      "parameter": "username"
+    },
+    {
+      "type": "ldap_injection",
+      "subtype": "info_disclosure",
+      "cwe": "CWE-90",
+      "description": "LDAP injection information disclosure",
+      "endpoint": "/api/search",
+      "parameter": "filter"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/login", "method": "GET", "description": "Login form"},
+    {"path": "/login", "method": "POST", "description": "Vulnerable LDAP authentication"},
+    {"path": "/api/search", "method": "GET", "description": "Vulnerable LDAP search"},
+    {"path": "/api/search", "method": "POST", "description": "Vulnerable LDAP search"}
+  ]
+}
+

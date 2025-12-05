@@ -1,0 +1,49 @@
+{
+  "name": "command_injection_lab",
+  "description": "Command injection vulnerabilities - OS command execution via GET/POST parameters, file upload filenames, and system calls",
+  "base_url": "http://localhost:5013",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "command_injection",
+      "subtype": "get_parameter",
+      "cwe": "CWE-78",
+      "description": "Command injection via GET parameter",
+      "endpoint": "/execute",
+      "parameter": "cmd"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "post_parameter",
+      "cwe": "CWE-78",
+      "description": "Command injection via POST parameter",
+      "endpoint": "/execute",
+      "parameter": "cmd"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "file_upload",
+      "cwe": "CWE-78",
+      "description": "Command injection via file upload filename",
+      "endpoint": "/upload",
+      "parameter": "filename"
+    },
+    {
+      "type": "command_injection",
+      "subtype": "api_endpoint",
+      "cwe": "CWE-78",
+      "description": "Command injection via API endpoint",
+      "endpoint": "/api/run",
+      "parameter": "command"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/execute", "method": "GET", "description": "Command execution form"},
+    {"path": "/execute", "method": "POST", "description": "Vulnerable command execution"},
+    {"path": "/upload", "method": "GET", "description": "File upload form"},
+    {"path": "/upload", "method": "POST", "description": "Vulnerable file upload"},
+    {"path": "/api/run", "method": "POST", "description": "API command execution endpoint"}
+  ]
+}
+

@@ -105,6 +105,11 @@ def run_scan(lab_name: str, profile: Optional[str] = None) -> Dict[str, Any]:
     
     # Configure scope via MCP (Phase 1: Scope Configuration Helper)
     try:
+        # Add parent directory to path for imports
+        import sys
+        parent_dir = str(REPO_ROOT)
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
         from tools.lab_scope_helper import configure_lab_scope
         scope = configure_lab_scope(lab_name, mcp_url=MCP_URL)
         print(f"[lab_runner] Scope configured via MCP for {lab_name}")

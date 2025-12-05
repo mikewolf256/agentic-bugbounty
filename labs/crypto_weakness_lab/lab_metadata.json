@@ -1,0 +1,41 @@
+{
+  "name": "crypto_weakness_lab",
+  "description": "Cryptographic weakness vulnerabilities - weak hashing algorithms, predictable tokens, short cookies",
+  "base_url": "http://crypto_weakness_lab:5000",
+  "difficulty": "medium",
+  "expected_findings": [
+    {
+      "type": "crypto_weakness",
+      "subtype": "weak_hash",
+      "cwe": "CWE-327",
+      "description": "Weak hashing algorithms detected",
+      "endpoint": "/hash",
+      "parameter": "algorithm"
+    },
+    {
+      "type": "crypto_weakness",
+      "subtype": "predictable_token",
+      "cwe": "CWE-330",
+      "description": "Predictable session tokens",
+      "endpoint": "/login",
+      "parameter": "token"
+    },
+    {
+      "type": "crypto_weakness",
+      "subtype": "short_cookie",
+      "cwe": "CWE-330",
+      "description": "Short session cookies",
+      "endpoint": "/login",
+      "parameter": "session_token"
+    }
+  ],
+  "endpoints": [
+    {"path": "/", "method": "GET", "description": "Homepage"},
+    {"path": "/login", "method": "GET", "description": "Login form"},
+    {"path": "/login", "method": "POST", "description": "Login with weak token generation"},
+    {"path": "/api/token", "method": "GET", "description": "Predictable token generation"},
+    {"path": "/hash", "method": "GET", "description": "Hash form"},
+    {"path": "/hash", "method": "POST", "description": "Weak hashing endpoint"}
+  ]
+}
+

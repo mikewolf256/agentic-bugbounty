@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LABS_DIR = REPO_ROOT / "labs"
-OUTPUT_DIR = REPO_ROOT / "output_zap"
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(REPO_ROOT / "output_scans")))
 MCP_URL = os.environ.get("MCP_URL", "http://127.0.0.1:8000")
 
 
@@ -103,14 +103,23 @@ def run_scan(lab_name: str, profile: Optional[str] = None) -> Dict[str, Any]:
     meta = load_lab_metadata(lab_name)
     base_url = meta.get("base_url", "http://localhost:8080")
     
-    # Create scope file for this lab
-    scope = {
-        "program_name": f"lab-{meta.get('name', lab_name)}",
-        "primary_targets": [base_url],
-        "secondary_targets": [],
-        "rules": {},
-        "in_scope": [{"url": base_url}],
-    }
+    # Configure scope via MCP (Phase 1: Scope Configuration Helper)
+    try:
+        from tools.lab_scope_helper import configure_lab_scope
+        scope = configure_lab_scope(lab_name, mcp_url=MCP_URL)
+        print(f"[lab_runner] Scope configured via MCP for {lab_name}")
+    except Exception as e:
+        print(f"[lab_runner] Warning: Failed to configure scope via MCP: {e}")
+        # Fallback to creating scope file only
+        scope = {
+            "program_name": f"lab-{meta.get('name', lab_name)}",
+            "primary_targets": [base_url],
+            "secondary_targets": [],
+            "rules": {},
+            "in_scope": [{"url": base_url}],
+        }
+    
+    # Create scope file for this lab (for agentic_runner.py)
     scope_path = REPO_ROOT / f"scope.lab.{lab_name}.json"
     scope_path.write_text(json.dumps(scope, indent=2), encoding="utf-8")
     print(f"[lab_runner] Wrote scope file: {scope_path}")
@@ -255,7 +264,10 @@ Examples:
     ap.add_argument("--validate", action="store_true", help="Validate findings against expected")
     ap.add_argument("--full", action="store_true", help="Full cycle: start, scan, validate, stop")
     ap.add_argument("--profile", help="Scan profile to use (e.g., xss-heavy)")
-    ap.add_argument("--mcp-url", default=MCP_URL, help=f"MCP server URL (default: {MCP_URL})")
+    mcp_url_default = os.environ.get("MCP_URL", "http://127.0.0.1:8000")
+    ap.add_argument("--mcp-url", default=mcp_url_default, help=f"MCP server URL (default: {mcp_url_default})")
+    ap.add_argument("--test-all", action="store_true", help="Test all labs")
+    ap.add_argument("--test-new", action="store_true", help="Test only new labs (15 new ones)")
     
     args = ap.parse_args(argv)
     
@@ -337,7 +349,24 @@ Examples:
             time.sleep(2)
         stop_lab(args.lab)
     
-    if not any([args.list, args.start, args.stop, args.scan, args.validate, args.full]):
+    # Handle --test-all and --test-new
+    if args.test_all or args.test_new:
+        from tools.lab_test_suite import test_all_labs, list_new_labs, list_all_labs
+        if args.test_new:
+            lab_names = list_new_labs()
+            print(f"[lab_runner] Testing {len(lab_names)} new labs")
+        else:
+            lab_names = list_all_labs()
+            print(f"[lab_runner] Testing all {len(lab_names)} labs")
+        
+        results = test_all_labs(
+            lab_names=lab_names,
+            mcp_url=MCP_URL,
+            profile=args.profile
+        )
+        return
+    
+    if not any([args.list, args.start, args.stop, args.scan, args.validate, args.full, args.test_all, args.test_new]):
         ap.print_help()
 
 

@@ -119,6 +119,123 @@ services:
     networks:
       - lab_network
 
+  # Phase 1: Critical RCE Labs
+  command_injection_lab:
+    build:
+      context: ./labs/command_injection_lab
+    ports:
+      - "5013:5000"
+    networks:
+      - lab_network
+
+  path_traversal_lab:
+    build:
+      context: ./labs/path_traversal_lab
+    ports:
+      - "5014:5000"
+    networks:
+      - lab_network
+
+  file_upload_lab:
+    build:
+      context: ./labs/file_upload_lab
+    ports:
+      - "5015:5000"
+    networks:
+      - lab_network
+
+  # Phase 2: Common High-Value Labs
+  csrf_lab:
+    build:
+      context: ./labs/csrf_lab
+    ports:
+      - "5016:5000"
+    networks:
+      - lab_network
+
+  nosql_injection_lab:
+    build:
+      context: ./labs/nosql_injection_lab
+    ports:
+      - "5017:5000"
+    networks:
+      - lab_network
+
+  # Phase 3: Specialized Injection & Protocol Labs
+  ldap_injection_lab:
+    build:
+      context: ./labs/ldap_injection_lab
+    ports:
+      - "5018:5000"
+    networks:
+      - lab_network
+
+  mass_assignment_lab:
+    build:
+      context: ./labs/mass_assignment_lab
+    ports:
+      - "5019:5000"
+    networks:
+      - lab_network
+
+  websocket_lab:
+    build:
+      context: ./labs/websocket_lab
+    ports:
+      - "5020:5000"
+      - "5021:5001"
+    networks:
+      - lab_network
+
+  ssi_injection_lab:
+    build:
+      context: ./labs/ssi_injection_lab
+    ports:
+      - "5022:5000"
+    networks:
+      - lab_network
+
+  # Phase 4: Advanced & Edge Case Labs
+  crypto_weakness_lab:
+    build:
+      context: ./labs/crypto_weakness_lab
+    ports:
+      - "5023:5000"
+    networks:
+      - lab_network
+
+  parameter_pollution_lab:
+    build:
+      context: ./labs/parameter_pollution_lab
+    ports:
+      - "5024:5000"
+    networks:
+      - lab_network
+
+  dns_rebinding_lab:
+    build:
+      context: ./labs/dns_rebinding_lab
+    ports:
+      - "5025:5000"
+    networks:
+      - lab_network
+
+  cache_poisoning_lab:
+    build:
+      context: ./labs/cache_poisoning_lab
+    ports:
+      - "5026:5000"
+    networks:
+      - lab_network
+
+  random_generation_lab:
+    build:
+      context: ./labs/random_generation_lab
+    ports:
+      - "5027:5000"
+    networks:
+      - lab_network
+
 networks:
   lab_network:
     driver: bridge

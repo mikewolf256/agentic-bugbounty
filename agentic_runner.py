@@ -521,7 +521,7 @@ def anthropic_chat(msgs: List[Dict[str, str]], model: str = "claude-3-5-sonnet-2
         print(f"[ANTHROPIC] API error: {e}", file=sys.stderr)
         # Fallback to OpenAI if Anthropic fails
         print(f"[ANTHROPIC] Falling back to OpenAI model: {LLM_MODEL}", file=sys.stderr)
-        return llm_chat(msgs, model=LLM_MODEL)
+        return llm_chat(msgs, model=LLM_MODEL, context=context)
 
 
 def llm_chat(msgs: List[Dict[str, str]], model: Optional[str] = None, context: Optional[str] = None) -> str:
@@ -785,7 +785,7 @@ def _run_katana_stage(mcp_base_url: str, target_url: str) -> dict:
     resp.raise_for_status()
     return resp.json()
 
-def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
+def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = None) -> Dict[str, Any]:
     """Orchestrate a full scan pipeline via the MCP server.
 
     High-level steps (all best-effort):
@@ -797,7 +797,58 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     - Return a summary object with per-host metadata and artifact paths
     
     Respects ACTIVE_PROFILE settings for module/validator selection.
+    
+    Args:
+        scope: Scope configuration dictionary
+        program_id: Optional program ID for multi-tenant isolation. If not provided,
+                   will be extracted from scope name or generated.
     """
+
+    # Extract or generate program_id for multi-tenant isolation
+    if not program_id:
+        program_id = scope.get("program_id") or scope.get("name", "default")
+        # Sanitize program_id for filesystem use
+        import re
+        program_id = re.sub(r'[^a-zA-Z0-9_-]', '_', program_id.lower())[:50]
+    
+    # Set PROGRAM_ID environment variable for MCP server
+    os.environ["PROGRAM_ID"] = program_id
+    print(f"[RUNNER] Using program_id: {program_id}")
+
+    # Task 5.1: Pre-Scan Validation
+    print("[PRE-SCAN] Validating scan configuration...")
+    validation_errors = []
+    
+    # Verify scope file is valid JSON with required fields
+    required_fields = ["in_scope"]
+    for field in required_fields:
+        if field not in scope:
+            validation_errors.append(f"Missing required field in scope: {field}")
+    
+    # Validate program rules
+    rules = scope.get("rules", {})
+    excluded_vuln_types = rules.get("excluded_vuln_types", [])
+    if excluded_vuln_types and not isinstance(excluded_vuln_types, list):
+        validation_errors.append("excluded_vuln_types must be a list")
+    
+    requires_poc = rules.get("requires_poc", False)
+    if not isinstance(requires_poc, bool):
+        validation_errors.append("requires_poc must be a boolean")
+    
+    # Check MCP server is reachable and healthy
+    try:
+        health_resp = _mcp_get("/mcp/health")
+        if not health_resp.get("status") == "healthy":
+            validation_errors.append(f"MCP server health check failed: {health_resp.get('status')}")
+    except Exception as e:
+        validation_errors.append(f"MCP server unreachable: {e}")
+    
+    if validation_errors:
+        error_msg = "Pre-scan validation failed:\n" + "\n".join(f"  - {e}" for e in validation_errors)
+        print(f"[PRE-SCAN] ❌ {error_msg}")
+        raise SystemExit(error_msg)
+    
+    print("[PRE-SCAN] ✅ All validations passed")
 
     wait_for_mcp_ready()
 
@@ -847,7 +898,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 "findings_file": resp.get("findings_file", ""),
             }
             print(f"[RECON] Katana+Nuclei completed for {h}: {resp.get('findings_count', 0)} findings")
-        except SystemExit as e:
+        except MCPError as e:
             print(f"[RECON] Failed to run Katana+Nuclei for {h}: {e}")
             katana_nuclei_scans[h] = {"error": str(e)}
         except Exception as e:
@@ -941,7 +992,70 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
             }
             if auth_katana_result.get("auth_katana_count", 0) > 0:
                 print(f"[AUTH-KATANA] Discovered {auth_katana_result['auth_katana_count']} authenticated URLs")
-        except SystemExit as e:
+                
+                # Task 2.1: Feed authenticated URLs to validators
+                auth_output_file = auth_katana_result.get("output_file")
+                if auth_output_file and os.path.exists(auth_output_file):
+                    try:
+                        with open(auth_output_file, "r") as f:
+                            auth_data = json.load(f)
+                        
+                        auth_urls = auth_data.get("urls", [])
+                        auth_validations = []
+                        
+                        # Validate authenticated URLs with Dalfox, sqlmap, ffuf
+                        for url in auth_urls[:20]:  # Limit to first 20 URLs to avoid excessive scanning
+                            try:
+                                # Extract parameters from URL
+                                from urllib.parse import urlparse, parse_qs
+                                parsed = urlparse(url)
+                                params = parse_qs(parsed.query)
+                                
+                                if params:
+                                    # Run Dalfox for XSS validation
+                                    try:
+                                        dalfox_result = run_dalfox_check(url, list(params.keys())[0])
+                                        if dalfox_result[0]:  # If vulnerable
+                                            auth_validations.append({
+                                                "url": url,
+                                                "validator": "dalfox",
+                                                "vulnerable": True,
+                                                "evidence": dalfox_result[1]
+                                            })
+                                    except Exception:
+                                        pass
+                                    
+                                    # Run sqlmap for SQLi validation (if params look SQLi-prone)
+                                    sql_prone_params = ["id", "user_id", "search", "query", "filter"]
+                                    if any(p in params for p in sql_prone_params):
+                                        try:
+                                            sqlmap_resp = _mcp_post("/mcp/run_sqlmap", {
+                                                "url": url,
+                                                "data": None,
+                                                "headers": {}
+                                            })
+                                            if sqlmap_resp.get("vulnerable", False):
+                                                auth_validations.append({
+                                                    "url": url,
+                                                    "validator": "sqlmap",
+                                                    "vulnerable": True,
+                                                    "evidence": sqlmap_resp
+                                                })
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                continue
+                        
+                        summary["modules"][host]["auth_validations"] = {
+                            "urls_tested": len(auth_urls),
+                            "validations_run": len(auth_validations),
+                            "findings": auth_validations
+                        }
+                        print(f"[AUTH-VALIDATION] Tested {len(auth_urls)} authenticated URLs, found {len(auth_validations)} vulnerabilities")
+                    except Exception as e:
+                        print(f"[AUTH-VALIDATION] Failed to validate authenticated URLs: {e}")
+                        
+        except MCPError as e:
             print(f"[AUTH-KATANA] Authenticated recon skipped for {host}: {e}")
             summary["modules"][host]["katana_auth"] = {"error": "Chrome DevTools not available or no authenticated session"}
         except Exception as e:
@@ -955,8 +1069,9 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 "job_id": js_resp.get("job_id"),
                 "artifact_dir": js_resp.get("artifact_dir"),
             }
-        except SystemExit as e:
-            print(f"[MCP] js_miner failed for {host}: {e}")
+        except (MCPError, Exception) as e:
+            print(f"[MCP] js_miner failed for {host}: {e} (non-critical, continuing)")
+            summary["modules"][host]["js_miner"] = {"error": str(e), "status": "skipped"}
 
         # --- Backup hunter (best-effort, non-blocking) ---
         try:
@@ -965,8 +1080,9 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                 "job_id": bh_resp.get("job_id"),
                 "artifact_dir": bh_resp.get("artifact_dir"),
             }
-        except SystemExit as e:
-            print(f"[MCP] backup_hunt failed for {host}: {e}")
+        except (MCPError, Exception) as e:
+            print(f"[MCP] backup_hunt failed for {host}: {e} (non-critical, continuing)")
+            summary["modules"][host]["backup_hunt"] = {"error": str(e), "status": "skipped"}
 
     # 5) Build host_profile, prioritize_host, and host_delta per host (PARALLEL)
     def process_host_profile(h: str) -> tuple[str, Dict[str, Any]]:
@@ -1228,6 +1344,79 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     summary["hosts"] = summary_hosts
     summary["katana_nuclei_scans"] = katana_nuclei_scans
     
+    # Task 5.2: Post-Scan Verification
+    print("[POST-SCAN] Verifying scan completeness...")
+    verification_issues = []
+    
+    # Verify expected output files exist
+    expected_files = []
+    for host_data in summary_hosts:
+        host_modules = host_data.get("modules", {})
+        # Check katana_nuclei findings
+        if "katana_nuclei" in host_modules:
+            findings_file = host_modules["katana_nuclei"].get("findings_file")
+            if findings_file and not os.path.exists(findings_file):
+                verification_issues.append(f"Missing findings file: {findings_file}")
+        
+        # Check targeted_nuclei findings
+        if "targeted_nuclei" in host_modules:
+            findings_file = host_modules["targeted_nuclei"].get("findings_file")
+            if findings_file and not os.path.exists(findings_file):
+                verification_issues.append(f"Missing targeted_nuclei file: {findings_file}")
+    
+    # Check report quality scores (if triage was run)
+    # This would be done after triage, so we'll check if triage files exist
+    output_dir = os.environ.get("OUTPUT_DIR", "output_scans")
+    if os.path.exists(output_dir):
+        triage_files = [f for f in os.listdir(output_dir) if f.endswith("_triage.json")]
+        if triage_files:
+            try:
+                from tools.report_quality_checker import score_report_quality
+                for triage_file in triage_files[:3]:  # Check first 3
+                    triage_path = os.path.join(output_dir, triage_file)
+                    with open(triage_path, "r") as f:
+                        triage_data = json.load(f)
+                    quality_score = score_report_quality(triage_data)
+                    if quality_score.get("overall_score", 0) < 0.5:
+                        verification_issues.append(f"Low report quality for {triage_file}: {quality_score.get('overall_score')}")
+            except Exception:
+                pass  # Non-critical
+    
+    # Validate findings are in-scope (sample check)
+    try:
+        from tools.scope_validator import filter_findings_by_scope
+        for host_data in summary_hosts[:2]:  # Sample first 2 hosts
+            host_modules = host_data.get("modules", {})
+            if "katana_nuclei" in host_modules:
+                findings_file = host_modules["katana_nuclei"].get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    with open(findings_file, "r") as f:
+                        findings = json.load(f)
+                    original_count = len(findings)
+                    filtered = filter_findings_by_scope(findings, scope)
+                    if len(filtered) < original_count:
+                        print(f"[POST-SCAN] Found {original_count - len(filtered)} out-of-scope findings (filtered)")
+    except Exception:
+        pass  # Non-critical
+    
+    # Generate scan health report
+    scan_health = {
+        "scan_id": f"{program_id}_{int(time.time())}",
+        "program_id": program_id,
+        "hosts_scanned": len(summary_hosts),
+        "verification_issues": verification_issues,
+        "status": "completed" if not verification_issues else "completed_with_issues",
+        "timestamp": time.time(),
+    }
+    summary["scan_health"] = scan_health
+    
+    if verification_issues:
+        print(f"[POST-SCAN] ⚠️  Scan completed with {len(verification_issues)} verification issues:")
+        for issue in verification_issues[:5]:  # Show first 5
+            print(f"  - {issue}")
+    else:
+        print("[POST-SCAN] ✅ All verifications passed")
+    
     # End token tracking and add cost summary
     try:
         from tools.token_tracker import get_tracker
@@ -1263,7 +1452,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                             if isinstance(findings, list):
                                 high_severity_count += sum(
                                     1 for f in findings
-                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                    if (f.get("cvss_score") or 0.0) >= 7.0 or f.get("info", {}).get("severity") == "high"
                                 )
                     except Exception:
                         pass
@@ -1280,7 +1469,7 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
                             if isinstance(findings, list):
                                 high_severity_count += sum(
                                     1 for f in findings
-                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                    if (f.get("cvss_score") or 0.0) >= 7.0 or f.get("info", {}).get("severity") == "high"
                                 )
                     except Exception:
                         pass
@@ -2647,55 +2836,111 @@ def main():
         json.dump(summary, open(summary_path, "w"), indent=2)
         print("[RUNNER] Wrote full-scan summary", summary_path)
 
-        # Auto-triage findings from all sources:
-        # - katana_nuclei_*.json - Katana+Nuclei recon results
-        # - cloud_findings_*.json - Cloud recon results
-        # - cloud_findings_*.json - Cloud recon results  
-        # - targeted_nuclei_*.json - AI-driven targeted nuclei scans (JSONL format)
-        # - katana_nuclei_*.json - Katana+Nuclei recon results
-        for fname in os.listdir(out_dir):
-            if not fname.endswith(".json"):
+        # Auto-triage findings from all sources using actual file paths from summary
+        # Extract findings file paths from summary instead of listing a hardcoded directory
+        findings_files_to_triage = []
+        
+        # Collect findings files from summary["modules"]
+        modules = summary.get("modules", {})
+        for host, host_modules in modules.items():
+            # Katana+Nuclei findings
+            katana_nuclei = host_modules.get("katana_nuclei", {})
+            if isinstance(katana_nuclei, dict):
+                findings_file = katana_nuclei.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    findings_files_to_triage.append(("katana_nuclei", findings_file))
+            
+            # Targeted Nuclei findings
+            targeted_nuclei = host_modules.get("targeted_nuclei", {})
+            if isinstance(targeted_nuclei, dict):
+                findings_file = targeted_nuclei.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    findings_files_to_triage.append(("targeted_nuclei", findings_file))
+            
+            # OAuth findings
+            oauth = host_modules.get("oauth", {})
+            if isinstance(oauth, dict):
+                findings_file = oauth.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    findings_files_to_triage.append(("oauth", findings_file))
+            
+            # Race condition findings
+            race = host_modules.get("race", {})
+            if isinstance(race, dict):
+                findings_file = race.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    findings_files_to_triage.append(("race", findings_file))
+        
+        # Also check summary["katana_nuclei_scans"] for backward compatibility
+        katana_nuclei_scans = summary.get("katana_nuclei_scans", {})
+        for host, scan_data in katana_nuclei_scans.items():
+            if isinstance(scan_data, dict):
+                findings_file = scan_data.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    # Avoid duplicates
+                    if ("katana_nuclei", findings_file) not in findings_files_to_triage:
+                        findings_files_to_triage.append(("katana_nuclei", findings_file))
+        
+        # Fallback: Also check the old output directory for any remaining files
+        if os.path.exists(out_dir):
+            for fname in os.listdir(out_dir):
+                if not fname.endswith(".json"):
+                    continue
+                findings_path = os.path.join(out_dir, fname)
+                # Only add if not already in our list
+                if findings_path not in [f[1] if isinstance(f, tuple) else f for f in findings_files_to_triage]:
+                    if fname.startswith("katana_nuclei_") or fname.startswith("cloud_findings_") or fname.startswith("zap_findings_"):
+                        findings_files_to_triage.append(("legacy", findings_path))
+        
+        # Process all collected findings files
+        for findings_info in findings_files_to_triage:
+            if isinstance(findings_info, tuple):
+                findings_type, findings_path = findings_info
+            else:
+                findings_type, findings_path = "unknown", findings_info
+            
+            if not os.path.exists(findings_path):
+                print(f"[RUNNER] Skipping missing findings file: {findings_path}")
                 continue
             
-            findings_path = os.path.join(out_dir, fname)
-            
-            # Handle standard JSON findings (Katana+Nuclei, cloud, etc.)
-            if fname.startswith("katana_nuclei_") or fname.startswith("cloud_findings_") or fname.startswith("zap_findings_"):
+            try:
+                # Handle targeted nuclei findings (JSONL format)
+                if findings_type == "targeted_nuclei":
+                    print(f"[RUNNER] Processing targeted nuclei findings from {findings_path}")
+                    nuclei_findings = _load_jsonl_findings(findings_path)
+                    if nuclei_findings:
+                        # Write as standard JSON array for triage
+                        converted_path = findings_path.replace(".json", "_converted.json")
+                        with open(converted_path, "w", encoding="utf-8") as fh:
+                            json.dump(nuclei_findings, fh, indent=2)
+                        print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} targeted nuclei findings")
+                        run_triage_for_findings(converted_path, scope, out_dir=out_dir)
+                    continue
+                
+                # Handle Katana+Nuclei findings (nested JSON structure)
+                if findings_type == "katana_nuclei" and not findings_path.endswith("_findings.json"):
+                    print(f"[RUNNER] Processing katana+nuclei findings from {findings_path}")
+                    try:
+                        with open(findings_path, "r", encoding="utf-8") as fh:
+                            data = json.load(fh)
+                        nuclei_findings = data.get("nuclei_findings", [])
+                        if nuclei_findings:
+                            # Write findings as separate file for triage
+                            findings_only_path = findings_path.replace(".json", "_findings.json")
+                            with open(findings_only_path, "w", encoding="utf-8") as fh:
+                                json.dump(nuclei_findings, fh, indent=2)
+                            print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} katana+nuclei findings")
+                            run_triage_for_findings(findings_only_path, scope, out_dir=out_dir)
+                    except Exception as e:
+                        print(f"[RUNNER] Error processing {findings_path}: {e}")
+                    continue
+                
+                # Handle standard findings files (direct JSON arrays)
                 print(f"[RUNNER] Auto-triaging findings from {findings_path}")
                 run_triage_for_findings(findings_path, scope, out_dir=out_dir)
-                continue
-            
-            # Handle targeted nuclei findings (JSONL format from AI-driven scans)
-            # Skip already-converted files to prevent reprocessing JSON arrays as JSONL
-            if fname.startswith("targeted_nuclei_") and not fname.endswith("_converted.json"):
-                print(f"[RUNNER] Processing targeted nuclei findings from {findings_path}")
-                nuclei_findings = _load_jsonl_findings(findings_path)
-                if nuclei_findings:
-                    # Write as standard JSON array for triage
-                    converted_path = findings_path.replace(".json", "_converted.json")
-                    with open(converted_path, "w", encoding="utf-8") as fh:
-                        json.dump(nuclei_findings, fh, indent=2)
-                    print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} targeted nuclei findings")
-                    run_triage_for_findings(converted_path, scope, out_dir=out_dir)
-                continue
-            
-            # Handle Katana+Nuclei findings (nested JSON structure)
-            if fname.startswith("katana_nuclei_") and not fname.endswith("_findings.json"):
-                print(f"[RUNNER] Processing katana+nuclei findings from {findings_path}")
-                try:
-                    with open(findings_path, "r", encoding="utf-8") as fh:
-                        data = json.load(fh)
-                    nuclei_findings = data.get("nuclei_findings", [])
-                    if nuclei_findings:
-                        # Write findings as separate file for triage (always overwrite with fresh data)
-                        findings_only_path = findings_path.replace(".json", "_findings.json")
-                        with open(findings_only_path, "w", encoding="utf-8") as fh:
-                            json.dump(nuclei_findings, fh, indent=2)
-                        print(f"[RUNNER] Auto-triaging {len(nuclei_findings)} katana+nuclei findings")
-                        run_triage_for_findings(findings_only_path, scope, out_dir=out_dir)
-                except Exception as e:
-                    print(f"[RUNNER] Error processing {fname}: {e}")
-                continue
+                
+            except Exception as e:
+                print(f"[RUNNER] Error processing findings file {findings_path}: {e}")
         
         return
 

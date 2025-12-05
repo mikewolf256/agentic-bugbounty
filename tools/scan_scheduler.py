@@ -195,9 +195,16 @@ class ScanScheduler:
             sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
             from agentic_runner import run_full_scan_via_mcp, run_triage_for_findings
             
-            # Run full scan
+            # Get profile from config (if specified)
+            profile = config.get("profile")
+            if profile:
+                # Set profile via environment variable for agentic_runner
+                os.environ["ACTIVE_PROFILE"] = profile
+                print(f"[SCHEDULER] Using profile: {profile}")
+            
+            # Run full scan with program_id for multi-tenant isolation
             print(f"[SCHEDULER] Running full scan for {program_name} (scan_id: {scan_id})")
-            summary = run_full_scan_via_mcp(scope)
+            summary = run_full_scan_via_mcp(scope, program_id=program_name)
             
             # Auto-triage findings if enabled
             if config.get("auto_triage", True):

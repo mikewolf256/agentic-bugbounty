@@ -141,7 +141,7 @@ def run_katana(target: str, out_path: str, max_urls: int = 200, rate_limit: Opti
                 continue
 
             dst.write(json.dumps({"url": url}) + "\n")
-def run_nuclei(urls_file: str, out_file: str, mode: str = "recon", rate_limit: Optional[int] = None) -> None:
+def run_nuclei(urls_file: str, out_file: str, mode: str = "recon", rate_limit: Optional[int] = None, cookies: Optional[List[Dict[str, Any]]] = None) -> None:
     """Run nuclei over URLs from urls_file, write JSONL to out_file.
     
     Modes:
@@ -155,6 +155,7 @@ def run_nuclei(urls_file: str, out_file: str, mode: str = "recon", rate_limit: O
         out_file: Output file for JSONL results
         mode: Scan mode (recon, auth, targeted, full)
         rate_limit: Rate limit in requests per second (defaults to env var or 10)
+        cookies: Optional list of cookie dicts (from katana_auth) to pass to Nuclei
     """
     # Get rate limit from env or use conservative default
     if rate_limit is None:
@@ -199,6 +200,20 @@ def run_nuclei(urls_file: str, out_file: str, mode: str = "recon", rate_limit: O
     
     # Always add rate limiting - respect bug bounty program limits
     cmd += ["-rl", str(rate_limit)]
+    
+    # Add cookies if provided (for authenticated scanning)
+    if cookies:
+        # Convert cookies list to cookie string format: "name1=value1; name2=value2"
+        cookie_parts = []
+        for cookie in cookies:
+            name = cookie.get("name", "")
+            value = cookie.get("value", "")
+            if name and value:
+                cookie_parts.append(f"{name}={value}")
+        if cookie_parts:
+            cookie_string = "; ".join(cookie_parts)
+            cmd += ["-H", f"Cookie: {cookie_string}"]
+            print(f"[NUCLEI] Using authenticated cookies for {len(cookies)} cookies", file=sys.stderr)
     
     cmd += ["-jsonl", "-silent", "-o", out_file]
     print(f"[NUCLEI] Running: {' '.join(cmd)}", file=sys.stderr)
@@ -372,7 +387,18 @@ def main() -> None:
                     fh.write(u + "\n")
 
         # 2) Run nuclei over discovered URLs
-        run_nuclei(urls_txt, nuclei_out, mode=args.mode, rate_limit=nuclei_rate_limit)
+        # Check for cookies from authenticated session (passed via environment)
+        cookies = None
+        cookies_file = os.environ.get("AUTH_COOKIES_FILE")
+        if cookies_file and os.path.exists(cookies_file):
+            try:
+                with open(cookies_file, "r") as f:
+                    cookies = json.load(f)
+                    print(f"[NUCLEI] Loading {len(cookies)} cookies from {cookies_file}", file=sys.stderr)
+            except Exception:
+                pass
+        
+        run_nuclei(urls_txt, nuclei_out, mode=args.mode, rate_limit=nuclei_rate_limit, cookies=cookies)
         nuclei_items = load_jsonl(nuclei_out)
 
         # 3) Build structured HTTP surface

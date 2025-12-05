@@ -41,6 +41,7 @@ import json
 import time
 import subprocess
 import threading
+import re
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import uuid4
 from urllib.parse import urlparse, parse_qsl
@@ -95,7 +96,16 @@ DEFAULT_NUCLEI_RATE_LIMIT = LAB_NUCLEI_RATE_LIMIT if IS_LAB_ENV else int(os.envi
 DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "agentic-bugbounty_lab_network")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(BASE_DIR, "output_zap"))
+
+# Multi-tenant isolation: use program_id if provided
+PROGRAM_ID = os.environ.get("PROGRAM_ID", "default")
+# Sanitize program_id for filesystem use
+PROGRAM_ID = re.sub(r'[^a-zA-Z0-9_-]', '_', PROGRAM_ID.lower())[:50]
+
+# Base output directory (without program_id)
+BASE_OUTPUT_DIR = os.environ.get("OUTPUT_DIR", os.path.join(BASE_DIR, "output_scans"))
+# Program-specific output directory
+OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, PROGRAM_ID)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 ARTIFACTS_DIR = os.path.join(OUTPUT_DIR, "artifacts")
@@ -256,6 +266,16 @@ class SmugglingChecksRequest(BaseModel):
 class GraphQLSecurityRequest(BaseModel):
     endpoint: str  # GraphQL endpoint URL
 
+class SstiChecksRequest(BaseModel):
+    target_url: str  # Target URL to test
+    param: Optional[str] = "q"  # Parameter name to test
+    callback_url: Optional[str] = None  # Optional callback URL for RCE validation
+
+class DeserChecksRequest(BaseModel):
+    target_url: str  # Target URL to test
+    format_type: Optional[str] = "auto"  # Format to test (java, python, dotnet, yaml, auto)
+    callback_url: Optional[str] = None  # Optional callback URL for RCE validation
+
 class NucleiRequest(BaseModel):
     target: str
     templates: Optional[List[str]] = None
@@ -387,6 +407,20 @@ class GraphQLSecurityResult(BaseModel):
     endpoint: str
     findings_file: str
     vulnerable: bool
+    meta: Dict[str, Any]
+
+class SstiChecksResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    template_engine: Optional[str] = None
+    meta: Dict[str, Any]
+
+class DeserChecksResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    format_type: Optional[str] = None
     meta: Dict[str, Any]
 
 
@@ -3735,6 +3769,166 @@ def run_jwt_checks(req: JwtChecksRequest):
             "summary": summary,
             "findings_file": out_path,
             "issues": confirmed_issues,
+        }
+    )
+
+
+@app.post("/mcp/run_ssti_checks", response_model=SstiChecksResult)
+def run_ssti_checks(req: SstiChecksRequest):
+    """
+    Run Server-Side Template Injection (SSTI) checks.
+    
+    Tests for template injection vulnerabilities in:
+    - Jinja2 (Python)
+    - Freemarker (Java)
+    - Velocity (Java)
+    - Smarty (PHP)
+    
+    Uses expression evaluation detection (7*7 = 49) to identify vulnerable endpoints.
+    """
+    from urllib.parse import urlparse
+    
+    # Enforce scope
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Import tester
+    tester_script = os.path.join(os.path.dirname(__file__), "tools", "template_injection_tester.py")
+    if not os.path.exists(tester_script):
+        raise HTTPException(
+            status_code=500,
+            detail=f"template_injection_tester.py not found at {tester_script}",
+        )
+    
+    # Get callback URL from environment if not provided
+    callback_url = req.callback_url or os.environ.get("CALLBACK_SERVER_URL")
+    
+    # Run tester
+    try:
+        from tools.template_injection_tester import test_ssti
+        result = test_ssti(req.target_url, req.param, callback_url)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"SSTI tester failed: {e}",
+        )
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"ssti_checks_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    findings = {
+        "target_url": req.target_url,
+        "param": req.param,
+        "vulnerable": result.get("vulnerable", False),
+        "template_engine": result.get("template_engine"),
+        "evidence": result.get("evidence"),
+        "rce_tested": result.get("rce_tested", False),
+        "timestamp": ts,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(findings, fh, indent=2)
+    
+    return SstiChecksResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        template_engine=result.get("template_engine"),
+        meta={
+            "param_tested": req.param,
+            "callback_url_used": callback_url is not None,
+            "rce_tested": result.get("rce_tested", False),
+        }
+    )
+
+
+@app.post("/mcp/run_deser_checks", response_model=DeserChecksResult)
+def run_deser_checks(req: DeserChecksRequest):
+    """
+    Run deserialization vulnerability checks.
+    
+    Tests for insecure deserialization in:
+    - Python (pickle, YAML)
+    - Java (Java serialization, YAML)
+    - .NET (BinaryFormatter)
+    
+    Uses callback URLs for blind RCE detection.
+    """
+    from urllib.parse import urlparse
+    
+    # Enforce scope
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Import tester
+    tester_script = os.path.join(os.path.dirname(__file__), "tools", "deserialization_tester.py")
+    if not os.path.exists(tester_script):
+        raise HTTPException(
+            status_code=500,
+            detail=f"deserialization_tester.py not found at {tester_script}",
+        )
+    
+    # Get callback URL from environment if not provided
+    callback_url = req.callback_url or os.environ.get("CALLBACK_SERVER_URL")
+    
+    # Run tester
+    try:
+        from tools.deserialization_tester import test_deserialization
+        result = test_deserialization(req.target_url, req.format_type, callback_url)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Deserialization tester failed: {e}",
+        )
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"deser_checks_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    findings = {
+        "target_url": req.target_url,
+        "format_type": req.format_type,
+        "vulnerable": result.get("vulnerable", False),
+        "tests_run": result.get("tests_run", 0),
+        "findings": result.get("findings", []),
+        "timestamp": ts,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(findings, fh, indent=2)
+    
+    # Determine format type from findings
+    detected_format = None
+    if result.get("findings"):
+        for finding in result.get("findings", []):
+            test_type = finding.get("test", "")
+            if "java" in test_type:
+                detected_format = "java"
+            elif "python" in test_type or "pickle" in test_type:
+                detected_format = "python"
+            elif "dotnet" in test_type or ".net" in test_type:
+                detected_format = "dotnet"
+            elif "yaml" in test_type:
+                detected_format = "yaml"
+            break
+    
+    return DeserChecksResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        format_type=detected_format or req.format_type,
+        meta={
+            "format_tested": req.format_type,
+            "tests_run": result.get("tests_run", 0),
+            "findings_count": len(result.get("findings", [])),
+            "callback_url_used": callback_url is not None,
         }
     )
 

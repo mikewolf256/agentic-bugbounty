@@ -438,7 +438,7 @@ def get_model_for_finding(finding: Dict[str, Any]) -> str:
     return LLM_MODEL
 
 
-def anthropic_chat(msgs: List[Dict[str, str]], model: str = "claude-3-5-sonnet-20241022") -> str:
+def anthropic_chat(msgs: List[Dict[str, str]], model: str = "claude-3-5-sonnet-20241022", context: Optional[str] = None) -> str:
     """Call Anthropic Claude API for chat completion.
     
     Args:
@@ -495,6 +495,18 @@ def anthropic_chat(msgs: List[Dict[str, str]], model: str = "claude-3-5-sonnet-2
         r.raise_for_status()
         response_data = r.json()
         
+        # Track token usage from Anthropic response
+        try:
+            from tools.token_tracker import get_tracker
+            tracker = get_tracker()
+            usage = response_data.get("usage", {})
+            tokens_in = usage.get("input_tokens", 0)
+            tokens_out = usage.get("output_tokens", 0)
+            tracker.track_call(model, tokens_in, tokens_out, context)
+        except Exception as e:
+            # Non-fatal if tracking fails
+            print(f"[TOKEN-TRACKER] Warning: Failed to track tokens: {e}", file=sys.stderr)
+        
         # Extract content from Anthropic response
         # Anthropic returns content as array of text blocks
         content_blocks = response_data.get("content", [])
@@ -512,12 +524,13 @@ def anthropic_chat(msgs: List[Dict[str, str]], model: str = "claude-3-5-sonnet-2
         return llm_chat(msgs, model=LLM_MODEL)
 
 
-def llm_chat(msgs: List[Dict[str, str]], model: Optional[str] = None) -> str:
+def llm_chat(msgs: List[Dict[str, str]], model: Optional[str] = None, context: Optional[str] = None) -> str:
     """Call LLM API (OpenAI or Anthropic) based on model name.
     
     Args:
         msgs: List of message dicts
         model: Model name (defaults to LLM_MODEL). If starts with "claude-", uses Anthropic API.
+        context: Optional context for token tracking (e.g., "triage", "rag_search")
         
     Returns:
         Response content string
@@ -530,9 +543,13 @@ def llm_chat(msgs: List[Dict[str, str]], model: Optional[str] = None) -> str:
     
     # Route to appropriate API based on model name
     if model.startswith("claude-"):
-        return anthropic_chat(msgs, model=model)
+        return anthropic_chat(msgs, model=model, context=context)
     else:
         # OpenAI API
+        # Estimate input tokens (rough: ~4 chars per token)
+        input_text = json.dumps(msgs)
+        estimated_tokens_in = len(input_text) // 4
+        
         r = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type":"application/json"},
@@ -540,7 +557,23 @@ def llm_chat(msgs: List[Dict[str, str]], model: Optional[str] = None) -> str:
             timeout=180,
         )
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
+        response = r.json()
+        
+        # Extract actual token usage from response
+        usage = response.get("usage", {})
+        tokens_in = usage.get("prompt_tokens", estimated_tokens_in)
+        tokens_out = usage.get("completion_tokens", 0)
+        
+        # Track token usage
+        try:
+            from tools.token_tracker import get_tracker
+            tracker = get_tracker()
+            tracker.track_call(model, tokens_in, tokens_out, context)
+        except Exception as e:
+            # Non-fatal if tracking fails
+            print(f"[TOKEN-TRACKER] Warning: Failed to track tokens: {e}", file=sys.stderr)
+        
+        return response["choices"][0]["message"]["content"].strip()
 
 
 # Backward compatibility alias
@@ -691,34 +724,39 @@ def run_dalfox_check(target_url: str, param_name: Optional[str] = None) -> Tuple
 
 
 # ==== MCP client helpers ====
-@retry_with_backoff(max_retries=3, initial_delay=1.0)
+class MCPError(Exception):
+    """Custom exception for MCP errors that should be retried."""
+    pass
+
+
+@retry_with_backoff(max_retries=3, initial_delay=1.0, retryable_exceptions=(MCPError, requests.RequestException))
 def _mcp_post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """POST to MCP server endpoint with retry logic."""
     url = MCP_SERVER_URL.rstrip("/") + path
-    r = requests.post(url, json=payload, timeout=600)
     try:
+        r = requests.post(url, json=payload, timeout=600)
         r.raise_for_status()
-    except Exception:
-        raise SystemExit(f"MCP POST {url} failed: {r.status_code} {r.text[:4000]}")
+    except requests.RequestException as e:
+        raise MCPError(f"MCP POST {url} failed: {e}")
     try:
         return r.json()
-    except ValueError:
-        raise SystemExit(f"MCP POST {url} returned non-JSON: {r.text[:4000]}")
+    except ValueError as e:
+        raise MCPError(f"MCP POST {url} returned non-JSON: {r.text[:4000]}")
 
 
-@retry_with_backoff(max_retries=3, initial_delay=1.0)
+@retry_with_backoff(max_retries=3, initial_delay=1.0, retryable_exceptions=(MCPError, requests.RequestException))
 def _mcp_get(path: str) -> Dict[str, Any]:
     """GET from MCP server endpoint with retry logic."""
     url = MCP_SERVER_URL.rstrip("/") + path
-    r = requests.get(url, timeout=600)
     try:
+        r = requests.get(url, timeout=600)
         r.raise_for_status()
-    except Exception:
-        raise SystemExit(f"MCP GET {url} failed: {r.status_code} {r.text[:4000]}")
+    except requests.RequestException as e:
+        raise MCPError(f"MCP GET {url} failed: {e}")
     try:
         return r.json()
-    except ValueError:
-        raise SystemExit(f"MCP GET {url} returned non-JSON: {r.text[:4000]}")
+    except ValueError as e:
+        raise MCPError(f"MCP GET {url} returned non-JSON: {r.text[:4000]}")
 
 
 def wait_for_mcp_ready(max_wait: int = 30) -> None:
@@ -762,6 +800,14 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
     """
 
     wait_for_mcp_ready()
+
+    # Start token tracking
+    try:
+        from tools.token_tracker import get_tracker
+        tracker = get_tracker()
+        tracker.start_scan()
+    except Exception:
+        pass  # Non-fatal if tracking unavailable
 
     # Get profile settings
     phases = get_profile_setting("phases", ["recon", "nuclei", "validators", "triage"])
@@ -922,26 +968,62 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         except SystemExit as e:
             print(f"[MCP] backup_hunt failed for {host}: {e}")
 
-    # 5) Build host_profile, prioritize_host, and host_delta per host
-    for h in hosts:
+    # 5) Build host_profile, prioritize_host, and host_delta per host (PARALLEL)
+    def process_host_profile(h: str) -> tuple[str, Dict[str, Any]]:
+        """Process host profile and return results."""
+        host_data = {"host": h}
+        
         try:
             profile = _mcp_post("/mcp/host_profile", {"host": h, "llm_view": True})
-        except SystemExit as e:
-            print(f"[MCP] host_profile failed for {h}: {e}")
-            profile = {}
-
+            host_data["host_profile"] = profile
+        except Exception as e:
+            print(f"[MCP] host_profile failed for {h}: {e}, continuing with other hosts")
+            host_data["host_profile"] = {}
+        
         try:
             prio = _mcp_post("/mcp/prioritize_host", {"host": h})
-        except SystemExit as e:
-            print(f"[MCP] prioritize_host failed for {h}: {e}")
-            prio = {}
-
+            host_data["prioritization"] = prio
+        except Exception as e:
+            print(f"[MCP] prioritize_host failed for {h}: {e}, continuing with other hosts")
+            host_data["prioritization"] = {}
+        
         try:
             delta = _mcp_post("/mcp/host_delta", {"host": h})
-        except SystemExit as e:
-            print(f"[MCP] host_delta failed for {h}: {e}")
-            delta = {}
-
+            host_data["delta"] = delta
+        except Exception as e:
+            print(f"[MCP] host_delta failed for {h}: {e}, continuing with other hosts")
+            host_data["delta"] = {}
+        
+        return h, host_data
+    
+    # Parallel execution for host profiling
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        max_workers = min(len(hosts), 5)  # Limit to 5 concurrent operations
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_host = {executor.submit(process_host_profile, h): h for h in hosts}
+            
+            for future in as_completed(future_to_host):
+                h, host_data = future.result()
+                summary_hosts.append(host_data)
+    except ImportError:
+        # Fallback to sequential
+        for h in hosts:
+            _, host_data = process_host_profile(h)
+            summary_hosts.append(host_data)
+    
+    # Continue with AI triage and other per-host operations (sequential for now)
+    # Get profile data from summary_hosts (populated by parallel execution)
+    host_data_map = {hd["host"]: hd for hd in summary_hosts}
+    
+    for h in hosts:
+        # Get profile data from parallel execution results
+        host_data = host_data_map.get(h, {"host": h, "host_profile": {}, "prioritization": {}, "delta": {}})
+        profile = host_data.get("host_profile", {})
+        prio = host_data.get("prioritization", {})
+        delta = host_data.get("delta", {})
+        
         # --- NEW: AI-driven targeted Nuclei scan ---
         # After Katana+WhatWeb, use AI to select optimal templates and run a targeted scan
         ai_triage_result: Dict[str, Any] = {}
@@ -1127,29 +1209,99 @@ def run_full_scan_via_mcp(scope: Dict[str, Any]) -> Dict[str, Any]:
         
         summary["modules"][h]["race"] = race_results
 
-        summary_hosts.append(
-            {
-                "host": h,
-                "host_profile": profile,
-                "prioritization": prio,
-                "delta": delta,
-                # Compact view of JS-derived secrets from host_profile (if any)
-                "js_secrets": (profile.get("web", {}) or {}).get("js_secrets"),
-                # AI triage summary
-                "ai_triage": {
-                    "mode": ai_triage_result.get("mode"),
-                    "templates_count": len(ai_triage_result.get("templates", [])),
-                    "reasoning": ai_triage_result.get("reasoning"),
-                },
-                "targeted_nuclei": {
-                    "findings_count": targeted_nuclei_result.get("findings_count", 0),
-                    "findings_file": targeted_nuclei_result.get("findings_file"),
-                },
-            }
-        )
+        # Update existing host_data with additional information
+        host_data["js_secrets"] = (profile.get("web", {}) or {}).get("js_secrets")
+        host_data["ai_triage"] = {
+            "mode": ai_triage_result.get("mode"),
+            "templates_count": len(ai_triage_result.get("templates", [])),
+            "reasoning": ai_triage_result.get("reasoning"),
+        }
+        host_data["targeted_nuclei"] = {
+            "findings_count": targeted_nuclei_result.get("findings_count", 0),
+            "findings_file": targeted_nuclei_result.get("findings_file"),
+        }
+        
+        # Ensure host_data is in summary_hosts (update if exists, append if not)
+        if h not in host_data_map:
+            summary_hosts.append(host_data)
 
     summary["hosts"] = summary_hosts
     summary["katana_nuclei_scans"] = katana_nuclei_scans
+    
+    # End token tracking and add cost summary
+    try:
+        from tools.token_tracker import get_tracker
+        tracker = get_tracker()
+        token_summary = tracker.end_scan()
+        summary["token_usage"] = token_summary
+        summary["scan_cost"] = token_summary.get("total_cost", 0.0)
+    except Exception:
+        pass  # Non-fatal if tracking unavailable
+    
+    # Send scan completion alert
+    try:
+        from tools.alerting import get_alert_manager
+        manager = get_alert_manager()
+        program_name = scope.get("program_name") or "unknown"
+        
+        # Count findings from modules (where they're actually stored)
+        findings_count = 0
+        high_severity_count = 0
+        
+        modules = summary.get("modules", {})
+        for host, host_modules in modules.items():
+            # Count from katana_nuclei
+            katana_nuclei = host_modules.get("katana_nuclei", {})
+            if isinstance(katana_nuclei, dict):
+                findings_count += katana_nuclei.get("findings_count", 0)
+                # Load findings file to check CVSS scores
+                findings_file = katana_nuclei.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    try:
+                        with open(findings_file, "r") as f:
+                            findings = json.load(f)
+                            if isinstance(findings, list):
+                                high_severity_count += sum(
+                                    1 for f in findings
+                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                )
+                    except Exception:
+                        pass
+            
+            # Count from targeted_nuclei
+            targeted_nuclei = host_modules.get("targeted_nuclei", {})
+            if isinstance(targeted_nuclei, dict):
+                findings_count += targeted_nuclei.get("findings_count", 0)
+                findings_file = targeted_nuclei.get("findings_file")
+                if findings_file and os.path.exists(findings_file):
+                    try:
+                        with open(findings_file, "r") as f:
+                            findings = json.load(f)
+                            if isinstance(findings, list):
+                                high_severity_count += sum(
+                                    1 for f in findings
+                                    if (f.get("cvss_score") or f.get("info", {}).get("severity") == "high" or 0.0) >= 7.0
+                                )
+                    except Exception:
+                        pass
+            
+            # Count from other modules that might have findings
+            for module_name, module_data in host_modules.items():
+                if module_name in ["katana_nuclei", "targeted_nuclei"]:
+                    continue  # Already counted
+                if isinstance(module_data, dict) and "findings_count" in module_data:
+                    findings_count += module_data.get("findings_count", 0)
+        
+        scan_summary = {
+            "findings_count": findings_count,
+            "high_severity_count": high_severity_count,
+            "scan_cost": summary.get("scan_cost", 0.0),
+        }
+        
+        manager.alert_scan_complete(program_name, scan_summary)
+    except Exception:
+        pass  # Non-fatal if alerting unavailable
+    
     return summary
 
 
@@ -1211,6 +1363,17 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         if len(findings) < original_count:
             print(f"[RULES] Filtered out {original_count - len(findings)} findings matching excluded types: {excluded_types}", file=sys.stderr)
     
+    # Cost optimization: CVSS gating - only triage findings with CVSS >= 6.0 (or estimated high severity)
+    original_count = len(findings)
+    findings = [
+        f for f in findings
+        if (f.get("cvss_score") or 0.0) >= 6.0 or
+        f.get("severity", "").lower() in ("high", "critical") or
+        f.get("confidence", "").lower() in ("high", "very_high")
+    ]
+    if len(findings) < original_count:
+        print(f"[COST-OPT] CVSS gating: Filtered out {original_count - len(findings)} low-severity findings (CVSS < 6.0) to reduce LLM costs", file=sys.stderr)
+    
     # Filter findings without PoC if requires_poc is true
     if requires_poc:
         original_count = len(findings)
@@ -1267,7 +1430,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         
         # LLM triage
         try:
-            raw = llm_chat(msgs, model=model)
+            raw = llm_chat(msgs, model=model, context="triage")
 
             # Strip common Markdown code fences (```json ... ```)
             txt = raw.strip()
@@ -1976,6 +2139,39 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         triaged.append(t)
         time.sleep(0.4)
 
+    # === Report Quality Check ===
+    # Check report quality before finalizing
+    try:
+        from tools.report_quality_checker import score_report_quality
+        print("[QUALITY-CHECKER] Checking report quality...", file=sys.stderr)
+        
+        # Score each triaged finding
+        for t in triaged:
+            quality_score = score_report_quality(t, scope=scope)
+            t["quality_score"] = quality_score.get("total_score", 0)
+            t["quality_rating"] = quality_score.get("quality_rating", "unknown")
+            t["quality_check"] = quality_score
+    except Exception as e:
+        print(f"[QUALITY-CHECKER] Warning: Quality check failed: {e}", file=sys.stderr)
+    
+    # === Delta Analysis ===
+    # Analyze new findings compared to previous scans
+    try:
+        from tools.delta_analyzer import analyze_scan_delta
+        program_name = scope.get("program_name") or "unknown"
+        delta_result = analyze_scan_delta(program_name, triaged, out_dir)
+        
+        # Add delta info to summary
+        if "delta" in delta_result:
+            print(f"[DELTA] New findings: {delta_result['delta'].get('new_count', 0)}, "
+                  f"High severity: {delta_result['delta'].get('high_severity_count', 0)}", file=sys.stderr)
+            
+            # Log alerts
+            for alert in delta_result.get("alerts", []):
+                print(f"[ALERT] [{alert['level'].upper()}] {alert['message']}", file=sys.stderr)
+    except Exception as e:
+        print(f"[DELTA] Warning: Delta analysis failed: {e}", file=sys.stderr)
+    
     # === POC Validation Gate ===
     # Validate POCs before including in reports
     try:

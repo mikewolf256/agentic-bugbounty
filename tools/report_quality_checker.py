@@ -87,21 +87,97 @@ def check_scope_compliance(report_data: Dict[str, Any], scope: Dict[str, Any]) -
     raw_finding = report_data.get("_raw_finding", {})
     url = raw_finding.get("url") or raw_finding.get("uri") or ""
     
-    # Basic scope check (simplified)
+    # Use enhanced scope validator if available
     in_scope = True
-    if scope and scope.get("in_scope"):
-        # Check if URL matches any in-scope entry
-        in_scope_entries = scope.get("in_scope", [])
-        if in_scope_entries:
-            # Simple check - in production, use proper scope matching
-            in_scope = any(
-                entry.get("url", "") in url or entry.get("target", "") in url
-                for entry in in_scope_entries
-            )
+    scope_reason = None
+    
+    try:
+        from tools.scope_validator import is_url_in_scope
+        in_scope, scope_reason = is_url_in_scope(url, scope)
+    except ImportError:
+        # Fallback to basic check
+        if scope and scope.get("in_scope"):
+            in_scope_entries = scope.get("in_scope", [])
+            if in_scope_entries:
+                in_scope = any(
+                    entry.get("url", "") in url or entry.get("target", "") in url
+                    for entry in in_scope_entries
+                )
     
     return {
         "in_scope": in_scope,
         "url": url,
+        "reason": scope_reason,
+    }
+
+
+def check_duplicate_findings(
+    report_data: Dict[str, Any],
+    historical_reports: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Check for duplicate findings.
+    
+    Args:
+        report_data: Current report data
+        historical_reports: Optional list of historical reports for comparison
+    
+    Returns:
+        Dict with duplicate detection results
+    """
+    if not historical_reports:
+        return {
+            "is_duplicate": False,
+            "similarity_score": 0.0,
+            "similar_reports": [],
+        }
+    
+    # Extract key fields for comparison
+    current_title = (report_data.get("title") or "").lower()
+    current_url = report_data.get("_raw_finding", {}).get("url") or ""
+    current_cwe = str(report_data.get("cwe") or "")
+    
+    similar_reports = []
+    max_similarity = 0.0
+    
+    for hist_report in historical_reports:
+        hist_title = (hist_report.get("title") or "").lower()
+        hist_url = hist_report.get("_raw_finding", {}).get("url") or ""
+        hist_cwe = str(hist_report.get("cwe") or "")
+        
+        # Calculate similarity score
+        similarity = 0.0
+        
+        # Title similarity (simple word overlap)
+        if current_title and hist_title:
+            current_words = set(current_title.split())
+            hist_words = set(hist_title.split())
+            if current_words and hist_words:
+                overlap = len(current_words & hist_words) / len(current_words | hist_words)
+                similarity += overlap * 0.4
+        
+        # URL similarity
+        if current_url and hist_url:
+            if current_url == hist_url:
+                similarity += 0.4
+            elif current_url in hist_url or hist_url in current_url:
+                similarity += 0.2
+        
+        # CWE match
+        if current_cwe and hist_cwe and current_cwe == hist_cwe:
+            similarity += 0.2
+        
+        if similarity > 0.5:  # Threshold for potential duplicate
+            similar_reports.append({
+                "title": hist_report.get("title"),
+                "url": hist_url,
+                "similarity_score": similarity,
+            })
+            max_similarity = max(max_similarity, similarity)
+    
+    return {
+        "is_duplicate": max_similarity >= 0.8,  # High threshold for duplicate
+        "similarity_score": max_similarity,
+        "similar_reports": similar_reports[:5],  # Top 5 similar
     }
 
 
@@ -146,7 +222,11 @@ def check_sensitive_data(report_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def score_report_quality(report_data: Dict[str, Any], scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def score_report_quality(
+    report_data: Dict[str, Any],
+    scope: Optional[Dict[str, Any]] = None,
+    historical_reports: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """Score overall report quality.
     
     Args:
@@ -230,17 +310,30 @@ def score_report_quality(report_data: Dict[str, Any], scope: Optional[Dict[str, 
     # Sensitive data check
     sensitive_check = check_sensitive_data(report_data)
     
+    # Duplicate detection
+    duplicate_check = check_duplicate_findings(report_data, historical_reports)
+    
+    # Deduct points for duplicates
+    if duplicate_check["is_duplicate"]:
+        score = max(0, score - 20)  # Penalty for duplicates
+        quality_rating = "duplicate" if score < 40 else quality_rating
+    
     return {
         "total_score": score,
         "max_score": max_score,
         "quality_rating": quality_rating,
         "breakdown": breakdown,
         "sensitive_data_check": sensitive_check,
-        "recommendations": _generate_recommendations(breakdown, sensitive_check),
+        "duplicate_check": duplicate_check,
+        "recommendations": _generate_recommendations(breakdown, sensitive_check, duplicate_check),
     }
 
 
-def _generate_recommendations(breakdown: Dict[str, Any], sensitive_check: Dict[str, Any]) -> List[str]:
+def _generate_recommendations(
+    breakdown: Dict[str, Any],
+    sensitive_check: Dict[str, Any],
+    duplicate_check: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     """Generate recommendations for improving report quality."""
     recommendations = []
     
@@ -264,6 +357,13 @@ def _generate_recommendations(breakdown: Dict[str, Any], sensitive_check: Dict[s
     # Sensitive data recommendations
     if sensitive_check.get("has_sensitive_data"):
         recommendations.append("Review report for sensitive data exposure - sanitize if needed")
+    
+    # Duplicate recommendations
+    if duplicate_check and duplicate_check.get("is_duplicate"):
+        recommendations.append(f"Potential duplicate - similarity score: {duplicate_check.get('similarity_score', 0):.2f}")
+        similar = duplicate_check.get("similar_reports", [])
+        if similar:
+            recommendations.append(f"Similar to: {similar[0].get('title', 'unknown report')}")
     
     return recommendations
 

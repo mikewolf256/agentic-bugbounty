@@ -89,7 +89,7 @@ def is_url_in_scope(url: str, scope_config: Dict[str, Any]) -> Tuple[bool, Optio
     """Check if a URL is within scope.
     
     Args:
-        url: Full URL to check
+        url: Full URL to check (or bare hostname)
         scope_config: Scope configuration dict with primary_targets, secondary_targets, in_scope
         
     Returns:
@@ -97,9 +97,19 @@ def is_url_in_scope(url: str, scope_config: Dict[str, Any]) -> Tuple[bool, Optio
         - is_in_scope: True if URL matches scope
         - reason: Explanation of why it's in/out of scope, or None
     """
+    # Handle bare hostnames (no scheme)
+    if "://" not in url:
+        # Treat as hostname, add http:// for parsing
+        url = f"http://{url}"
+    
     parsed = urlparse(url)
     host = parsed.netloc.split(":")[0] if parsed.netloc else ""
     path = parsed.path or "/"
+    
+    # If still no host, check if the original URL was just a path
+    if not host and parsed.path:
+        # Original URL was likely just a path, not a valid target
+        return False, "No hostname in URL"
     
     if not host:
         return False, "No hostname in URL"

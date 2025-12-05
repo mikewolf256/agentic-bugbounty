@@ -749,6 +749,14 @@ def import_h1_scope(req: H1ImportRequest):
     
     print(f"[H1] Saved scope to: {scope_file}", file=sys.stderr)
     
+    # Auto-generate program config file
+    try:
+        from tools.program_config_generator import generate_program_config
+        config_file = generate_program_config(handle, program, scope_data)
+        print(f"[H1] Generated program config: {config_file}", file=sys.stderr)
+    except Exception as e:
+        print(f"[H1] Warning: Failed to generate program config: {e}", file=sys.stderr)
+    
     # Optionally set as active scope
     scope_set = False
     if req.auto_set_scope:
@@ -4825,6 +4833,111 @@ def _load_host_profile_snapshot(host: str, latest: bool = True) -> Optional[Dict
             return json.load(fh)
     except Exception:
         return None
+
+@app.get("/mcp/health")
+def health_check():
+    """
+    Comprehensive health check endpoint.
+    
+    Returns system status including:
+    - MCP server status
+    - Tool availability (Katana, Nuclei, WhatWeb)
+    - Scope configuration status
+    - Recent scan statistics
+    - System resources
+    """
+    health_status = {
+        "status": "healthy",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "services": {},
+        "tools": {},
+        "scope": {},
+        "system": {},
+    }
+    
+    # Check MCP server
+    health_status["services"]["mcp_server"] = {
+        "status": "running",
+        "uptime_seconds": int(time.time() - _server_start_time) if "_server_start_time" in globals() else 0,
+    }
+    
+    # Check tool availability
+    tools_status = {}
+    
+    # Check Katana
+    try:
+        result = subprocess.run(
+            ["katana", "-version"],
+            capture_output=True,
+            timeout=5,
+        )
+        tools_status["katana"] = {
+            "available": result.returncode == 0,
+            "version": result.stdout.decode().strip()[:50] if result.stdout else "unknown",
+        }
+    except Exception as e:
+        tools_status["katana"] = {"available": False, "error": str(e)[:100]}
+    
+    # Check Nuclei
+    try:
+        result = subprocess.run(
+            ["nuclei", "-version"],
+            capture_output=True,
+            timeout=5,
+        )
+        tools_status["nuclei"] = {
+            "available": result.returncode == 0,
+            "version": result.stdout.decode().strip()[:50] if result.stdout else "unknown",
+        }
+    except Exception as e:
+        tools_status["nuclei"] = {"available": False, "error": str(e)[:100]}
+    
+    # Check WhatWeb (via Docker)
+    try:
+        result = subprocess.run(
+            ["docker", "run", "--rm", "whatweb/whatweb", "--version"],
+            capture_output=True,
+            timeout=10,
+        )
+        tools_status["whatweb"] = {
+            "available": result.returncode == 0,
+            "method": "docker",
+        }
+    except Exception as e:
+        tools_status["whatweb"] = {"available": False, "error": str(e)[:100]}
+    
+    health_status["tools"] = tools_status
+    
+    # Check scope configuration
+    scope_status = {
+        "configured": SCOPE is not None,
+        "program_name": SCOPE.program_name if SCOPE else None,
+        "primary_targets_count": len(SCOPE.primary_targets) if SCOPE else 0,
+        "secondary_targets_count": len(SCOPE.secondary_targets) if SCOPE else 0,
+    }
+    health_status["scope"] = scope_status
+    
+    # System resources (basic)
+    try:
+        import psutil
+        health_status["system"] = {
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_percent": psutil.disk_usage(OUTPUT_DIR).percent if os.path.exists(OUTPUT_DIR) else None,
+        }
+    except ImportError:
+        health_status["system"] = {"note": "psutil not available"}
+    
+    # Determine overall health
+    all_tools_ok = all(t.get("available", False) for t in tools_status.values())
+    if not all_tools_ok or not scope_status["configured"]:
+        health_status["status"] = "degraded"
+    
+    return health_status
+
+
+# Track server start time for uptime calculation
+_server_start_time = time.time()
 
 if __name__ == "__main__":
     import uvicorn

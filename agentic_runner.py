@@ -2503,6 +2503,74 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
     except Exception as e:
         print(f"[POC-VALIDATOR] POC validation failed: {e}, continuing with all findings", file=sys.stderr)
 
+    # Browser PoC validation for eligible findings
+    try:
+        browser_validation_enabled = get_profile_setting("browser_validation.enabled", True)
+        auto_validate_xss = get_profile_setting("browser_validation.auto_validate_xss", True)
+        auto_validate_ui = get_profile_setting("browser_validation.auto_validate_ui", True)
+        devtools_port = get_profile_setting("browser_validation.devtools_port", 9222)
+        require_devtools = get_profile_setting("browser_validation.require_devtools", False)
+        
+        if browser_validation_enabled:
+            # Check if Chrome DevTools is available
+            try:
+                import requests
+                devtools_check = requests.get(f"http://localhost:{devtools_port}/json", timeout=2)
+                devtools_available = devtools_check.status_code == 200
+            except Exception:
+                devtools_available = False
+            
+            if not devtools_available and require_devtools:
+                print("[BROWSER-VALIDATION] Chrome DevTools not available, skipping browser validation", file=sys.stderr)
+            elif devtools_available or not require_devtools:
+                browser_validated_count = 0
+                for finding in triaged:
+                    vuln_type = finding.get("type", "").lower() or finding.get("vulnerability_type", "").lower()
+                    cwe = finding.get("cwe", "")
+                    
+                    # Determine if finding would benefit from browser validation
+                    should_validate = False
+                    if auto_validate_xss and ("xss" in vuln_type or cwe == "CWE-79"):
+                        should_validate = True
+                    elif auto_validate_ui and any(keyword in vuln_type for keyword in ["ui", "client", "reflected"]):
+                        should_validate = True
+                    
+                    if should_validate:
+                        try:
+                            # Call MCP endpoint for browser validation
+                            mcp_base_url = os.environ.get("MCP_SERVER_URL", "http://127.0.0.1:8000")
+                            payload = {
+                                "finding": finding,
+                                "devtools_port": devtools_port,
+                                "wait_timeout": get_profile_setting("browser_validation.screenshot_timeout", 5),
+                            }
+                            resp = requests.post(
+                                f"{mcp_base_url}/mcp/validate_poc_with_browser",
+                                json=payload,
+                                timeout=30,
+                            )
+                            if resp.status_code == 200:
+                                browser_result = resp.json()
+                                # Merge browser validation results into finding
+                                if "validation" not in finding:
+                                    finding["validation"] = {}
+                                finding["validation"]["browser_validation"] = browser_result
+                                finding["browser_validation_enabled"] = True
+                                
+                                if browser_result.get("validated"):
+                                    browser_validated_count += 1
+                                    if browser_result.get("screenshot_path"):
+                                        finding["validation"]["screenshot"] = browser_result["screenshot_path"]
+                        except Exception as e:
+                            print(f"[BROWSER-VALIDATION] Failed to validate {finding.get('title', 'unknown')}: {e}", file=sys.stderr)
+                
+                if browser_validated_count > 0:
+                    print(f"[BROWSER-VALIDATION] Browser-validated {browser_validated_count} findings", file=sys.stderr)
+    except ImportError:
+        print("[BROWSER-VALIDATION] Browser validation not available, skipping", file=sys.stderr)
+    except Exception as e:
+        print(f"[BROWSER-VALIDATION] Browser validation failed: {e}, continuing", file=sys.stderr)
+
     # Extract scan ID from various finding file formats
     scan_id = os.path.basename(findings_file)
     for prefix in ["zap_findings_", "katana_nuclei_", "cloud_findings_", "findings_"]:
@@ -2830,14 +2898,35 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
             except Exception:
                 pass
 
-        # Screenshot (when available)
-        screenshot = (t.get("validation") or {}).get("screenshot") or t.get("screenshot")
+        # Screenshot (when available) - check browser validation first
+        browser_validation = (t.get("validation") or {}).get("browser_validation", {})
+        screenshot = browser_validation.get("screenshot_path") or (t.get("validation") or {}).get("screenshot") or t.get("screenshot")
         if screenshot and os.path.exists(screenshot):
             body += f"""
 
 ## Screenshot Evidence
 
 ![POC Screenshot]({screenshot})
+"""
+        
+        # Browser validation console logs
+        if browser_validation.get("console_logs"):
+            body += f"""
+
+## Browser Console Logs
+
+```
+{json.dumps(browser_validation['console_logs'], indent=2)[:2000]}
+```
+"""
+        
+        # Browser visual indicators
+        if browser_validation.get("visual_indicators"):
+            body += f"""
+
+## Visual Validation Indicators
+
+{chr(10).join(f"- {indicator}" for indicator in browser_validation['visual_indicators'])}
 """
 
         body += f"""
@@ -2851,6 +2940,53 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         path = os.path.join(out_dir, f"{scan_id}__{name}.md")
         open(path, "w").write(md(t, scope))
         print("[TRIAGE] Wrote", path)
+        # Store report path in finding for validation workflow
+        t["report_path"] = path
+
+    # Human validation workflow integration
+    try:
+        human_validation_enabled = get_profile_setting("human_validation.enabled", True)
+        if human_validation_enabled:
+            from tools.human_validation_workflow import HumanValidationWorkflow
+            from tools.alerting import get_alert_manager
+            
+            validation_workflow = HumanValidationWorkflow()
+            alert_manager = get_alert_manager()
+            
+            # Get thresholds from profile
+            cvss_threshold = get_profile_setting("human_validation.auto_queue_cvss_threshold", 7.0)
+            bounty_threshold = get_profile_setting("human_validation.auto_queue_bounty_threshold", 500)
+            
+            # Get program name from scope
+            program_name = scope.get("program_name") or scope.get("handle") or "unknown"
+            
+            queued_count = 0
+            for finding in triaged:
+                cvss = float(finding.get("cvss_score", 0) or 0)
+                estimated_bounty = float(finding.get("estimated_bounty", 0) or 0)
+                
+                # Queue findings that meet thresholds
+                if cvss >= cvss_threshold or estimated_bounty >= bounty_threshold:
+                    report_path = finding.get("report_path")
+                    validation_id = validation_workflow.queue_for_validation(
+                        finding, program_name, report_path
+                    )
+                    queued_count += 1
+                    
+                    # Send Discord alert
+                    try:
+                        alert_manager.send_discord_validation_alert(
+                            validation_id, finding, program_name
+                        )
+                    except Exception as e:
+                        print(f"[VALIDATION] Failed to send Discord alert: {e}", file=sys.stderr)
+            
+            if queued_count > 0:
+                print(f"[VALIDATION] Queued {queued_count} findings for human validation", file=sys.stderr)
+    except ImportError:
+        print("[VALIDATION] Human validation workflow not available, skipping", file=sys.stderr)
+    except Exception as e:
+        print(f"[VALIDATION] Human validation workflow failed: {e}, continuing", file=sys.stderr)
 
     return triage_path
 

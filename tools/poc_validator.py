@@ -81,8 +81,35 @@ def validate_poc(finding: Dict[str, Any]) -> Dict[str, Any]:
     # Check for manual validation
     has_manual_validation = finding.get("manual_validation", False)
     
+    # Check for browser validation
+    browser_validation_enabled = finding.get("browser_validation_enabled", False)
+    browser_validation_result = None
+    if browser_validation_enabled:
+        try:
+            from tools.poc_browser_validator import BrowserPOCValidator
+            browser_validator = BrowserPOCValidator()
+            browser_validation_result = browser_validator.validate_finding_with_browser(finding)
+            
+            # Merge browser validation results
+            if browser_validation_result:
+                if browser_validation_result.get("screenshot_path"):
+                    validation["browser_validation"] = browser_validation_result
+                    has_screenshot = True  # Update screenshot flag
+                    result["reasons"].append("Browser-validated screenshot available")
+                
+                if browser_validation_result.get("console_logs"):
+                    validation["browser_console_logs"] = browser_validation_result["console_logs"]
+                
+                if browser_validation_result.get("visual_indicators"):
+                    validation["browser_visual_indicators"] = browser_validation_result["visual_indicators"]
+                    result["reasons"].append("Browser visual validation indicators present")
+        except ImportError:
+            pass  # Browser validator not available
+        except Exception as e:
+            print(f"[POC-VALIDATOR] Browser validation failed: {e}", file=sys.stderr)
+    
     # Determine POC validation status
-    if has_validation_evidence or has_manual_validation:
+    if has_validation_evidence or has_manual_validation or (browser_validation_result and browser_validation_result.get("validated")):
         result["poc_validated"] = True
         result["reasons"].append("Validation evidence present")
     else:
@@ -97,6 +124,12 @@ def validate_poc(finding: Dict[str, Any]) -> Dict[str, Any]:
         score_points += 3
         if len(confirmed_engines) > 1:
             score_points += 1  # Multiple engines confirm
+    
+    # Browser validation (high weight)
+    if browser_validation_result and browser_validation_result.get("validated"):
+        score_points += 3
+        if browser_validation_result.get("screenshot_path"):
+            score_points += 1  # Extra point for screenshot
     
     # Request/response capture
     if has_capture:

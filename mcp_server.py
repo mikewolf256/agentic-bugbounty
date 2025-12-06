@@ -404,6 +404,20 @@ class RandomGenerationRequest(BaseModel):
     tokens: Optional[List[str]] = None  # Optional tokens to analyze
     auth_context: Optional[Dict[str, Any]] = None  # Optional authentication context
 
+class BrowserPOCValidationRequest(BaseModel):
+    finding: Dict[str, Any]  # Finding dict with URL, payload, type
+    devtools_url: Optional[str] = None  # Chrome DevTools WebSocket URL (auto-detect if None)
+    devtools_port: int = 9222  # Port for auto-detection
+    wait_timeout: int = 5  # Seconds to wait for page load
+
+class BrowserPOCValidationResult(BaseModel):
+    validated: bool
+    screenshot_path: Optional[str] = None
+    console_logs: List[Dict[str, Any]] = []
+    visual_indicators: List[str] = []
+    page_content: Optional[str] = None
+    error: Optional[str] = None
+
 class NucleiRequest(BaseModel):
     target: str
     templates: Optional[List[str]] = None
@@ -4853,6 +4867,42 @@ def run_random_generation_checks(req: RandomGenerationRequest):
         token_type=token_type,
         meta={"tests_run": result.get("tests_run", 0)}
     )
+
+
+@app.post("/mcp/validate_poc_with_browser", response_model=BrowserPOCValidationResult)
+def validate_poc_with_browser(req: BrowserPOCValidationRequest):
+    """Validate PoC with browser automation."""
+    # Extract host from finding URL for scope enforcement
+    finding = req.finding
+    url = finding.get("url") or finding.get("_raw_finding", {}).get("url", "")
+    if url:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+        _enforce_scope(host)
+    
+    try:
+        from tools.poc_browser_validator import BrowserPOCValidator
+        validator = BrowserPOCValidator(
+            devtools_port=req.devtools_port,
+            screenshot_timeout=req.wait_timeout
+        )
+        result = validator.validate_finding_with_browser(
+            finding=req.finding,
+            devtools_url=req.devtools_url,
+            devtools_port=req.devtools_port,
+            wait_timeout=req.wait_timeout,
+        )
+        return BrowserPOCValidationResult(
+            validated=result.get("validated", False),
+            screenshot_path=result.get("screenshot_path"),
+            console_logs=result.get("console_logs", []),
+            visual_indicators=result.get("visual_indicators", []),
+            page_content=result.get("page_content"),
+            error=result.get("error"),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Browser PoC validation failed: {e}")
 
 
 @app.post("/mcp/run_auth_checks", response_model=AuthChecksResult)

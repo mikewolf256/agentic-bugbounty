@@ -94,6 +94,7 @@ def generate_program_config(
             "devtools_port": 9222,
             "screenshot_timeout": 5,
             "require_devtools": False,  # If false, skip browser validation if DevTools unavailable
+            "enable_obfuscation": True,  # Enable anti-detection techniques to hide DevTools
         },
         
         # HackerOne submission

@@ -409,6 +409,7 @@ class BrowserPOCValidationRequest(BaseModel):
     devtools_url: Optional[str] = None  # Chrome DevTools WebSocket URL (auto-detect if None)
     devtools_port: int = 9222  # Port for auto-detection
     wait_timeout: int = 5  # Seconds to wait for page load
+    enable_obfuscation: bool = True  # Enable anti-detection obfuscation
 
 class BrowserPOCValidationResult(BaseModel):
     validated: bool
@@ -4885,13 +4886,15 @@ def validate_poc_with_browser(req: BrowserPOCValidationRequest):
         from tools.poc_browser_validator import BrowserPOCValidator
         validator = BrowserPOCValidator(
             devtools_port=req.devtools_port,
-            screenshot_timeout=req.wait_timeout
+            screenshot_timeout=req.wait_timeout,
+            enable_obfuscation=req.enable_obfuscation
         )
         result = validator.validate_finding_with_browser(
             finding=req.finding,
             devtools_url=req.devtools_url,
             devtools_port=req.devtools_port,
             wait_timeout=req.wait_timeout,
+            enable_obfuscation=req.enable_obfuscation,
         )
         return BrowserPOCValidationResult(
             validated=result.get("validated", False),

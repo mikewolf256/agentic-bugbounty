@@ -2510,6 +2510,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
         auto_validate_ui = get_profile_setting("browser_validation.auto_validate_ui", True)
         devtools_port = get_profile_setting("browser_validation.devtools_port", 9222)
         require_devtools = get_profile_setting("browser_validation.require_devtools", False)
+        enable_obfuscation = get_profile_setting("browser_validation.enable_obfuscation", True)
         
         if browser_validation_enabled:
             # Check if Chrome DevTools is available
@@ -2543,6 +2544,7 @@ def run_triage_for_findings(findings_file: str, scope: Dict[str, Any], out_dir: 
                                 "finding": finding,
                                 "devtools_port": devtools_port,
                                 "wait_timeout": get_profile_setting("browser_validation.screenshot_timeout", 5),
+                                "enable_obfuscation": enable_obfuscation,
                             }
                             resp = requests.post(
                                 f"{mcp_base_url}/mcp/validate_poc_with_browser",

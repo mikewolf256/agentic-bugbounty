@@ -4472,7 +4472,12 @@ def run_secret_exposure_checks(req: SecretExposureRequest):
     _enforce_scope(req.host)
     try:
         from tools.secret_exposure_tester import validate_secret_exposure
-        result = validate_secret_exposure(f"https://{req.host}", req.scan_js, req.scan_responses, req.validate_secrets)
+        # Construct proper URL - use http:// for localhost, https:// for others
+        if req.host.startswith("localhost") or req.host.startswith("127.0.0.1"):
+            target_url = f"http://{req.host}"
+        else:
+            target_url = f"https://{req.host}"
+        result = validate_secret_exposure(target_url, req.scan_js, req.scan_responses, req.validate_secrets)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Secret exposure tester failed: {e}")
     

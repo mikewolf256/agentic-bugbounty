@@ -33,6 +33,7 @@ def test_command_injection(
         Dict with test results
     """
     result = {
+        "type": "command_injection",
         "test": "command_injection",
         "vulnerable": False,
         "injection_point": None,
@@ -245,6 +246,7 @@ def test_command_injection_json(
         Dict with test results
     """
     result = {
+        "type": "command_injection",
         "test": "command_injection_json",
         "vulnerable": False,
         "injection_point": None,
@@ -361,6 +363,7 @@ def test_command_injection_file_upload(
         Dict with test results
     """
     result = {
+        "type": "command_injection",
         "test": "command_injection_file_upload",
         "vulnerable": False,
         "injection_point": "filename",

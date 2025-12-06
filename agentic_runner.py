@@ -1481,17 +1481,24 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
     # Validate findings are in-scope (sample check)
     try:
         from tools.scope_validator import filter_findings_by_scope
+        # Modules are stored in summary["modules"][host], not in host_data
+        modules = summary.get("modules", {})
         for host_data in summary_hosts[:2]:  # Sample first 2 hosts
-            host_modules = host_data.get("modules", {})
+            host = host_data.get("host", "")
+            if not host:
+                continue
+            host_modules = modules.get(host, {})
             if "katana_nuclei" in host_modules:
-                findings_file = host_modules["katana_nuclei"].get("findings_file")
-                if findings_file and os.path.exists(findings_file):
-                    with open(findings_file, "r") as f:
-                        findings = json.load(f)
-                    original_count = len(findings)
-                    filtered = filter_findings_by_scope(findings, scope)
-                    if len(filtered) < original_count:
-                        print(f"[POST-SCAN] Found {original_count - len(filtered)} out-of-scope findings (filtered)")
+                katana_nuclei = host_modules["katana_nuclei"]
+                if isinstance(katana_nuclei, dict):
+                    findings_file = katana_nuclei.get("findings_file")
+                    if findings_file and os.path.exists(findings_file):
+                        with open(findings_file, "r") as f:
+                            findings = json.load(f)
+                        original_count = len(findings)
+                        filtered = filter_findings_by_scope(findings, scope)
+                        if len(filtered) < original_count:
+                            print(f"[POST-SCAN] Found {original_count - len(filtered)} out-of-scope findings (filtered)")
     except Exception:
         pass  # Non-critical
     

@@ -178,7 +178,7 @@ def scan_js_files(base_url: str, discovery_data: Optional[Dict[str, Any]] = None
     return all_secrets
 
 
-def scan_responses(target_url: str, endpoints: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def scan_http_responses(target_url: str, endpoints: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Scan HTTP responses for exposed secrets
     
     Args:
@@ -250,7 +250,7 @@ def validate_secret_exposure(
     
     # Scan HTTP responses
     if scan_responses:
-        response_secrets = scan_responses(target_url)
+        response_secrets = scan_http_responses(target_url)
         all_secrets.extend(response_secrets)
     
     # Deduplicate secrets

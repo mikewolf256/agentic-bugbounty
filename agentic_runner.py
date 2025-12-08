@@ -906,11 +906,20 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
     _ensure_scope_set(scope)
 
     hosts: List[str] = []
-    in_scope = scope.get("in_scope") or []
-    for entry in in_scope:
-        url = entry.get("url") or entry.get("target") or ""
-        if url:
-            hosts.append(url)
+    # Use primary_targets for recon if available (faster, only scans main targets)
+    # Otherwise fall back to in_scope (for backward compatibility)
+    primary_targets = scope.get("primary_targets", [])
+    if primary_targets:
+        hosts = list(primary_targets)
+        print(f"[RUNNER] Using primary_targets for recon: {len(hosts)} hosts")
+    else:
+        # Fallback to in_scope if no primary_targets
+        in_scope = scope.get("in_scope") or []
+        for entry in in_scope:
+            url = entry.get("url") or entry.get("target") or ""
+            if url:
+                hosts.append(url)
+        print(f"[RUNNER] Using in_scope for recon: {len(hosts)} hosts")
 
     summary_hosts: List[Dict[str, Any]] = []
 
@@ -1013,9 +1022,13 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
         # Try to run authenticated recon - will auto-detect Chrome DevTools on port 9222
         try:
             print(f"[AUTH-KATANA] Attempting authenticated recon for {target_url}...")
+            # Ensure target_url has proper scheme
+            if not target_url.startswith(("http://", "https://")):
+                target_url = f"http://{target_url}"
+            
+            # Don't pass session_ws_url if None - let it default in the model
             auth_katana_result = _mcp_post("/mcp/run_katana_auth", {
                 "target": target_url,
-                "session_ws_url": None,  # Auto-detect
             })
             summary["modules"][host]["katana_auth"] = {
                 "auth_katana_count": auth_katana_result.get("auth_katana_count", 0),
@@ -1194,8 +1207,12 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
                 
                 # Run targeted Nuclei scan with AI-selected templates
                 templates = ai_triage_result.get("templates", [])
-                if templates:
-                    target_url = f"http://{h}"
+                if templates and len(templates) > 0:
+                    # Check if h already has a scheme before prepending http://
+                    if not h.startswith(("http://", "https://")):
+                        target_url = f"http://{h}"
+                    else:
+                        target_url = h
                     print(f"[AI-TRIAGE] Running targeted Nuclei scan on {target_url}...")
                     targeted_nuclei_result = _mcp_post("/mcp/run_targeted_nuclei", {
                         "target": target_url,
@@ -1381,9 +1398,74 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
                             if isinstance(finding, dict) and "url" in finding:
                                 discovered_urls.append(finding["url"])
                 
+                # Supplement with lab metadata endpoints if available (for lab testing)
+                # This ensures testers get the specific endpoints they need
+                try:
+                    from tools.lab_test_suite import load_lab_metadata
+                    from pathlib import Path
+                    import json
+                    
+                    # Try to find lab metadata for this host
+                    labs_dir = Path(__file__).parent / "labs"
+                    if labs_dir.exists():
+                        for lab_dir in labs_dir.iterdir():
+                            if lab_dir.is_dir():
+                                meta_path = lab_dir / "lab_metadata.json"
+                                if meta_path.exists():
+                                    try:
+                                        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                                        base_url = meta.get("base_url", "")
+                                        
+                                        # Normalize host and base_url for comparison
+                                        # Extract hostname:port from both
+                                        def normalize_host(host_str):
+                                            """Extract hostname:port from URL or host string."""
+                                            if not host_str:
+                                                return ""
+                                            # Remove http:// or https://
+                                            host_str = host_str.replace("http://", "").replace("https://", "")
+                                            # Extract hostname:port (remove path)
+                                            host_str = host_str.split("/")[0]
+                                            return host_str
+                                        
+                                        normalized_host = normalize_host(h)
+                                        normalized_base = normalize_host(base_url)
+                                        
+                                        # Check if this lab matches our host
+                                        if base_url and (normalized_host == normalized_base or normalized_host in normalized_base or normalized_base in normalized_host):
+                                            # Add endpoints from lab metadata
+                                            endpoints = meta.get("endpoints", [])
+                                            added_count = 0
+                                            for ep in endpoints:
+                                                ep_path = ep.get("path", "")
+                                                if ep_path and ep_path != "/":  # Skip root path
+                                                    # Build full URL using the host format
+                                                    if h.startswith("http://") or h.startswith("https://"):
+                                                        full_url = f"{h.rstrip('/')}{ep_path}"
+                                                    else:
+                                                        full_url = f"http://{h.rstrip('/')}{ep_path}"
+                                                    if full_url not in discovered_urls:
+                                                        discovered_urls.append(full_url)
+                                                        added_count += 1
+                                            if added_count > 0:
+                                                print(f"[TARGETED-VULN] ✅ Matched lab '{lab_dir.name}' - Added {added_count} endpoints from lab metadata")
+                                                print(f"[TARGETED-VULN]   Lab base_url: {base_url}, Host: {h}")
+                                            break
+                                    except Exception as e:
+                                        pass  # Skip if lab metadata can't be loaded
+                except Exception:
+                    pass  # Lab metadata loading is optional
+                
                 # Add base URL if no URLs discovered
                 if not discovered_urls:
                     discovered_urls = [f"http://{h}"]
+                
+                # Debug: Show discovered URLs
+                print(f"[TARGETED-VULN] Discovered {len(discovered_urls)} URLs for testing:")
+                for url in discovered_urls[:10]:  # Show first 10
+                    print(f"[TARGETED-VULN]   - {url}")
+                if len(discovered_urls) > 10:
+                    print(f"[TARGETED-VULN]   ... and {len(discovered_urls) - 10} more")
                 
                 # Get current profile
                 current_profile = {
@@ -1583,12 +1665,40 @@ def run_full_scan_via_mcp(scope: Dict[str, Any], program_id: Optional[str] = Non
                     continue  # Already counted
                 if isinstance(module_data, dict) and "findings_count" in module_data:
                     findings_count += module_data.get("findings_count", 0)
+                
+                # Count findings from targeted_vuln_tests (the 15 vulnerability testers)
+                if module_name == "targeted_vuln_tests":
+                    # Handle both cases: findings as list, or empty dict (if orchestrator didn't run)
+                    if not module_data:  # Empty dict means orchestrator didn't run
+                        continue
+                    vuln_findings = module_data.get("findings", [])
+                    if isinstance(vuln_findings, list) and len(vuln_findings) > 0:
+                        findings_count += len(vuln_findings)
+                        # Count high severity findings
+                        for finding in vuln_findings:
+                            cvss = finding.get("cvss_score") or finding.get("meta", {}).get("cvss_score", 0.0)
+                            severity = finding.get("severity", "").lower() or finding.get("meta", {}).get("severity", "").lower()
+                            if cvss >= 7.0 or severity == "high":
+                                high_severity_count += 1
+                    # Also check if there's a findings_count field (for backwards compatibility)
+                    elif isinstance(module_data, dict) and "findings_count" in module_data:
+                        findings_count += module_data.get("findings_count", 0)
         
         scan_summary = {
             "findings_count": findings_count,
             "high_severity_count": high_severity_count,
             "scan_cost": summary.get("scan_cost", 0.0),
         }
+        
+        # Debug: Log findings breakdown
+        print(f"[ALERT] Findings count breakdown: {findings_count} total, {high_severity_count} high-severity")
+        if findings_count == 0:
+            print(f"[ALERT] Debug: Checking modules for findings...")
+            for host, host_modules in modules.items():
+                targeted_vuln = host_modules.get("targeted_vuln_tests", {})
+                if targeted_vuln:
+                    findings_in_module = targeted_vuln.get("findings", [])
+                    print(f"[ALERT] Debug: {host} targeted_vuln_tests has {len(findings_in_module) if isinstance(findings_in_module, list) else 0} findings")
         
         manager.alert_scan_complete(program_name, scan_summary)
     except Exception:
@@ -3022,12 +3132,12 @@ def main():
         description="Agentic Bug Bounty Runner - Orchestrate security scans and triage findings"
     )
     parser.add_argument("--findings_file", help="Findings JSON file (Katana+Nuclei, cloud, etc.) for triage mode")
-    parser.add_argument("--scope_file", default="scope.json", help="Program scope JSON")
+    parser.add_argument("--scope_file", "--scope", dest="scope_file", default="scope.json", help="Program scope JSON")
     parser.add_argument(
         "--mode",
         choices=["triage", "full-scan"],
-        default="triage",
-        help="Runner mode: triage existing findings or orchestrate full scan via MCP",
+        default=None,  # Auto-detect based on arguments
+        help="Runner mode: triage existing findings or orchestrate full scan via MCP (auto-detected if not specified)",
     )
     parser.add_argument("--mcp-url", help="Base URL for MCP server (default from MCP_BASE env)")
     parser.add_argument(
@@ -3071,6 +3181,13 @@ def main():
     global MCP_SERVER_URL
     if args.mcp_url:
         MCP_SERVER_URL = args.mcp_url
+
+    # Auto-detect mode if not specified
+    if args.mode is None:
+        if args.findings_file:
+            args.mode = "triage"
+        else:
+            args.mode = "full-scan"  # Default to full-scan if no findings_file provided
 
     print(f"[TRIAGE] Using DALFOX_BIN={DALFOX_PATH} (docker={DALFOX_DOCKER})")
 

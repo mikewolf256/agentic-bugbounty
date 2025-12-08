@@ -495,7 +495,7 @@ class BrowserPOCValidator:
             result["error"] = "No URL found in finding"
             return result
         
-        vuln_type = finding.get("type") or finding.get("vulnerability_type", "").lower()
+        vuln_type = (finding.get("type") or finding.get("vulnerability_type", "")).lower()
         payload = finding.get("payload") or finding.get("exploit_payload")
         
         # Determine validation strategy based on vulnerability type

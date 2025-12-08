@@ -440,6 +440,23 @@ class AuthConfig(BaseModel):
 class CloudReconRequest(BaseModel):
     host: str
 
+class CloudReconResult(BaseModel):
+    host: str
+    cloud_provider: Optional[str] = None  # aws, gcp, azure, or None
+    metadata_endpoints: List[str] = []
+    storage_indicators: List[str] = []
+    service_indicators: List[str] = []
+    findings: List[Dict[str, Any]] = []
+
+class PrioritizeHostRequest(BaseModel):
+    host: str
+
+class PrioritizeHostResult(BaseModel):
+    host: str
+    risk_score: int  # 1-100
+    rationale: str
+    factors: Dict[str, Any]  # Detailed scoring factors
+
 class CloudChecksRequest(BaseModel):
     target: str  # target URL or SSRF endpoint
     metadata_response: Optional[str] = None  # optional metadata response if already obtained
@@ -733,7 +750,7 @@ class NucleiTriageResult(BaseModel):
 
 class TargetedNucleiRequest(BaseModel):
     target: str  # Full URL to scan
-    templates: List[str]  # Template paths/directories to use
+    templates: Optional[List[str]] = []  # Template paths/directories to use (optional, can be empty)
     tags: Optional[List[str]] = None  # Optional tags to filter
     exclude_tags: Optional[List[str]] = None  # Tags to exclude
     severity: Optional[List[str]] = None  # Severity filter
@@ -743,7 +760,8 @@ class TargetedNucleiResult(BaseModel):
     target: str
     findings_count: int
     findings_file: str
-    templates_used: int
+    templates_used: int  # Number of templates used
+    message: Optional[str] = None  # Optional message for empty templates case
 
 
 class SecurityHeadersRequest(BaseModel):
@@ -1351,19 +1369,40 @@ def run_katana_nuclei(req: KatanaNucleiRequest):
             text=True,
             timeout=3600,
         )
+    except subprocess.TimeoutExpired:
+        error_msg = f"katana_nuclei_recon.py timed out after 3600 seconds for target: {req.target}"
+        print(f"[KATANA+NUCLEI] {error_msg}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=error_msg)
+    except FileNotFoundError:
+        error_msg = f"Python interpreter or script not found. Script path: {script_path}"
+        print(f"[KATANA+NUCLEI] {error_msg}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=error_msg)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error running katana+nuclei: {e}")
+        error_msg = f"Error running katana+nuclei: {e}"
+        print(f"[KATANA+NUCLEI] {error_msg}", file=sys.stderr)
+        print(f"[KATANA+NUCLEI] Command: {' '.join(cmd)}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=error_msg)
 
     if proc.returncode != 0:
+        error_detail = proc.stderr.strip() or proc.stdout.strip() or "Unknown error"
+        error_msg = f"katana_nuclei_recon.py failed with return code {proc.returncode}: {error_detail}"
+        print(f"[KATANA+NUCLEI] {error_msg}", file=sys.stderr)
+        if proc.stdout:
+            print(f"[KATANA+NUCLEI] stdout: {proc.stdout[:500]}", file=sys.stderr)
+        if proc.stderr:
+            print(f"[KATANA+NUCLEI] stderr: {proc.stderr[:500]}", file=sys.stderr)
         raise HTTPException(
             status_code=500,
-            detail=f"katana_nuclei_recon.py failed: {proc.stderr.strip()}",
+            detail=error_msg,
         )
 
     if not os.path.exists(out_path):
+        error_msg = f"Expected output file not found: {out_path}. Script may have failed silently."
+        print(f"[KATANA+NUCLEI] {error_msg}", file=sys.stderr)
+        print(f"[KATANA+NUCLEI] Script return code: {proc.returncode}", file=sys.stderr)
         raise HTTPException(
             status_code=500,
-            detail=f"Expected output file not found: {out_path}",
+            detail=error_msg,
         )
 
     with open(out_path, "r", encoding="utf-8") as fh:
@@ -2331,6 +2370,170 @@ def host_delta(req: CloudReconRequest):
     }
 
     return delta
+
+
+@app.post("/mcp/run_cloud_recon", response_model=CloudReconResult)
+def run_cloud_recon(req: CloudReconRequest):
+    """
+    Perform lightweight cloud reconnaissance for a host.
+    
+    This endpoint checks for:
+    - Cloud provider indicators (AWS, GCP, Azure)
+    - Cloud metadata endpoint references
+    - Storage bucket indicators
+    - Cloud service indicators in hostname/headers
+    """
+    from urllib.parse import urlparse
+    import socket
+    
+    host = _enforce_scope(req.host)
+    
+    result = {
+        "host": host,
+        "cloud_provider": None,
+        "metadata_endpoints": [],
+        "storage_indicators": [],
+        "service_indicators": [],
+        "findings": [],
+    }
+    
+    # Check hostname for cloud indicators
+    host_lower = host.lower()
+    if ".amazonaws.com" in host_lower or ".s3." in host_lower or ".ec2." in host_lower:
+        result["cloud_provider"] = "aws"
+        result["service_indicators"].append("AWS hostname detected")
+    elif ".googleapis.com" in host_lower or ".gcp." in host_lower or ".googlecloud.com" in host_lower:
+        result["cloud_provider"] = "gcp"
+        result["service_indicators"].append("GCP hostname detected")
+    elif ".azure.com" in host_lower or ".azurewebsites.net" in host_lower or ".cloudapp.net" in host_lower:
+        result["cloud_provider"] = "azure"
+        result["service_indicators"].append("Azure hostname detected")
+    
+    # Check for common cloud metadata endpoints (lightweight - just note them, don't probe)
+    metadata_endpoints = [
+        "http://169.254.169.254/",  # AWS/GCP metadata
+        "http://169.254.169.254/metadata/instance",  # Azure metadata
+        "http://metadata.google.internal/",  # GCP metadata
+    ]
+    result["metadata_endpoints"] = metadata_endpoints
+    
+    # Check for storage bucket indicators in hostname
+    if ".s3." in host_lower or host_lower.endswith(".s3.amazonaws.com"):
+        result["storage_indicators"].append("S3 bucket hostname")
+    if ".storage.googleapis.com" in host_lower:
+        result["storage_indicators"].append("GCS bucket hostname")
+    if ".blob.core.windows.net" in host_lower:
+        result["storage_indicators"].append("Azure Blob storage hostname")
+    
+    # Add finding if cloud provider detected
+    if result["cloud_provider"]:
+        result["findings"].append({
+            "type": "cloud_provider_detected",
+            "provider": result["cloud_provider"],
+            "severity": "info",
+            "description": f"Cloud provider {result['cloud_provider'].upper()} detected in hostname",
+        })
+    
+    return CloudReconResult(**result)
+
+
+@app.post("/mcp/prioritize_host", response_model=PrioritizeHostResult)
+def prioritize_host(req: PrioritizeHostRequest):
+    """
+    Compute risk score for a host based on host_profile data.
+    
+    Risk score factors:
+    - Base score: 10
+    - +5 per exposed admin panel
+    - +3 per high-severity nuclei finding
+    - +2 per API endpoint
+    - +1 per technology with known vulnerabilities
+    - Cap at 100
+    """
+    host = _enforce_scope(req.host)
+    
+    # Load host profile
+    profile = _load_host_profile_snapshot(host, latest=True)
+    if not profile:
+        # No profile yet - return minimal score
+        return PrioritizeHostResult(
+            host=host,
+            risk_score=5,
+            rationale="No host profile available yet. Risk score based on initial assessment.",
+            factors={
+                "base_score": 5,
+                "profile_available": False,
+            },
+        )
+    
+    # Initialize scoring
+    base_score = 10
+    score = base_score
+    factors = {
+        "base_score": base_score,
+        "admin_panels": 0,
+        "high_severity_findings": 0,
+        "api_endpoints": 0,
+        "vulnerable_technologies": 0,
+    }
+    rationale_parts = []
+    
+    # Check for admin panels
+    web = profile.get("web", {}) or {}
+    panels = web.get("panels", []) or []
+    if panels:
+        admin_count = len(panels)
+        admin_score = admin_count * 5
+        score += admin_score
+        factors["admin_panels"] = admin_count
+        rationale_parts.append(f"{admin_count} exposed admin panel(s)")
+    
+    # Check for high-severity nuclei findings
+    nuclei_findings = web.get("nuclei_findings", []) or []
+    high_severity = [f for f in nuclei_findings if f.get("severity", "").lower() in ["critical", "high"]]
+    if high_severity:
+        finding_score = len(high_severity) * 3
+        score += finding_score
+        factors["high_severity_findings"] = len(high_severity)
+        rationale_parts.append(f"{len(high_severity)} high/critical severity finding(s)")
+    
+    # Check for API endpoints
+    api_endpoints = web.get("api_endpoints", []) or []
+    if api_endpoints:
+        api_score = min(len(api_endpoints) * 2, 20)  # Cap at 20 points
+        score += api_score
+        factors["api_endpoints"] = len(api_endpoints)
+        rationale_parts.append(f"{len(api_endpoints)} API endpoint(s)")
+    
+    # Check for vulnerable technologies
+    technologies = profile.get("technologies", []) or []
+    vulnerable_techs = [
+        "wordpress", "drupal", "joomla", "phpmyadmin", "jenkins",
+        "tomcat", "apache", "nginx", "iis", "express", "django",
+    ]
+    tech_matches = [t for t in technologies if any(vt in str(t).lower() for vt in vulnerable_techs)]
+    if tech_matches:
+        tech_score = min(len(tech_matches), 10)  # Cap at 10 points
+        score += tech_score
+        factors["vulnerable_technologies"] = len(tech_matches)
+        rationale_parts.append(f"{len(tech_matches)} technology(ies) with known vulnerabilities")
+    
+    # Cap score at 100
+    score = min(score, 100)
+    
+    # Generate rationale
+    if rationale_parts:
+        rationale = f"Risk score {score}/100 based on: {', '.join(rationale_parts)}."
+    else:
+        rationale = f"Risk score {score}/100. Minimal attack surface detected."
+    
+    return PrioritizeHostResult(
+        host=host,
+        risk_score=score,
+        rationale=rationale,
+        factors=factors,
+    )
+
 
 # ---------- startup ----------
 
@@ -5240,10 +5443,14 @@ def run_targeted_nuclei(req: TargetedNucleiRequest):
     """
     host = _enforce_scope(req.target)
 
-    if not req.templates:
-        raise HTTPException(
-            status_code=400,
-            detail="No templates specified. Call /mcp/triage_nuclei_templates first.",
+    # Handle empty templates list - return early with 0 findings
+    if not req.templates or len(req.templates) == 0:
+        return TargetedNucleiResult(
+            target=req.target,
+            findings_count=0,
+            findings_file="",
+            templates_used=0,
+            message="No templates specified. Call /mcp/triage_nuclei_templates first.",
         )
 
     # Resolve template paths

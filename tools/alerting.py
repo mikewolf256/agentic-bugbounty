@@ -370,6 +370,7 @@ class AlertManager:
             True if sent successfully
         """
         if not self.discord_webhook:
+            print("[ALERT] Discord webhook not configured. Set DISCORD_WEBHOOK_URL environment variable.", file=sys.stderr)
             return False
         
         title = finding.get("title") or "Unknown Finding"

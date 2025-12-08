@@ -1,0 +1,197 @@
+{
+  "program_name": "All Labs Test Scope",
+  "program_handle": "all_labs_test",
+  "primary_targets": [
+    "http://localhost:5001",
+    "http://localhost:5002",
+    "http://localhost:5003",
+    "http://localhost:5004",
+    "http://localhost:5005",
+    "http://localhost:5006",
+    "http://localhost:5007",
+    "http://localhost:5008",
+    "http://localhost:5009",
+    "http://localhost:5010",
+    "http://localhost:5011",
+    "http://localhost:5013",
+    "http://localhost:5014",
+    "http://localhost:5015",
+    "http://localhost:5016",
+    "http://localhost:5017",
+    "http://localhost:5018",
+    "http://localhost:5019",
+    "http://localhost:5020",
+    "http://localhost:5022",
+    "http://localhost:5023",
+    "http://localhost:5024",
+    "http://localhost:5025",
+    "http://localhost:5026",
+    "http://localhost:5027"
+  ],
+  "secondary_targets": [],
+  "in_scope": [
+    {
+      "url": "http://localhost:5001",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "XSS and JS secrets lab"
+    },
+    {
+      "url": "http://localhost:5002",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "IDOR with authentication lab"
+    },
+    {
+      "url": "http://localhost:5003",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Backup leaks and fingerprinting lab"
+    },
+    {
+      "url": "http://localhost:5004",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Auth scan lab"
+    },
+    {
+      "url": "http://localhost:5005",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "XXE lab"
+    },
+    {
+      "url": "http://localhost:5006",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Business logic lab"
+    },
+    {
+      "url": "http://localhost:5007",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Cloud metadata lab"
+    },
+    {
+      "url": "http://localhost:5008",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Template injection lab"
+    },
+    {
+      "url": "http://localhost:5009",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Deserialization lab"
+    },
+    {
+      "url": "http://localhost:5010",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "GraphQL lab"
+    },
+    {
+      "url": "http://localhost:5011",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "gRPC lab (HTTP interface)"
+    },
+    {
+      "url": "http://localhost:5013",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Command injection lab"
+    },
+    {
+      "url": "http://localhost:5014",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Path traversal lab"
+    },
+    {
+      "url": "http://localhost:5015",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "File upload lab"
+    },
+    {
+      "url": "http://localhost:5016",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "CSRF lab"
+    },
+    {
+      "url": "http://localhost:5017",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "NoSQL injection lab"
+    },
+    {
+      "url": "http://localhost:5018",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "LDAP injection lab"
+    },
+    {
+      "url": "http://localhost:5019",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Mass assignment lab"
+    },
+    {
+      "url": "http://localhost:5020",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "WebSocket lab"
+    },
+    {
+      "url": "http://localhost:5022",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "SSI injection lab"
+    },
+    {
+      "url": "http://localhost:5023",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Crypto weakness lab"
+    },
+    {
+      "url": "http://localhost:5024",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Parameter pollution lab"
+    },
+    {
+      "url": "http://localhost:5025",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "DNS rebinding lab"
+    },
+    {
+      "url": "http://localhost:5026",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Cache poisoning lab"
+    },
+    {
+      "url": "http://localhost:5027",
+      "type": "URL",
+      "bounty_eligible": true,
+      "instruction": "Random generation lab"
+    }
+  ],
+  "rules": {
+    "safe_harbor": true,
+    "allow_automated": true,
+    "excluded_vuln_types": [],
+    "requires_poc": false
+  },
+  "bounties": {
+    "low": {"min": 100, "max": 500},
+    "medium": {"min": 500, "max": 2000},
+    "high": {"min": 2000, "max": 5000},
+    "critical": {"min": 5000, "max": 10000}
+  }
+}
+

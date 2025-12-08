@@ -1,0 +1,198 @@
+{
+  "timestamp": 1764983440,
+  "labs_tested": 14,
+  "labs_passed": 1,
+  "labs_failed": 13,
+  "total_expected": 4,
+  "total_matched": 4,
+  "total_missed": 0,
+  "overall_detection_rate": 1.0,
+  "lab_results": {
+    "command_injection_lab": {
+      "lab_name": "command_injection_lab",
+      "timestamp": 1764983440,
+      "success": true,
+      "error": null,
+      "validation": {
+        "total_expected": 4,
+        "total_matched": 4,
+        "total_missed": 0,
+        "detection_rate": 1.0,
+        "matched": [
+          {
+            "type": "command_injection",
+            "subtype": "get_parameter",
+            "cwe": "CWE-78",
+            "description": "Command injection via GET parameter",
+            "endpoint": "/execute",
+            "parameter": "cmd"
+          },
+          {
+            "type": "command_injection",
+            "subtype": "post_parameter",
+            "cwe": "CWE-78",
+            "description": "Command injection via POST parameter",
+            "endpoint": "/execute",
+            "parameter": "cmd"
+          },
+          {
+            "type": "command_injection",
+            "subtype": "file_upload",
+            "cwe": "CWE-78",
+            "description": "Command injection via file upload filename",
+            "endpoint": "/upload",
+            "parameter": "filename"
+          },
+          {
+            "type": "command_injection",
+            "subtype": "api_endpoint",
+            "cwe": "CWE-78",
+            "description": "Command injection via API endpoint",
+            "endpoint": "/api/run",
+            "parameter": "command"
+          }
+        ],
+        "missed": [],
+        "detected_findings": [
+          {
+            "test": "command_injection",
+            "vulnerable": true,
+            "injection_point": "cmd",
+            "evidence": {
+              "payload": "id",
+              "payload_type": "unix_id",
+              "status_code": 200,
+              "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+              "text_content_snippet": "\n \n \n \n     Command Injection Lab \n     \n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .error { background: #fee; color: #c00; paddin",
+              "indicator": "uid=",
+              "note": "Command output detected in response (HTML parsing improved)"
+            },
+            "rce_confirmed": false,
+            "target_url": "http://localhost:5013/execute"
+          },
+          {
+            "test": "command_injection_file_upload",
+            "vulnerable": true,
+            "injection_point": "filename",
+            "evidence": {
+              "filename": "test`id`.jpg",
+              "payload_type": "backtick",
+              "status_code": 200,
+              "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+              "indicator": "uid=",
+              "note": "Command output detected in file upload response"
+            },
+            "rce_confirmed": false,
+            "target_url": "http://localhost:5013/upload"
+          },
+          {
+            "test": "command_injection_json",
+            "vulnerable": true,
+            "injection_point": "command",
+            "evidence": {
+              "payload": "id",
+              "payload_type": "unix_id",
+              "status_code": 200,
+              "response_snippet": "{\n  \"command\": \"id\",\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"uid=0(root) gid=0(root) groups=0(root)\\n\"\n}\n",
+              "indicator": "uid=",
+              "note": "Command output detected in JSON API response"
+            },
+            "rce_confirmed": false,
+            "target_url": "http://localhost:5013/api/run"
+          }
+        ]
+      }
+    },
+    "path_traversal_lab": {
+      "lab_name": "path_traversal_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://path_traversal_lab:5000",
+      "validation": null
+    },
+    "file_upload_lab": {
+      "lab_name": "file_upload_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://file_upload_lab:5000",
+      "validation": null
+    },
+    "csrf_lab": {
+      "lab_name": "csrf_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://csrf_lab:5000",
+      "validation": null
+    },
+    "nosql_injection_lab": {
+      "lab_name": "nosql_injection_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://nosql_injection_lab:5000",
+      "validation": null
+    },
+    "ldap_injection_lab": {
+      "lab_name": "ldap_injection_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://ldap_injection_lab:5000",
+      "validation": null
+    },
+    "mass_assignment_lab": {
+      "lab_name": "mass_assignment_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://mass_assignment_lab:5000",
+      "validation": null
+    },
+    "websocket_lab": {
+      "lab_name": "websocket_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://websocket_lab:5000",
+      "validation": null
+    },
+    "ssi_injection_lab": {
+      "lab_name": "ssi_injection_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://ssi_injection_lab:5000",
+      "validation": null
+    },
+    "crypto_weakness_lab": {
+      "lab_name": "crypto_weakness_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://crypto_weakness_lab:5000",
+      "validation": null
+    },
+    "parameter_pollution_lab": {
+      "lab_name": "parameter_pollution_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://parameter_pollution_lab:5000",
+      "validation": null
+    },
+    "dns_rebinding_lab": {
+      "lab_name": "dns_rebinding_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://dns_rebinding_lab:5000",
+      "validation": null
+    },
+    "cache_poisoning_lab": {
+      "lab_name": "cache_poisoning_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://cache_poisoning_lab:5000",
+      "validation": null
+    },
+    "random_generation_lab": {
+      "lab_name": "random_generation_lab",
+      "timestamp": 1764983445,
+      "success": false,
+      "error": "Lab not reachable at http://random_generation_lab:5000",
+      "validation": null
+    }
+  }
+}

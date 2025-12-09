@@ -17,7 +17,21 @@ import sys
 from typing import Any, Dict, List
 from urllib.parse import urlparse
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 
 def identify_race_prone_endpoints(base_url: str, api_endpoints: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -124,10 +138,10 @@ def detect_non_idempotent_operations(base_url: str, endpoints: List[Dict[str, An
                 # Test if endpoint is idempotent by making same request twice
                 try:
                     # First request
-                    resp1 = requests.post(url, json={}, timeout=5)
+                    resp1 = safe_post(url, json={}, timeout=5)
                     
                     # Second identical request
-                    resp2 = requests.post(url, json={}, timeout=5)
+                    resp2 = safe_post(url, json={}, timeout=5)
                     
                     # If responses differ significantly, might be non-idempotent
                     if resp1.status_code != resp2.status_code or resp1.text != resp2.text:

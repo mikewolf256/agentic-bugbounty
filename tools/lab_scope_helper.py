@@ -7,10 +7,24 @@ vulnerable labs, ensuring MCP endpoints accept requests from lab URLs.
 
 import json
 import os
-import requests
 from pathlib import Path
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LABS_DIR = REPO_ROOT / "labs"
@@ -83,7 +97,7 @@ def configure_lab_scope(lab_name: str, mcp_url: str = "http://127.0.0.1:8000") -
     # Set scope via MCP
     try:
         set_scope_url = f"{mcp_url}/mcp/set_scope"
-        response = requests.post(
+        response = safe_post(
             set_scope_url,
             json=scope,
             timeout=10
@@ -130,7 +144,7 @@ def configure_scope_from_url(base_url: str, program_name: Optional[str] = None, 
     # Set scope via MCP
     try:
         set_scope_url = f"{mcp_url}/mcp/set_scope"
-        response = requests.post(
+        response = safe_post(
             set_scope_url,
             json=scope,
             timeout=10

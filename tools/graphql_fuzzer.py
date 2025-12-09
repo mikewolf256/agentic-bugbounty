@@ -4,9 +4,23 @@
 Fuzzes GraphQL queries for DoS, injection, and other vulnerabilities.
 """
 
-import requests
 import time
 from typing import Dict, Any, List, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_query_complexity_dos(endpoint: str, headers: Optional[Dict] = None) -> Dict[str, Any]:
@@ -33,7 +47,7 @@ def test_query_complexity_dos(endpoint: str, headers: Optional[Dict] = None) -> 
     
     try:
         start_time = time.time()
-        resp = requests.post(
+        resp = safe_post(
             endpoint,
             json={"query": nested_query},
             headers=headers or {},
@@ -89,7 +103,7 @@ def test_nested_query_injection(endpoint: str, schema: Optional[Dict] = None, he
     for payload in injection_payloads:
         test_query = base_query.replace("PAYLOAD", payload)
         try:
-            resp = requests.post(
+            resp = safe_post(
                 endpoint,
                 json={"query": test_query},
                 headers=headers or {},

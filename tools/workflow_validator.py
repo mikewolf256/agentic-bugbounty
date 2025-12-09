@@ -7,8 +7,22 @@ Validates application workflows for state transition vulnerabilities:
 - State manipulation
 """
 
-import requests
 from typing import Dict, Any, List, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def validate_state_transitions(workflow: Dict[str, Any], auth_context: Optional[Dict] = None) -> Dict[str, Any]:
@@ -56,7 +70,7 @@ def validate_state_transitions(workflow: Dict[str, Any], auth_context: Optional[
             
             # Try to access this step
             try:
-                resp = requests.get(
+                resp = safe_get(
                     endpoint_url,
                     headers=headers,
                     cookies=cookies,
@@ -100,7 +114,7 @@ def validate_state_transitions(workflow: Dict[str, Any], auth_context: Optional[
             endpoint_url = endpoint.get("url") or endpoint.get("path", "")
             
             try:
-                resp = requests.post(
+                resp = safe_post(
                     endpoint_url,
                     json={"skip_validation": True},
                     headers=headers,

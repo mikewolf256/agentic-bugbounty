@@ -7,9 +7,23 @@ Provides public URL that tunnels to local callback server.
 
 import os
 import subprocess
-import requests
 import time
 from typing import Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 class NgrokHelper:
@@ -82,7 +96,7 @@ class NgrokHelper:
     def _get_existing_tunnel_url(self) -> Optional[str]:
         """Check if ngrok is already running and return URL if available"""
         try:
-            resp = requests.get(f"{self.ngrok_api_url}/api/tunnels", timeout=2)
+            resp = safe_get(f"{self.ngrok_api_url}/api/tunnels", timeout=2)
             if resp.status_code == 200:
                 tunnels = resp.json().get("tunnels", [])
                 for tunnel in tunnels:
@@ -105,7 +119,7 @@ class NgrokHelper:
         max_retries = 10
         for _ in range(max_retries):
             try:
-                resp = requests.get(f"{self.ngrok_api_url}/api/tunnels", timeout=2)
+                resp = safe_get(f"{self.ngrok_api_url}/api/tunnels", timeout=2)
                 resp.raise_for_status()
                 tunnels = resp.json().get("tunnels", [])
                 

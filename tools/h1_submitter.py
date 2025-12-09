@@ -8,8 +8,22 @@ import os
 import sys
 import base64
 import json
-import requests
 from typing import Dict, Any, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 class H1Submitter:
@@ -118,7 +132,7 @@ class H1Submitter:
         }
         
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response = safe_post(url, json=payload, headers=headers, timeout=30)
             response.raise_for_status()
             
             result = response.json()

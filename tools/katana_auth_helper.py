@@ -8,9 +8,23 @@ import sys
 import subprocess
 import tempfile
 import time
-import requests
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 try:
     import websocket
@@ -41,7 +55,7 @@ def _auto_detect_chrome_devtools(port: int = 9222) -> Optional[str]:
     """Auto-detect Chrome DevTools WebSocket URL on localhost."""
     try:
         # Try to get list of tabs from Chrome DevTools
-        resp = requests.get(f"http://localhost:{port}/json", timeout=2)
+        resp = safe_get(f"http://localhost:{port}/json", timeout=2)
         if resp.status_code == 200:
             tabs = resp.json()
             if tabs:
@@ -112,7 +126,7 @@ def _extract_cookies_from_devtools(ws_url: str, target_domain: str) -> List[Dict
         http_endpoint = f"http://{ws_parsed.netloc}"
         
         # Get cookies via HTTP API (simpler than WebSocket for cookies)
-        resp = requests.get(f"{http_endpoint}/json/cookies", timeout=5)
+        resp = safe_get(f"{http_endpoint}/json/cookies", timeout=5)
         if resp.status_code == 200:
             all_cookies = resp.json()
             # Filter cookies for target domain using proper domain matching
@@ -151,7 +165,7 @@ def _monitor_network_traffic(ws_url: str, target_domain: str, duration: int = 30
         http_endpoint = f"http://{ws_parsed.netloc}"
         
         # Get active tab
-        resp = requests.get(f"{http_endpoint}/json", timeout=5)
+        resp = safe_get(f"{http_endpoint}/json", timeout=5)
         if resp.status_code != 200:
             return captured_data
         
@@ -164,7 +178,7 @@ def _monitor_network_traffic(ws_url: str, target_domain: str, duration: int = 30
             return captured_data
         
         # Enable Network domain
-        requests.post(f"{http_endpoint}/json/runtime/evaluate", 
+        safe_post(f"{http_endpoint}/json/runtime/evaluate", 
                      json={"expression": "1"}, timeout=5)
         
         # Get network logs (simplified - in production, use WebSocket for real-time monitoring)

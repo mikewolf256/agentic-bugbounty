@@ -7,9 +7,23 @@ Performs deep analysis of GraphQL endpoints:
 - Nested query detection
 """
 
-import requests
 import json
 from typing import Dict, Any, List, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def introspect_schema(endpoint: str, headers: Optional[Dict] = None) -> Dict[str, Any]:
@@ -126,7 +140,7 @@ def introspect_schema(endpoint: str, headers: Optional[Dict] = None) -> Dict[str
     """
     
     try:
-        resp = requests.post(
+        resp = safe_post(
             endpoint,
             json={"query": introspection_query},
             headers=headers or {},

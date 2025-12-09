@@ -15,7 +15,21 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 # ===== Config =====
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -184,7 +198,7 @@ def openai_chat(messages: List[Dict[str, str]]) -> str:
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY not set")
     
-    resp = requests.post(
+    resp = safe_post(
         "https://api.openai.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",

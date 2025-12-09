@@ -20,7 +20,21 @@ import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 
 def test_open_redirect(authorization_url: str, redirect_uri: str) -> Dict[str, Any]:
@@ -67,7 +81,7 @@ def test_open_redirect(authorization_url: str, redirect_uri: str) -> Dict[str, A
             test_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
             
             # Follow redirects and check if we're redirected to the test URI
-            resp = requests.get(test_url, timeout=5, allow_redirects=True)
+            resp = safe_get(test_url, timeout=5, allow_redirects=True)
             
             # Check if final URL contains our test domain
             if "evil.com" in resp.url or "localhost" in resp.url or "127.0.0.1" in resp.url:
@@ -114,7 +128,7 @@ def test_state_parameter(authorization_url: str) -> Dict[str, Any]:
         new_query = urlencode(params, doseq=True)
         test_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
         
-        resp = requests.get(test_url, timeout=5, allow_redirects=False)
+        resp = safe_get(test_url, timeout=5, allow_redirects=False)
         
         # If request succeeds without state, it's a potential issue
         if resp.status_code in (200, 302, 301):
@@ -165,7 +179,7 @@ def test_token_leakage(token_endpoint: str, authorization_url: str) -> Dict[str,
             "redirect_uri": "http://evil.com/callback",
         }
         
-        resp = requests.post(token_endpoint, headers=headers, data=data, timeout=5)
+        resp = safe_post(token_endpoint, headers=headers, data=data, timeout=5)
         
         # If request is accepted (not immediately rejected), it might be vulnerable
         if resp.status_code not in (400, 401):
@@ -219,7 +233,7 @@ def test_scope_escalation(authorization_url: str, token_endpoint: str) -> Dict[s
         new_query = urlencode(params, doseq=True)
         test_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
         
-        resp = requests.get(test_url, timeout=5, allow_redirects=False)
+        resp = safe_get(test_url, timeout=5, allow_redirects=False)
         
         # If request is accepted (not rejected), scope escalation might be possible
         if resp.status_code in (200, 302, 301):
@@ -263,7 +277,7 @@ def test_pkce_downgrade(authorization_url: str) -> Dict[str, Any]:
         new_query = urlencode(params, doseq=True)
         test_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
         
-        resp = requests.get(test_url, timeout=5, allow_redirects=False)
+        resp = safe_get(test_url, timeout=5, allow_redirects=False)
         
         # If request succeeds without PKCE, PKCE might not be enforced
         if resp.status_code in (200, 302, 301):

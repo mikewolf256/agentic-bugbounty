@@ -1,0 +1,2103 @@
+{
+  "timestamp": 1765213658,
+  "mcp_url": "http://127.0.0.1:8000",
+  "labs_tested": 28,
+  "labs_passed": 21,
+  "labs_failed": 7,
+  "total_expected_findings": 67,
+  "total_detected_findings": 3,
+  "overall_detection_rate": 0.04477611940298507,
+  "lab_results": {
+    "xss_js_secrets": {
+      "lab_name": "xss_js_secrets",
+      "timestamp": 1765213658,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5001",
+      "vulnerability_types": [
+        "xss",
+        "js_secrets"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_targeted_nuclei"
+      ],
+      "endpoint_results": {
+        "/mcp/run_targeted_nuclei": {
+          "endpoint": "/mcp/run_targeted_nuclei",
+          "lab": "xss_js_secrets",
+          "success": false,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": "Could not prepare request (missing endpoints/data)",
+          "response": null
+        }
+      },
+      "expected_findings": {
+        "xss": [
+          {
+            "url": "/search?q=<script>alert(1)</script>",
+            "param": "q",
+            "pattern": "reflected unsanitized"
+          }
+        ],
+        "js_secrets": {
+          "min_count": 2,
+          "types": [
+            "api_key",
+            "jwt"
+          ]
+        }
+      },
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "backup_leaks_fingerprint": {
+      "lab_name": "backup_leaks_fingerprint",
+      "timestamp": 1765213687,
+      "success": false,
+      "error": "No MCP endpoints mapped",
+      "base_url": "http://localhost:5003",
+      "vulnerability_types": [
+        "backups",
+        "fingerprints"
+      ],
+      "endpoints_tested": [],
+      "endpoint_results": {},
+      "expected_findings": {
+        "backups": [
+          "/config.php.bak",
+          "/.git/HEAD"
+        ],
+        "fingerprints": {
+          "min_tech_count": 1,
+          "expected_tech_substrings": [
+            "Apache",
+            "PHP"
+          ]
+        }
+      },
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "nosql_injection_lab": {
+      "lab_name": "nosql_injection_lab",
+      "timestamp": 1765213701,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5017",
+      "vulnerability_types": [
+        "nosql_injection"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_nosql_injection_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_nosql_injection_checks__http://localhost:5017/login": {
+          "endpoint": "/mcp/run_nosql_injection_checks",
+          "lab": "nosql_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5017/login",
+            "findings_file": "/app/output_zap/default/nosql_injection_localhost_1765213715.json",
+            "vulnerable": false,
+            "db_type": null,
+            "injection_method": null,
+            "meta": {
+              "tests_run": 1,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_nosql_injection_checks__http://localhost:5017/api/search": {
+          "endpoint": "/mcp/run_nosql_injection_checks",
+          "lab": "nosql_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5017/api/search",
+            "findings_file": "/app/output_zap/default/nosql_injection_localhost_1765213716.json",
+            "vulnerable": false,
+            "db_type": null,
+            "injection_method": null,
+            "meta": {
+              "tests_run": 1,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_nosql_injection_checks__http://localhost:5017/api/user": {
+          "endpoint": "/mcp/run_nosql_injection_checks",
+          "lab": "nosql_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5017/api/user",
+            "findings_file": "/app/output_zap/default/nosql_injection_localhost_1765213716.json",
+            "vulnerable": false,
+            "db_type": null,
+            "injection_method": null,
+            "meta": {
+              "tests_run": 1,
+              "callback_used": false
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "nosql_injection",
+          "subtype": "auth_bypass",
+          "cwe": "CWE-943",
+          "description": "NoSQL injection authentication bypass",
+          "endpoint": "/login",
+          "parameter": "username"
+        },
+        {
+          "type": "nosql_injection",
+          "subtype": "data_extraction",
+          "cwe": "CWE-943",
+          "description": "NoSQL injection data extraction",
+          "endpoint": "/api/search",
+          "parameter": "query"
+        },
+        {
+          "type": "nosql_injection",
+          "subtype": "mongodb_injection",
+          "cwe": "CWE-943",
+          "description": "MongoDB injection confirmed",
+          "endpoint": "/api/user",
+          "parameter": "filter"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "dns_rebinding_lab": {
+      "lab_name": "dns_rebinding_lab",
+      "timestamp": 1765213716,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5025",
+      "vulnerability_types": [
+        "dns_rebinding"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_dns_rebinding_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_dns_rebinding_checks": {
+          "endpoint": "/mcp/run_dns_rebinding_checks",
+          "lab": "dns_rebinding_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5025/fetch",
+            "findings_file": "/app/output_zap/default/dns_rebinding_localhost_1765213733.json",
+            "vulnerable": false,
+            "internal_access": false,
+            "meta": {
+              "tests_run": 1
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "dns_rebinding",
+          "subtype": "internal_network",
+          "cwe": "CWE-918",
+          "description": "DNS rebinding detected",
+          "endpoint": "/fetch",
+          "parameter": "url"
+        },
+        {
+          "type": "dns_rebinding",
+          "subtype": "cloud_metadata",
+          "cwe": "CWE-918",
+          "description": "Internal network access confirmed",
+          "endpoint": "/fetch",
+          "parameter": "url"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "deserialization_lab": {
+      "lab_name": "deserialization_lab",
+      "timestamp": 1765213733,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5009",
+      "vulnerability_types": [
+        "deserialization"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_deser_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_deser_checks__http://localhost:5009/pickle": {
+          "endpoint": "/mcp/run_deser_checks",
+          "lab": "deserialization_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5009/pickle",
+            "findings_file": "/app/output_zap/default/deser_checks_localhost_1765213746.json",
+            "vulnerable": false,
+            "format_type": "auto",
+            "meta": {
+              "format_tested": "auto",
+              "tests_run": 2,
+              "findings_count": 0,
+              "callback_url_used": false
+            }
+          }
+        },
+        "/mcp/run_deser_checks__http://localhost:5009/yaml": {
+          "endpoint": "/mcp/run_deser_checks",
+          "lab": "deserialization_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5009/yaml",
+            "findings_file": "/app/output_zap/default/deser_checks_localhost_1765213746.json",
+            "vulnerable": false,
+            "format_type": "auto",
+            "meta": {
+              "format_tested": "auto",
+              "tests_run": 2,
+              "findings_count": 0,
+              "callback_url_used": false
+            }
+          }
+        },
+        "/mcp/run_deser_checks__http://localhost:5009/api/deserialize": {
+          "endpoint": "/mcp/run_deser_checks",
+          "lab": "deserialization_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5009/api/deserialize",
+            "findings_file": "/app/output_zap/default/deser_checks_localhost_1765213746.json",
+            "vulnerable": false,
+            "format_type": "auto",
+            "meta": {
+              "format_tested": "auto",
+              "tests_run": 2,
+              "findings_count": 0,
+              "callback_url_used": false
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "deserialization",
+          "subtype": "pickle",
+          "cwe": "CWE-502",
+          "description": "Python pickle deserialization RCE",
+          "endpoint": "/pickle",
+          "parameter": "data"
+        },
+        {
+          "type": "deserialization",
+          "subtype": "yaml",
+          "cwe": "CWE-502",
+          "description": "YAML deserialization with unsafe loader",
+          "endpoint": "/yaml",
+          "parameter": "data"
+        },
+        {
+          "type": "deserialization",
+          "subtype": "api",
+          "cwe": "CWE-502",
+          "description": "Deserialization in API endpoint",
+          "endpoint": "/api/deserialize",
+          "parameter": "data"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "websocket_lab": {
+      "lab_name": "websocket_lab",
+      "timestamp": 1765213746,
+      "success": false,
+      "error": "Lab not reachable: HTTPConnectionPool(host='localhost', port=5020): Max retries exceeded with url: / (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7fa0b1364210>: Failed to establish a new connection: [Errno 111] Connection refused'))",
+      "base_url": "http://localhost:5020",
+      "vulnerability_types": [
+        "websocket"
+      ],
+      "endpoints_tested": [],
+      "endpoint_results": {},
+      "expected_findings": [
+        {
+          "type": "websocket",
+          "subtype": "auth_bypass",
+          "cwe": "CWE-306",
+          "description": "WebSocket authentication bypass",
+          "endpoint": "ws://websocket_lab:5000/socket.io",
+          "parameter": "connection"
+        },
+        {
+          "type": "websocket",
+          "subtype": "message_injection",
+          "cwe": "CWE-79",
+          "description": "WebSocket message injection",
+          "endpoint": "ws://websocket_lab:5000/socket.io",
+          "parameter": "message"
+        },
+        {
+          "type": "websocket",
+          "subtype": "missing_origin",
+          "cwe": "CWE-942",
+          "description": "Missing origin validation",
+          "endpoint": "ws://websocket_lab:5000/socket.io",
+          "parameter": "Origin"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "random_generation_lab": {
+      "lab_name": "random_generation_lab",
+      "timestamp": 1765213746,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5027",
+      "vulnerability_types": [
+        "random_generation"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_random_generation_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_random_generation_checks": {
+          "endpoint": "/mcp/run_random_generation_checks",
+          "lab": "random_generation_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5027",
+            "findings_file": "/app/output_zap/default/random_generation_localhost_1765213760.json",
+            "predictable": false,
+            "token_type": null,
+            "meta": {
+              "tests_run": 1
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "random_generation",
+          "subtype": "predictable_token",
+          "cwe": "CWE-330",
+          "description": "Predictable session tokens",
+          "endpoint": "/login",
+          "parameter": "token"
+        },
+        {
+          "type": "random_generation",
+          "subtype": "sequential_token",
+          "cwe": "CWE-330",
+          "description": "Sequential token generation",
+          "endpoint": "/api/token",
+          "parameter": "token"
+        },
+        {
+          "type": "random_generation",
+          "subtype": "predictable_id",
+          "cwe": "CWE-330",
+          "description": "Predictable user IDs",
+          "endpoint": "/api/user",
+          "parameter": "user_id"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "idor_auth": {
+      "lab_name": "idor_auth",
+      "timestamp": 1765213760,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5002",
+      "vulnerability_types": [
+        "bac",
+        "idor",
+        "auth"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_auth_checks",
+        "/mcp/run_jwt_checks",
+        "/mcp/run_bac_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_auth_checks": {
+          "endpoint": "/mcp/run_auth_checks",
+          "lab": "idor_auth",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5002",
+            "meta": {
+              "checks_count": 12,
+              "confirmed_issues_count": 0,
+              "summary": "No authentication vulnerabilities detected",
+              "findings_file": "/app/output_zap/default/auth_checks_localhost_5002_1765213777.json",
+              "issues": []
+            }
+          }
+        },
+        "/mcp/run_jwt_checks": {
+          "endpoint": "/mcp/run_jwt_checks",
+          "lab": "idor_auth",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5002",
+            "meta": {
+              "checks_count": 0,
+              "confirmed_issues_count": 0,
+              "error": "Could not obtain JWT token",
+              "summary": "No JWT token available for testing",
+              "issues": []
+            }
+          }
+        },
+        "/mcp/run_bac_checks": {
+          "endpoint": "/mcp/run_bac_checks",
+          "lab": "idor_auth",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "host": "localhost:5002",
+            "meta": {
+              "checks_count": 8,
+              "authenticated": false,
+              "confirmed_issues_count": 0,
+              "summary": "No BAC issues detected",
+              "findings_file": "/app/output_zap/default/bac_checks_localhost_5002_1765213779.json",
+              "issues": []
+            }
+          }
+        }
+      },
+      "expected_findings": {
+        "bac": [
+          {
+            "url": "/api/users/2",
+            "requires_auth": true,
+            "pattern": "user A can access user B"
+          }
+        ]
+      },
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "path_traversal_lab": {
+      "lab_name": "path_traversal_lab",
+      "timestamp": 1765213779,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5014",
+      "vulnerability_types": [
+        "path_traversal"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_path_traversal_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_path_traversal_checks__http://localhost:5014/read": {
+          "endpoint": "/mcp/run_path_traversal_checks",
+          "lab": "path_traversal_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5014/read",
+            "findings_file": "/app/output_zap/default/path_traversal_localhost_1765213794.json",
+            "vulnerable": false,
+            "inclusion_type": null,
+            "files_read": [],
+            "meta": {
+              "param_tested": "file",
+              "file_paths_tested": "default",
+              "tests_run": 1,
+              "findings_count": 0,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_path_traversal_checks__http://localhost:5014/include": {
+          "endpoint": "/mcp/run_path_traversal_checks",
+          "lab": "path_traversal_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5014/include",
+            "findings_file": "/app/output_zap/default/path_traversal_localhost_1765213795.json",
+            "vulnerable": false,
+            "inclusion_type": null,
+            "files_read": [],
+            "meta": {
+              "param_tested": "file",
+              "file_paths_tested": "default",
+              "tests_run": 1,
+              "findings_count": 0,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_path_traversal_checks__http://localhost:5014/api/file": {
+          "endpoint": "/mcp/run_path_traversal_checks",
+          "lab": "path_traversal_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5014/api/file",
+            "findings_file": "/app/output_zap/default/path_traversal_localhost_1765213796.json",
+            "vulnerable": false,
+            "inclusion_type": null,
+            "files_read": [],
+            "meta": {
+              "param_tested": "file",
+              "file_paths_tested": "default",
+              "tests_run": 1,
+              "findings_count": 0,
+              "callback_used": false
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "path_traversal",
+          "subtype": "lfi",
+          "cwe": "CWE-22",
+          "description": "Local file inclusion via path traversal",
+          "endpoint": "/read",
+          "parameter": "file"
+        },
+        {
+          "type": "path_traversal",
+          "subtype": "lfi",
+          "cwe": "CWE-22",
+          "description": "Local file inclusion via include endpoint",
+          "endpoint": "/include",
+          "parameter": "file"
+        },
+        {
+          "type": "path_traversal",
+          "subtype": "rfi",
+          "cwe": "CWE-22",
+          "description": "Remote file inclusion via callback URL",
+          "endpoint": "/include",
+          "parameter": "file"
+        },
+        {
+          "type": "path_traversal",
+          "subtype": "api",
+          "cwe": "CWE-22",
+          "description": "Path traversal via API endpoint",
+          "endpoint": "/api/file",
+          "parameter": "file"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "cloud_lab": {
+      "lab_name": "cloud_lab",
+      "timestamp": 1765213796,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5007",
+      "vulnerability_types": [
+        "cloud",
+        "ssrf"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_ssrf_checks",
+        "/mcp/run_cloud_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_ssrf_checks": {
+          "endpoint": "/mcp/run_ssrf_checks",
+          "lab": "cloud_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5007/fetch",
+            "param": "url",
+            "meta": {
+              "checks_count": 13,
+              "confirmed_issues_count": 0,
+              "summary": "No SSRF issues detected after 13 checks",
+              "targets_reached": [],
+              "findings_file": "/app/output_zap/default/ssrf_checks_localhost_5007_1765213812.json",
+              "issues": []
+            }
+          }
+        },
+        "/mcp/run_cloud_checks": {
+          "endpoint": "/mcp/run_cloud_checks",
+          "lab": "cloud_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5007",
+            "meta": {
+              "vulnerable": false,
+              "metadata_tests_run": 3,
+              "findings_file": "/app/output_zap/default/cloud_checks_localhost_5007_1765213812.json"
+            },
+            "results": {
+              "metadata_tests": {
+                "vulnerable": false,
+                "tests_run": 3,
+                "findings": []
+              },
+              "storage_tests": {},
+              "iam_analysis": {},
+              "vulnerable": false
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "cloud",
+          "subtype": "metadata_exposure",
+          "cwe": "CWE-200",
+          "description": "AWS metadata endpoint accessible",
+          "endpoint": "/latest/meta-data/",
+          "parameter": null
+        },
+        {
+          "type": "cloud",
+          "subtype": "iam_exposure",
+          "cwe": "CWE-200",
+          "description": "AWS IAM credentials exposed via metadata",
+          "endpoint": "/latest/meta-data/iam/security-credentials/test-role",
+          "parameter": null
+        },
+        {
+          "type": "cloud",
+          "subtype": "metadata_exposure",
+          "cwe": "CWE-200",
+          "description": "GCP metadata endpoint accessible",
+          "endpoint": "/computeMetadata/v1/",
+          "parameter": null
+        },
+        {
+          "type": "cloud",
+          "subtype": "token_exposure",
+          "cwe": "CWE-200",
+          "description": "GCP access token exposed",
+          "endpoint": "/computeMetadata/v1/instance/service-accounts/default/token",
+          "parameter": null
+        },
+        {
+          "type": "cloud",
+          "subtype": "metadata_exposure",
+          "cwe": "CWE-200",
+          "description": "Azure metadata endpoint accessible",
+          "endpoint": "/metadata/instance",
+          "parameter": null
+        },
+        {
+          "type": "cloud",
+          "subtype": "storage_misconfiguration",
+          "cwe": "CWE-284",
+          "description": "S3 bucket publicly accessible",
+          "endpoint": "/s3/bucket",
+          "parameter": null
+        },
+        {
+          "type": "ssrf",
+          "subtype": "cloud_metadata",
+          "cwe": "CWE-918",
+          "description": "SSRF to cloud metadata via /fetch endpoint",
+          "endpoint": "/fetch",
+          "parameter": "url"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "csrf_lab": {
+      "lab_name": "csrf_lab",
+      "timestamp": 1765213812,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5016",
+      "vulnerability_types": [
+        "csrf"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_csrf_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_csrf_checks": {
+          "endpoint": "/mcp/run_csrf_checks",
+          "lab": "csrf_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "host": "localhost:5016",
+            "findings_file": "/app/output_zap/default/csrf_localhost_5016_1765213826.json",
+            "vulnerable_endpoints": [],
+            "poc_html": [],
+            "meta": {
+              "tests_run": 0
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "csrf",
+          "subtype": "missing_token",
+          "cwe": "CWE-352",
+          "description": "CSRF vulnerability on user update endpoint",
+          "endpoint": "/api/user/update",
+          "parameter": "POST"
+        },
+        {
+          "type": "csrf",
+          "subtype": "missing_token",
+          "cwe": "CWE-352",
+          "description": "CSRF vulnerability on purchase endpoint",
+          "endpoint": "/api/purchase",
+          "parameter": "POST"
+        },
+        {
+          "type": "csrf",
+          "subtype": "missing_token",
+          "cwe": "CWE-352",
+          "description": "CSRF vulnerability on transfer endpoint",
+          "endpoint": "/api/transfer",
+          "parameter": "POST"
+        },
+        {
+          "type": "csrf",
+          "subtype": "missing_origin_check",
+          "cwe": "CWE-352",
+          "description": "Missing Origin/Referer header validation",
+          "endpoint": "/api/user/update",
+          "parameter": "Origin"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "idor-api": {
+      "lab_name": "idor-api",
+      "timestamp": 1765213826,
+      "success": false,
+      "error": "Lab not reachable: HTTPConnectionPool(host='localhost', port=9002): Max retries exceeded with url: / (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7fa0b1372c90>: Failed to establish a new connection: [Errno 111] Connection refused'))",
+      "base_url": "http://localhost:9002",
+      "vulnerability_types": [
+        "idor",
+        "bac"
+      ],
+      "endpoints_tested": [],
+      "endpoint_results": {},
+      "expected_findings": [
+        {
+          "type": "idor",
+          "subtype": "horizontal",
+          "cwe": "CWE-639",
+          "description": "IDOR on user profile endpoint - can access other users",
+          "endpoint": "/api/users/{id}",
+          "parameter": "id"
+        },
+        {
+          "type": "idor",
+          "subtype": "horizontal",
+          "cwe": "CWE-639",
+          "description": "IDOR on user documents - can access other users' documents",
+          "endpoint": "/api/documents/{id}",
+          "parameter": "id"
+        },
+        {
+          "type": "bac",
+          "subtype": "vertical",
+          "cwe": "CWE-284",
+          "description": "Missing authentication on admin endpoint",
+          "endpoint": "/api/admin/users",
+          "parameter": null
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "ssi_injection_lab": {
+      "lab_name": "ssi_injection_lab",
+      "timestamp": 1765213826,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5022",
+      "vulnerability_types": [
+        "ssi_injection"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_ssi_injection_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_ssi_injection_checks__http://localhost:5022/page": {
+          "endpoint": "/mcp/run_ssi_injection_checks",
+          "lab": "ssi_injection_lab",
+          "success": false,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": "HTTP 500: {\"detail\":\"SSI injection tester failed: name 'List' is not defined\"}",
+          "response": null
+        },
+        "/mcp/run_ssi_injection_checks__http://localhost:5022/render": {
+          "endpoint": "/mcp/run_ssi_injection_checks",
+          "lab": "ssi_injection_lab",
+          "success": false,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": "HTTP 500: {\"detail\":\"SSI injection tester failed: name 'List' is not defined\"}",
+          "response": null
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "ssi_injection",
+          "subtype": "command_execution",
+          "cwe": "CWE-96",
+          "description": "SSI injection command execution",
+          "endpoint": "/page",
+          "parameter": "page"
+        },
+        {
+          "type": "ssi_injection",
+          "subtype": "file_inclusion",
+          "cwe": "CWE-96",
+          "description": "SSI injection file inclusion",
+          "endpoint": "/render",
+          "parameter": "template"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "xxe_lab": {
+      "lab_name": "xxe_lab",
+      "timestamp": 1765213839,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5005",
+      "vulnerability_types": [
+        "xxe"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_xxe_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_xxe_checks": {
+          "endpoint": "/mcp/run_xxe_checks",
+          "lab": "xxe_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5005/parse",
+            "meta": {
+              "findings_count": 0,
+              "tests_run": 3,
+              "vulnerable": false,
+              "findings_file": "/app/output_zap/default/xxe_checks_localhost_5005_1765213853.json"
+            },
+            "results": {
+              "vulnerable": false,
+              "tests_run": 3,
+              "findings": []
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "xxe",
+          "subtype": "external_entity",
+          "cwe": "CWE-611",
+          "description": "External entity injection via XML parser",
+          "endpoint": "/parse",
+          "parameter": "xml"
+        },
+        {
+          "type": "xxe",
+          "subtype": "file_inclusion",
+          "cwe": "CWE-611",
+          "description": "Local file inclusion via XXE (/etc/passwd)",
+          "endpoint": "/parse",
+          "parameter": "xml"
+        },
+        {
+          "type": "xxe",
+          "subtype": "oob",
+          "cwe": "CWE-611",
+          "description": "Out-of-band XXE via external entity callback",
+          "endpoint": "/parse",
+          "parameter": "xml"
+        },
+        {
+          "type": "xxe",
+          "subtype": "ssrf",
+          "cwe": "CWE-918",
+          "description": "SSRF via XXE external entity",
+          "endpoint": "/parse",
+          "parameter": "xml"
+        },
+        {
+          "type": "xxe",
+          "subtype": "file_upload",
+          "cwe": "CWE-611",
+          "description": "XXE via file upload endpoint",
+          "endpoint": "/upload",
+          "parameter": "file"
+        },
+        {
+          "type": "xxe",
+          "subtype": "api",
+          "cwe": "CWE-611",
+          "description": "XXE in API endpoint",
+          "endpoint": "/api/xml",
+          "parameter": "body"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "ldap_injection_lab": {
+      "lab_name": "ldap_injection_lab",
+      "timestamp": 1765213853,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5018",
+      "vulnerability_types": [
+        "ldap_injection"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_ldap_injection_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_ldap_injection_checks__http://localhost:5018/login": {
+          "endpoint": "/mcp/run_ldap_injection_checks",
+          "lab": "ldap_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5018/login",
+            "findings_file": "/app/output_zap/default/ldap_injection_localhost_1765213868.json",
+            "vulnerable": false,
+            "injection_method": null,
+            "auth_bypass": false,
+            "meta": {
+              "tests_run": 1
+            }
+          }
+        },
+        "/mcp/run_ldap_injection_checks__http://localhost:5018/api/search": {
+          "endpoint": "/mcp/run_ldap_injection_checks",
+          "lab": "ldap_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5018/api/search",
+            "findings_file": "/app/output_zap/default/ldap_injection_localhost_1765213868.json",
+            "vulnerable": false,
+            "injection_method": null,
+            "auth_bypass": false,
+            "meta": {
+              "tests_run": 1
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "ldap_injection",
+          "subtype": "auth_bypass",
+          "cwe": "CWE-90",
+          "description": "LDAP injection authentication bypass",
+          "endpoint": "/login",
+          "parameter": "username"
+        },
+        {
+          "type": "ldap_injection",
+          "subtype": "info_disclosure",
+          "cwe": "CWE-90",
+          "description": "LDAP injection information disclosure",
+          "endpoint": "/api/search",
+          "parameter": "filter"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "cache_poisoning_lab": {
+      "lab_name": "cache_poisoning_lab",
+      "timestamp": 1765213868,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5026",
+      "vulnerability_types": [
+        "cache_poisoning"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_cache_poisoning_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_cache_poisoning_checks": {
+          "endpoint": "/mcp/run_cache_poisoning_checks",
+          "lab": "cache_poisoning_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5026",
+            "findings_file": "/app/output_zap/default/cache_poisoning_localhost_1765213881.json",
+            "vulnerable": false,
+            "poisoning_method": null,
+            "meta": {
+              "tests_run": 1
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "cache_poisoning",
+          "subtype": "header_injection",
+          "cwe": "CWE-840",
+          "description": "Cache poisoning via header injection",
+          "endpoint": "/page",
+          "parameter": "X-Forwarded-Host"
+        },
+        {
+          "type": "cache_poisoning",
+          "subtype": "cache_key",
+          "cwe": "CWE-840",
+          "description": "Cache key manipulation",
+          "endpoint": "/api/data",
+          "parameter": "X-Forwarded-Host"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "mass_assignment_lab": {
+      "lab_name": "mass_assignment_lab",
+      "timestamp": 1765213881,
+      "success": false,
+      "error": "Lab not reachable (HTTP 500)",
+      "base_url": "http://localhost:5019",
+      "vulnerability_types": [
+        "mass_assignment"
+      ],
+      "endpoints_tested": [],
+      "endpoint_results": {},
+      "expected_findings": [
+        {
+          "type": "mass_assignment",
+          "subtype": "privilege_escalation",
+          "cwe": "CWE-915",
+          "description": "Mass assignment privilege escalation",
+          "endpoint": "/api/user/create",
+          "parameter": "admin"
+        },
+        {
+          "type": "mass_assignment",
+          "subtype": "role_manipulation",
+          "cwe": "CWE-915",
+          "description": "Admin field manipulation",
+          "endpoint": "/api/user/update",
+          "parameter": "role"
+        },
+        {
+          "type": "mass_assignment",
+          "subtype": "field_manipulation",
+          "cwe": "CWE-915",
+          "description": "Role field manipulation",
+          "endpoint": "/api/profile",
+          "parameter": "admin"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "auth_scan_lab": {
+      "lab_name": "auth_scan_lab",
+      "timestamp": 1765213881,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5004",
+      "vulnerability_types": [
+        "auth"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_auth_checks",
+        "/mcp/run_jwt_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_auth_checks": {
+          "endpoint": "/mcp/run_auth_checks",
+          "lab": "auth_scan_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5004",
+            "meta": {
+              "checks_count": 12,
+              "confirmed_issues_count": 0,
+              "summary": "No authentication vulnerabilities detected",
+              "findings_file": "/app/output_zap/default/auth_checks_localhost_5004_1765213898.json",
+              "issues": []
+            }
+          }
+        },
+        "/mcp/run_jwt_checks": {
+          "endpoint": "/mcp/run_jwt_checks",
+          "lab": "auth_scan_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5004",
+            "meta": {
+              "checks_count": 0,
+              "confirmed_issues_count": 0,
+              "error": "Could not obtain JWT token",
+              "summary": "No JWT token available for testing",
+              "issues": []
+            }
+          }
+        }
+      },
+      "expected_findings": [],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "grpc_lab": {
+      "lab_name": "grpc_lab",
+      "timestamp": 1765213898,
+      "success": false,
+      "error": "No MCP endpoints mapped",
+      "base_url": "http://localhost:5011",
+      "vulnerability_types": [
+        "grpc"
+      ],
+      "endpoints_tested": [],
+      "endpoint_results": {},
+      "expected_findings": [
+        {
+          "type": "grpc",
+          "subtype": "unauthenticated",
+          "cwe": "CWE-306",
+          "description": "Unauthenticated gRPC endpoints",
+          "endpoint": "grpc_lab:50051",
+          "service": "UserService"
+        },
+        {
+          "type": "grpc",
+          "subtype": "enumeration",
+          "cwe": "CWE-200",
+          "description": "Service enumeration - can list all services",
+          "endpoint": "grpc_lab:50051",
+          "service": null
+        },
+        {
+          "type": "grpc",
+          "subtype": "data_exposure",
+          "cwe": "CWE-200",
+          "description": "Sensitive data exposure - API keys and secrets",
+          "endpoint": "grpc_lab:50051",
+          "service": "UserService.GetUserData"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "parameter_pollution_lab": {
+      "lab_name": "parameter_pollution_lab",
+      "timestamp": 1765213912,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5024",
+      "vulnerability_types": [
+        "parameter_pollution"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_parameter_pollution_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_parameter_pollution_checks": {
+          "endpoint": "/mcp/run_parameter_pollution_checks",
+          "lab": "parameter_pollution_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5024/api/user",
+            "findings_file": "/app/output_zap/default/parameter_pollution_localhost_1765213926.json",
+            "vulnerable": false,
+            "pollution_method": null,
+            "meta": {
+              "tests_run": 1
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "parameter_pollution",
+          "subtype": "duplicate_params",
+          "cwe": "CWE-235",
+          "description": "Parameter pollution detected",
+          "endpoint": "/api/user",
+          "parameter": "user"
+        },
+        {
+          "type": "parameter_pollution",
+          "subtype": "parameter_override",
+          "cwe": "CWE-235",
+          "description": "Parameter override confirmed",
+          "endpoint": "/api/action",
+          "parameter": "action"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "xss-basic": {
+      "lab_name": "xss-basic",
+      "timestamp": 1765213926,
+      "success": false,
+      "error": "Lab not reachable: HTTPConnectionPool(host='localhost', port=9001): Max retries exceeded with url: / (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7fa0b137ecd0>: Failed to establish a new connection: [Errno 111] Connection refused'))",
+      "base_url": "http://localhost:9001",
+      "vulnerability_types": [
+        "xss"
+      ],
+      "endpoints_tested": [],
+      "endpoint_results": {},
+      "expected_findings": [
+        {
+          "type": "xss",
+          "subtype": "reflected",
+          "cwe": "CWE-79",
+          "description": "Reflected XSS via search query parameter",
+          "endpoint": "/search",
+          "parameter": "q"
+        },
+        {
+          "type": "xss",
+          "subtype": "reflected",
+          "cwe": "CWE-79",
+          "description": "Reflected XSS via error message",
+          "endpoint": "/error",
+          "parameter": "msg"
+        },
+        {
+          "type": "xss",
+          "subtype": "reflected",
+          "cwe": "CWE-79",
+          "description": "Reflected XSS in user profile name",
+          "endpoint": "/profile",
+          "parameter": "name"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "business_logic_lab": {
+      "lab_name": "business_logic_lab",
+      "timestamp": 1765213926,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5006",
+      "vulnerability_types": [
+        "business_logic"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_business_logic_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_business_logic_checks": {
+          "endpoint": "/mcp/run_business_logic_checks",
+          "lab": "business_logic_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target": "http://localhost:5006",
+            "meta": {
+              "findings_count": 0,
+              "tests_run": 3,
+              "vulnerable": false,
+              "workflow_patterns": 0,
+              "findings_file": "/app/output_zap/default/business_logic_localhost_5006_1765213940.json"
+            },
+            "results": {
+              "vulnerable": false,
+              "tests_run": 3,
+              "findings": [],
+              "workflow": {
+                "endpoints": [],
+                "state_transitions": [],
+                "business_rules": [],
+                "workflow_patterns": []
+              }
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "business_logic",
+          "subtype": "pricing_manipulation",
+          "cwe": "CWE-840",
+          "description": "Price manipulation - accepts user-provided prices",
+          "endpoint": "/cart",
+          "parameter": "price"
+        },
+        {
+          "type": "business_logic",
+          "subtype": "pricing_manipulation",
+          "cwe": "CWE-840",
+          "description": "Price manipulation via API",
+          "endpoint": "/api/purchase",
+          "parameter": "price"
+        },
+        {
+          "type": "business_logic",
+          "subtype": "workflow_bypass",
+          "cwe": "CWE-840",
+          "description": "Workflow bypass - can skip payment step",
+          "endpoint": "/api/complete-order",
+          "parameter": "skip_payment"
+        },
+        {
+          "type": "business_logic",
+          "subtype": "rate_limit_bypass",
+          "cwe": "CWE-307",
+          "description": "Rate limit bypass via X-Forwarded-For header",
+          "endpoint": "/api/rate-limit",
+          "parameter": "X-Forwarded-For"
+        },
+        {
+          "type": "business_logic",
+          "subtype": "state_transition",
+          "cwe": "CWE-840",
+          "description": "Invalid state transition - can set any order status",
+          "endpoint": "/api/state-transition",
+          "parameter": "state"
+        },
+        {
+          "type": "business_logic",
+          "subtype": "quantity_manipulation",
+          "cwe": "CWE-840",
+          "description": "Quantity manipulation - negative quantities accepted",
+          "endpoint": "/cart",
+          "parameter": "quantity"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "secrets-exposure": {
+      "lab_name": "secrets-exposure",
+      "timestamp": 1765213940,
+      "success": false,
+      "error": "Lab not reachable: HTTPConnectionPool(host='localhost', port=9003): Max retries exceeded with url: / (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x7fa0b138e310>: Failed to establish a new connection: [Errno 111] Connection refused'))",
+      "base_url": "http://localhost:9003",
+      "vulnerability_types": [
+        "secrets",
+        "exposure"
+      ],
+      "endpoints_tested": [],
+      "endpoint_results": {},
+      "expected_findings": [
+        {
+          "type": "secrets",
+          "subtype": "env_file",
+          "cwe": "CWE-200",
+          "pattern": ".env",
+          "description": "Exposed .env file with database credentials",
+          "endpoint": "/.env"
+        },
+        {
+          "type": "secrets",
+          "subtype": "js_hardcoded",
+          "cwe": "CWE-798",
+          "pattern": "api_key",
+          "description": "Hardcoded API key in JavaScript",
+          "endpoint": "/static/config.js"
+        },
+        {
+          "type": "exposure",
+          "subtype": "backup",
+          "cwe": "CWE-530",
+          "pattern": "backup",
+          "description": "Exposed backup file",
+          "endpoint": "/backup.sql"
+        },
+        {
+          "type": "exposure",
+          "subtype": "git",
+          "cwe": "CWE-527",
+          "pattern": ".git",
+          "description": "Exposed .git directory",
+          "endpoint": "/.git/config"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "crypto_weakness_lab": {
+      "lab_name": "crypto_weakness_lab",
+      "timestamp": 1765213940,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5023",
+      "vulnerability_types": [
+        "crypto_weakness"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_crypto_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_crypto_checks": {
+          "endpoint": "/mcp/run_crypto_checks",
+          "lab": "crypto_weakness_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5023",
+            "findings_file": "/app/output_zap/default/crypto_localhost_1765213954.json",
+            "weak_algorithms": [],
+            "predictable_tokens": [],
+            "meta": {
+              "tests_run": 1
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "crypto_weakness",
+          "subtype": "weak_hash",
+          "cwe": "CWE-327",
+          "description": "Weak hashing algorithms detected",
+          "endpoint": "/hash",
+          "parameter": "algorithm"
+        },
+        {
+          "type": "crypto_weakness",
+          "subtype": "predictable_token",
+          "cwe": "CWE-330",
+          "description": "Predictable session tokens",
+          "endpoint": "/login",
+          "parameter": "token"
+        },
+        {
+          "type": "crypto_weakness",
+          "subtype": "short_cookie",
+          "cwe": "CWE-330",
+          "description": "Short session cookies",
+          "endpoint": "/login",
+          "parameter": "session_token"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "file_upload_lab": {
+      "lab_name": "file_upload_lab",
+      "timestamp": 1765213954,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5015",
+      "vulnerability_types": [
+        "file_upload"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_file_upload_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_file_upload_checks__http://localhost:5015/upload": {
+          "endpoint": "/mcp/run_file_upload_checks",
+          "lab": "file_upload_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5015/upload",
+            "findings_file": "/app/output_zap/default/file_upload_localhost_1765213969.json",
+            "vulnerable": false,
+            "bypass_methods": [],
+            "uploaded_files": [],
+            "rce_confirmed": false,
+            "meta": {
+              "upload_endpoint": "auto-discovered",
+              "tests_run": 1,
+              "findings_count": 0,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_file_upload_checks__http://localhost:5015/uploads": {
+          "endpoint": "/mcp/run_file_upload_checks",
+          "lab": "file_upload_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5015/uploads",
+            "findings_file": "/app/output_zap/default/file_upload_localhost_1765213969.json",
+            "vulnerable": false,
+            "bypass_methods": [],
+            "uploaded_files": [],
+            "rce_confirmed": false,
+            "meta": {
+              "upload_endpoint": "auto-discovered",
+              "tests_run": 1,
+              "findings_count": 0,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_file_upload_checks__http://localhost:5015/uploads/<filename>": {
+          "endpoint": "/mcp/run_file_upload_checks",
+          "lab": "file_upload_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5015/uploads/<filename>",
+            "findings_file": "/app/output_zap/default/file_upload_localhost_1765213969.json",
+            "vulnerable": false,
+            "bypass_methods": [],
+            "uploaded_files": [],
+            "rce_confirmed": false,
+            "meta": {
+              "upload_endpoint": "auto-discovered",
+              "tests_run": 1,
+              "findings_count": 0,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_file_upload_checks__http://localhost:5015/api/upload": {
+          "endpoint": "/mcp/run_file_upload_checks",
+          "lab": "file_upload_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5015/api/upload",
+            "findings_file": "/app/output_zap/default/file_upload_localhost_1765213969.json",
+            "vulnerable": false,
+            "bypass_methods": [],
+            "uploaded_files": [],
+            "rce_confirmed": false,
+            "meta": {
+              "upload_endpoint": "auto-discovered",
+              "tests_run": 1,
+              "findings_count": 0,
+              "callback_used": false
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "file_upload",
+          "subtype": "double_extension",
+          "cwe": "CWE-434",
+          "description": "File upload bypass via double extension (.php.jpg)",
+          "endpoint": "/upload",
+          "parameter": "file"
+        },
+        {
+          "type": "file_upload",
+          "subtype": "mime_spoofing",
+          "cwe": "CWE-434",
+          "description": "File upload bypass via MIME type spoofing",
+          "endpoint": "/upload",
+          "parameter": "file"
+        },
+        {
+          "type": "file_upload",
+          "subtype": "path_traversal",
+          "cwe": "CWE-434",
+          "description": "Path traversal in uploaded filename",
+          "endpoint": "/upload",
+          "parameter": "filename"
+        },
+        {
+          "type": "file_upload",
+          "subtype": "executable_upload",
+          "cwe": "CWE-434",
+          "description": "Executable file upload (PHP shell)",
+          "endpoint": "/upload",
+          "parameter": "file"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "template_injection_lab": {
+      "lab_name": "template_injection_lab",
+      "timestamp": 1765213969,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5008",
+      "vulnerability_types": [
+        "ssti",
+        "template_injection"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_ssti_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_ssti_checks__http://localhost:5008/render": {
+          "endpoint": "/mcp/run_ssti_checks",
+          "lab": "template_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5008/render",
+            "findings_file": "/app/output_zap/default/ssti_checks_localhost_1765213983.json",
+            "vulnerable": false,
+            "template_engine": null,
+            "meta": {
+              "param_tested": "template",
+              "callback_url_used": false,
+              "rce_tested": false
+            }
+          }
+        },
+        "/mcp/run_ssti_checks__http://localhost:5008/search": {
+          "endpoint": "/mcp/run_ssti_checks",
+          "lab": "template_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5008/search",
+            "findings_file": "/app/output_zap/default/ssti_checks_localhost_1765213983.json",
+            "vulnerable": false,
+            "template_engine": null,
+            "meta": {
+              "param_tested": "template",
+              "callback_url_used": false,
+              "rce_tested": false
+            }
+          }
+        },
+        "/mcp/run_ssti_checks__http://localhost:5008/api/render": {
+          "endpoint": "/mcp/run_ssti_checks",
+          "lab": "template_injection_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5008/api/render",
+            "findings_file": "/app/output_zap/default/ssti_checks_localhost_1765213983.json",
+            "vulnerable": false,
+            "template_engine": null,
+            "meta": {
+              "param_tested": "template",
+              "callback_url_used": false,
+              "rce_tested": false
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "ssti",
+          "subtype": "jinja2",
+          "cwe": "CWE-94",
+          "description": "Jinja2 template injection in render endpoint",
+          "endpoint": "/render",
+          "parameter": "template"
+        },
+        {
+          "type": "ssti",
+          "subtype": "jinja2",
+          "cwe": "CWE-94",
+          "description": "Jinja2 template injection in search results",
+          "endpoint": "/search",
+          "parameter": "q"
+        },
+        {
+          "type": "ssti",
+          "subtype": "jinja2",
+          "cwe": "CWE-94",
+          "description": "Jinja2 template injection in API endpoint",
+          "endpoint": "/api/render",
+          "parameter": "template"
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "graphql_lab": {
+      "lab_name": "graphql_lab",
+      "timestamp": 1765213983,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5010",
+      "vulnerability_types": [
+        "graphql"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_graphql_security"
+      ],
+      "endpoint_results": {
+        "/mcp/run_graphql_security": {
+          "endpoint": "/mcp/run_graphql_security",
+          "lab": "graphql_lab",
+          "success": true,
+          "vulnerable": false,
+          "findings_count": 0,
+          "error": null,
+          "response": {
+            "endpoint": "http://localhost:5010/graphql",
+            "findings_file": "/app/output_zap/default/graphql_security_localhost_1765213997.json",
+            "vulnerable": false,
+            "meta": {
+              "endpoint": "http://localhost:5010/graphql",
+              "schema": {},
+              "depth_attack": {
+                "vulnerable": false,
+                "error": "request_failed"
+              },
+              "batching": {
+                "vulnerable": false
+              }
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "graphql",
+          "subtype": "introspection",
+          "cwe": "CWE-200",
+          "description": "GraphQL introspection enabled",
+          "endpoint": "/graphql",
+          "parameter": null
+        },
+        {
+          "type": "graphql",
+          "subtype": "depth_dos",
+          "cwe": "CWE-400",
+          "description": "Depth-based DoS - no query depth limits",
+          "endpoint": "/graphql",
+          "parameter": null
+        },
+        {
+          "type": "graphql",
+          "subtype": "complexity",
+          "cwe": "CWE-400",
+          "description": "Query complexity issues - no complexity limits",
+          "endpoint": "/graphql",
+          "parameter": null
+        },
+        {
+          "type": "graphql",
+          "subtype": "recursive",
+          "cwe": "CWE-400",
+          "description": "Recursive queries allowed without limits",
+          "endpoint": "/graphql",
+          "parameter": null
+        }
+      ],
+      "detected_findings": [],
+      "detection_rate": 0.0
+    },
+    "command_injection_lab": {
+      "lab_name": "command_injection_lab",
+      "timestamp": 1765213997,
+      "success": true,
+      "error": null,
+      "base_url": "http://localhost:5013",
+      "vulnerability_types": [
+        "command_injection"
+      ],
+      "endpoints_tested": [
+        "/mcp/run_command_injection_checks"
+      ],
+      "endpoint_results": {
+        "/mcp/run_command_injection_checks__http://localhost:5013/execute": {
+          "endpoint": "/mcp/run_command_injection_checks",
+          "lab": "command_injection_lab",
+          "success": true,
+          "vulnerable": true,
+          "findings_count": 1,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5013/execute",
+            "findings_file": "/app/output_zap/default/command_injection_localhost_1765214011.json",
+            "vulnerable": true,
+            "injection_point": "cmd",
+            "rce_confirmed": false,
+            "findings": [
+              {
+                "type": "command_injection",
+                "test": "command_injection",
+                "vulnerable": true,
+                "injection_point": "cmd",
+                "evidence": {
+                  "payload": "id",
+                  "payload_type": "unix_id",
+                  "status_code": 200,
+                  "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+                  "text_content_snippet": "\n \n \n \n     Command Injection Lab \n     \n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .error { background: #fee; color: #c00; paddin",
+                  "indicator": "uid=",
+                  "note": "Command output detected in response (HTML parsing improved)"
+                },
+                "rce_confirmed": false
+              }
+            ],
+            "meta": {
+              "params_tested": [
+                "cmd"
+              ],
+              "tests_run": 1,
+              "findings_count": 1,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_command_injection_checks__http://localhost:5013/upload": {
+          "endpoint": "/mcp/run_command_injection_checks",
+          "lab": "command_injection_lab",
+          "success": true,
+          "vulnerable": true,
+          "findings_count": 1,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5013/upload",
+            "findings_file": "/app/output_zap/default/command_injection_localhost_1765214012.json",
+            "vulnerable": true,
+            "injection_point": "filename",
+            "rce_confirmed": false,
+            "findings": [
+              {
+                "type": "command_injection",
+                "test": "command_injection_file_upload",
+                "vulnerable": true,
+                "injection_point": "filename",
+                "evidence": {
+                  "filename": "test`id`.jpg",
+                  "payload_type": "backtick",
+                  "status_code": 200,
+                  "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+                  "indicator": "uid=",
+                  "note": "Command output detected in file upload response"
+                },
+                "rce_confirmed": false
+              }
+            ],
+            "meta": {
+              "params_tested": [
+                "filename"
+              ],
+              "tests_run": 2,
+              "findings_count": 1,
+              "callback_used": false
+            }
+          }
+        },
+        "/mcp/run_command_injection_checks__http://localhost:5013/api/run": {
+          "endpoint": "/mcp/run_command_injection_checks",
+          "lab": "command_injection_lab",
+          "success": true,
+          "vulnerable": true,
+          "findings_count": 1,
+          "error": null,
+          "response": {
+            "target_url": "http://localhost:5013/api/run",
+            "findings_file": "/app/output_zap/default/command_injection_localhost_1765214012.json",
+            "vulnerable": true,
+            "injection_point": "command",
+            "rce_confirmed": false,
+            "findings": [
+              {
+                "type": "command_injection",
+                "test": "command_injection_json",
+                "vulnerable": true,
+                "injection_point": "command",
+                "evidence": {
+                  "payload": "id",
+                  "payload_type": "unix_id",
+                  "status_code": 200,
+                  "response_snippet": "{\n  \"command\": \"id\",\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"uid=0(root) gid=0(root) groups=0(root)\\n\"\n}\n",
+                  "indicator": "uid=",
+                  "note": "Command output detected in JSON API response"
+                },
+                "rce_confirmed": false
+              }
+            ],
+            "meta": {
+              "params_tested": [
+                "command"
+              ],
+              "tests_run": 2,
+              "findings_count": 1,
+              "callback_used": false
+            }
+          }
+        }
+      },
+      "expected_findings": [
+        {
+          "type": "command_injection",
+          "subtype": "get_parameter",
+          "cwe": "CWE-78",
+          "description": "Command injection via GET parameter",
+          "endpoint": "/execute",
+          "parameter": "cmd"
+        },
+        {
+          "type": "command_injection",
+          "subtype": "post_parameter",
+          "cwe": "CWE-78",
+          "description": "Command injection via POST parameter",
+          "endpoint": "/execute",
+          "parameter": "cmd"
+        },
+        {
+          "type": "command_injection",
+          "subtype": "file_upload",
+          "cwe": "CWE-78",
+          "description": "Command injection via file upload filename",
+          "endpoint": "/upload",
+          "parameter": "filename"
+        },
+        {
+          "type": "command_injection",
+          "subtype": "api_endpoint",
+          "cwe": "CWE-78",
+          "description": "Command injection via API endpoint",
+          "endpoint": "/api/run",
+          "parameter": "command"
+        }
+      ],
+      "detected_findings": [
+        {
+          "type": "command_injection",
+          "test": "command_injection",
+          "vulnerable": true,
+          "injection_point": "cmd",
+          "evidence": {
+            "payload": "id",
+            "payload_type": "unix_id",
+            "status_code": 200,
+            "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+            "text_content_snippet": "\n \n \n \n     Command Injection Lab \n     \n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .error { background: #fee; color: #c00; paddin",
+            "indicator": "uid=",
+            "note": "Command output detected in response (HTML parsing improved)"
+          },
+          "rce_confirmed": false
+        },
+        {
+          "type": "command_injection",
+          "test": "command_injection_file_upload",
+          "vulnerable": true,
+          "injection_point": "filename",
+          "evidence": {
+            "filename": "test`id`.jpg",
+            "payload_type": "backtick",
+            "status_code": 200,
+            "response_snippet": "\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Command Injection Lab</title>\n    <style>\n        body { font-family: Arial, sans-serif; margin: 40px; }\n        .container { max-width: 800px; margin: 0 auto; }\n        h1 { color: #333; }\n        .form { margin: 20px 0; }\n        input, textarea { width: 100%; padding: 10px; margin: 5px 0; }\n        button { padding: 10px 20px; margin-top: 10px; }\n        .result { background: #f5f5f5; padding: 15px; margin: 10px 0; white-space: pre-wrap; }\n        .er",
+            "indicator": "uid=",
+            "note": "Command output detected in file upload response"
+          },
+          "rce_confirmed": false
+        },
+        {
+          "type": "command_injection",
+          "test": "command_injection_json",
+          "vulnerable": true,
+          "injection_point": "command",
+          "evidence": {
+            "payload": "id",
+            "payload_type": "unix_id",
+            "status_code": 200,
+            "response_snippet": "{\n  \"command\": \"id\",\n  \"returncode\": 0,\n  \"stderr\": \"\",\n  \"stdout\": \"uid=0(root) gid=0(root) groups=0(root)\\n\"\n}\n",
+            "indicator": "uid=",
+            "note": "Command output detected in JSON API response"
+          },
+          "rce_confirmed": false
+        }
+      ],
+      "detection_rate": 1.0
+    }
+  }
+}

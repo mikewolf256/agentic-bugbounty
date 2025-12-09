@@ -89,8 +89,12 @@ def parse_xml():
         return jsonify({"error": "No XML provided"}), 400
     
     try:
-        # VULNERABLE: No secure parser settings - allows external entities
-        parser = etree.XMLParser()
+        # VULNERABLE: Enable DTD and external entity resolution
+        parser = etree.XMLParser(
+            resolve_entities=True,
+            load_dtd=True,
+            no_network=False  # Allow network access for external entities
+        )
         root = etree.fromstring(xml_data.encode(), parser)
         
         # Extract text content
@@ -142,8 +146,12 @@ def upload_xml():
     try:
         xml_data = file.read().decode('utf-8')
         
-        # VULNERABLE: Parse uploaded XML without secure settings
-        parser = etree.XMLParser()
+        # VULNERABLE: Parse uploaded XML with external entity resolution enabled
+        parser = etree.XMLParser(
+            resolve_entities=True,
+            load_dtd=True,
+            no_network=False
+        )
         root = etree.fromstring(xml_data.encode(), parser)
         
         result_text = etree.tostring(root, encoding='unicode', pretty_print=True)
@@ -177,8 +185,12 @@ def api_parse_xml():
         return jsonify({"error": "No XML provided"}), 400
     
     try:
-        # VULNERABLE: No secure parser settings
-        parser = etree.XMLParser()
+        # VULNERABLE: Enable external entity resolution
+        parser = etree.XMLParser(
+            resolve_entities=True,
+            load_dtd=True,
+            no_network=False
+        )
         root = etree.fromstring(xml_data.encode(), parser)
         
         result = {

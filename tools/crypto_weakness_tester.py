@@ -32,7 +32,10 @@ def test_crypto_weakness(
         Dict with test results
     """
     result = {
+        "type": "crypto_weakness",
         "test": "crypto_weakness",
+        "vulnerable": False,
+        "url": target_url,
         "weak_algorithms": [],
         "predictable_tokens": [],
         "evidence": None
@@ -81,6 +84,10 @@ def test_crypto_weakness(
             
     except Exception:
         pass
+    
+    # Set vulnerable based on findings
+    if result["weak_algorithms"] or result["predictable_tokens"]:
+        result["vulnerable"] = True
     
     result["evidence"] = {
         "tokens_analyzed": len(tokens) if tokens else 0,

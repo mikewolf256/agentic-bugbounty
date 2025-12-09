@@ -10,7 +10,7 @@ Tests for Server-Side Includes (SSI) injection vulnerabilities:
 import os
 import time
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
 
 
@@ -30,8 +30,11 @@ def test_ssi_injection(
         Dict with test results
     """
     result = {
+        "type": "ssi_injection",
         "test": "ssi_injection",
         "vulnerable": False,
+        "url": target_url,  # Include URL for detection matching
+        "param": param,  # Include parameter name
         "injection_method": None,
         "rce_confirmed": False,
         "evidence": None
@@ -86,6 +89,113 @@ def test_ssi_injection(
     return result
 
 
+def test_ssi_injection_params(
+    target_url: str,
+    params: Optional[List[str]] = None,
+    callback_url: Optional[str] = None
+) -> Dict[str, Any]:
+    """Test multiple parameters for SSI injection
+    
+    Args:
+        target_url: Target URL
+        params: List of parameters to test (if None, will discover)
+        callback_url: Optional callback URL
+        
+    Returns:
+        Dict with test results
+    """
+    result = {
+        "test": "ssi_injection_multi_param",
+        "vulnerable": False,
+        "findings": []
+    }
+    
+    # Discover parameters if not provided
+    if not params:
+        from tools.rest_api_fuzzer import discover_parameters
+        discovered_params = discover_parameters(target_url)
+        # Always include common SSI injection parameter names
+        ssi_params = ["page", "template", "include", "file", "view", "render"]
+        params = list(set(discovered_params + ssi_params))
+    
+    # Test each parameter
+    for param in params:
+        test_result = test_ssi_injection(target_url, param=param, callback_url=callback_url)
+        if test_result["vulnerable"]:
+            result["vulnerable"] = True
+            result["findings"].append(test_result)
+    
+    return result
+
+
+def discover_ssi_endpoints(base_url: str) -> List[Dict[str, str]]:
+    """Discover endpoints that might be vulnerable to SSI injection
+    
+    Args:
+        base_url: Base URL
+        
+    Returns:
+        List of dicts with url and param
+    """
+    endpoints = []
+    
+    # Common SSI-prone endpoints and their parameters
+    common_endpoints = [
+        ("/page", "page"),
+        ("/render", "template"),
+        ("/include", "file"),
+        ("/template", "name"),
+        ("/view", "file"),
+        ("/load", "page"),
+        ("/static", "file"),
+        ("/content", "page"),
+    ]
+    
+    # Add base URL with common params
+    for endpoint, param in common_endpoints:
+        url = f"{base_url.rstrip('/')}{endpoint}"
+        endpoints.append({"url": url, "param": param})
+    
+    # Also test base URL
+    endpoints.append({"url": base_url, "param": "page"})
+    endpoints.append({"url": base_url, "param": "template"})
+    
+    # Try to crawl for links
+    try:
+        resp = requests.get(base_url, timeout=10)
+        if resp.status_code == 200:
+            import re
+            # Find all href links
+            hrefs = re.findall(r'href=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
+            for href in hrefs:
+                if any(kw in href.lower() for kw in ["page", "template", "render", "include", "view"]):
+                    if href.startswith("/"):
+                        url = f"{base_url.rstrip('/')}{href}"
+                    elif href.startswith(base_url):
+                        url = href
+                    else:
+                        continue
+                    # Try to determine param from URL
+                    if "=" in href:
+                        param = href.split("=")[0].split("?")[-1].split("/")[-1]
+                    else:
+                        param = "page"
+                    endpoints.append({"url": url.split("?")[0], "param": param})
+    except Exception:
+        pass
+    
+    # Deduplicate
+    seen = set()
+    unique = []
+    for ep in endpoints:
+        key = (ep["url"], ep["param"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(ep)
+    
+    return unique
+
+
 def validate_ssi_injection(
     discovery_data: Dict[str, Any],
     callback_server_url: Optional[str] = None
@@ -121,11 +231,16 @@ def validate_ssi_injection(
         except Exception:
             pass
     
-    test_result = test_ssi_injection(target, callback_url=callback_url)
-    results["tests_run"] += 1
-    if test_result["vulnerable"]:
-        results["vulnerable"] = True
-        results["findings"].append(test_result)
+    # Discover SSI endpoints
+    endpoints_to_test = discover_ssi_endpoints(target)
+    
+    # Test each endpoint
+    for ep in endpoints_to_test:
+        test_result = test_ssi_injection(ep["url"], param=ep["param"], callback_url=callback_url)
+        results["tests_run"] += 1
+        if test_result["vulnerable"]:
+            results["vulnerable"] = True
+            results["findings"].append(test_result)
     
     return results
 

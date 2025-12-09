@@ -8,20 +8,69 @@ import requests
 
 
 COMMON_BACKUP_PATHS: List[str] = [
+    # Backup files
     "index.php.bak",
     "index.php~",
+    "index.php.old",
+    "index.php.backup",
     "index.html.bak",
     "index.html~",
     "config.php.bak",
     "config.php~",
+    "config.php.old",
+    "config.bak",
+    "config.old",
+    "settings.php.bak",
+    "database.php.bak",
+    "db.php.bak",
+    "wp-config.php.bak",
+    "app.config.bak",
+    # Archive files
     ".env",
+    ".env.bak",
+    ".env.old",
+    ".env.local",
+    ".env.production",
     "backup.zip",
     "backup.tar.gz",
+    "backup.tar",
+    "backup.sql",
+    "site.zip",
+    "www.zip",
+    "web.zip",
+    # Database dumps
     "db.sql",
     "database.sql",
     "dump.sql",
+    "mysql.sql",
+    "backup.sql",
+    # VCS/IDE files
     ".git/config",
+    ".git/HEAD",
+    ".git/index",
+    ".gitignore",
     ".svn/entries",
+    ".svn/wc.db",
+    ".hg/hgrc",
+    ".DS_Store",
+    "Thumbs.db",
+    # Config files
+    "web.config",
+    "web.config.bak",
+    ".htaccess",
+    ".htaccess.bak",
+    ".htpasswd",
+    "nginx.conf",
+    "robots.txt.bak",
+    # Editor backup files
+    "*.swp",
+    "*.swo",
+    "#index.php#",
+    # Common test/debug files
+    "phpinfo.php",
+    "info.php",
+    "test.php",
+    "debug.php",
 ]
 
 

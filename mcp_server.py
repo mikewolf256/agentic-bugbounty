@@ -89,8 +89,21 @@ def translate_url_for_docker(url: str) -> str:
     Returns:
         Translated URL (Docker service name) or original URL if no mapping
     """
-    # Lab port to service name mapping
+    # Lab port to service name mapping (external port -> docker service name)
     lab_port_map = {
+        # Original labs (5001-5011)
+        "5001": "xss_js_secrets",
+        "5002": "idor_auth",
+        "5003": "backup_leaks_fingerprint",
+        "5004": "auth_scan_lab",
+        "5005": "xxe_lab",
+        "5006": "business_logic_lab",
+        "5007": "cloud_lab",
+        "5008": "template_injection_lab",
+        "5009": "deserialization_lab",
+        "5010": "graphql_lab",
+        "5011": "grpc_lab",
+        # New labs (5013-5027)
         "5013": "command_injection_lab",
         "5014": "path_traversal_lab",
         "5015": "file_upload_lab",
@@ -358,7 +371,8 @@ class SecretExposureRequest(BaseModel):
 
 class NoSqlInjectionRequest(BaseModel):
     target_url: str  # Target URL
-    param: Optional[str] = None  # Parameter to test
+    param: Optional[str] = None  # Parameter to test (single param for backward compatibility)
+    params: Optional[List[str]] = None  # Parameters to test (if None, will discover)
     db_type: Optional[str] = "auto"  # Database type (mongodb, couchdb, auto)
     use_callback: bool = True  # Whether to use callback
 
@@ -403,6 +417,11 @@ class RandomGenerationRequest(BaseModel):
     target_url: str  # Target URL
     tokens: Optional[List[str]] = None  # Optional tokens to analyze
     auth_context: Optional[Dict[str, Any]] = None  # Optional authentication context
+
+class XssChecksRequest(BaseModel):
+    target_url: str  # Target URL to test
+    params: Optional[List[str]] = None  # Parameters to test (if None, will discover)
+    callback_url: Optional[str] = None  # Optional callback URL for blind XSS
 
 class BrowserPOCValidationRequest(BaseModel):
     finding: Dict[str, Any]  # Finding dict with URL, payload, type
@@ -567,6 +586,7 @@ class GraphQLSecurityResult(BaseModel):
     endpoint: str
     findings_file: str
     vulnerable: bool
+    findings: Optional[List[Dict[str, Any]]] = []
     meta: Dict[str, Any]
 
 class SstiChecksResult(BaseModel):
@@ -574,6 +594,7 @@ class SstiChecksResult(BaseModel):
     findings_file: str
     vulnerable: bool
     template_engine: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class DeserChecksResult(BaseModel):
@@ -581,6 +602,7 @@ class DeserChecksResult(BaseModel):
     findings_file: str
     vulnerable: bool
     format_type: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class CommandInjectionResult(BaseModel):
@@ -598,6 +620,7 @@ class PathTraversalResult(BaseModel):
     vulnerable: bool
     inclusion_type: Optional[str] = None  # lfi, rfi
     files_read: List[str] = []
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class FileUploadResult(BaseModel):
@@ -607,21 +630,26 @@ class FileUploadResult(BaseModel):
     bypass_methods: List[str] = []
     uploaded_files: List[Dict[str, Any]] = []
     rce_confirmed: bool = False
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class CsrfChecksResult(BaseModel):
     host: str
     findings_file: str
+    vulnerable: bool = False  # Add vulnerable flag
     vulnerable_endpoints: List[Dict[str, Any]] = []
     poc_html: List[Dict[str, Any]] = []
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class SecretExposureResult(BaseModel):
     host: str
     findings_file: str
+    vulnerable: bool = False  # Add vulnerable flag
     secrets_found: List[Dict[str, Any]] = []
     validated_secrets: List[Dict[str, Any]] = []
     severity: str = "low"
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class NoSqlInjectionResult(BaseModel):
@@ -630,6 +658,7 @@ class NoSqlInjectionResult(BaseModel):
     vulnerable: bool
     db_type: Optional[str] = None
     injection_method: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class LdapInjectionResult(BaseModel):
@@ -638,6 +667,7 @@ class LdapInjectionResult(BaseModel):
     vulnerable: bool
     injection_method: Optional[str] = None
     auth_bypass: bool = False
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class MassAssignmentResult(BaseModel):
@@ -646,6 +676,7 @@ class MassAssignmentResult(BaseModel):
     vulnerable: bool
     manipulated_fields: List[str] = []
     privilege_escalation: bool = False
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class WebSocketChecksResult(BaseModel):
@@ -653,6 +684,7 @@ class WebSocketChecksResult(BaseModel):
     findings_file: str
     vulnerable: bool
     issues: List[str] = []
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class SsiInjectionResult(BaseModel):
@@ -661,13 +693,16 @@ class SsiInjectionResult(BaseModel):
     vulnerable: bool
     injection_method: Optional[str] = None
     rce_confirmed: bool = False
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class CryptoChecksResult(BaseModel):
     target_url: str
     findings_file: str
+    vulnerable: bool = False
     weak_algorithms: List[str] = []
     predictable_tokens: List[Dict[str, Any]] = []
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class ParameterPollutionResult(BaseModel):
@@ -675,6 +710,7 @@ class ParameterPollutionResult(BaseModel):
     findings_file: str
     vulnerable: bool
     pollution_method: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class DnsRebindingResult(BaseModel):
@@ -682,6 +718,7 @@ class DnsRebindingResult(BaseModel):
     findings_file: str
     vulnerable: bool
     internal_access: bool = False
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class CachePoisoningResult(BaseModel):
@@ -689,13 +726,16 @@ class CachePoisoningResult(BaseModel):
     findings_file: str
     vulnerable: bool
     poisoning_method: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 class RandomGenerationResult(BaseModel):
     target_url: str
     findings_file: str
+    vulnerable: bool = False
     predictable: bool = False
     token_type: Optional[str] = None
+    findings: Optional[List[Dict[str, Any]]] = []  # Include findings in response
     meta: Dict[str, Any]
 
 
@@ -705,6 +745,36 @@ class NucleiScanResult(BaseModel):
     findings_file: str
     mode: str
     templates_used: List[str]
+
+
+class SqlmapResult(BaseModel):
+    target: str
+    findings_file: str
+    vulnerable: bool
+    dbms: Optional[str] = None
+    vulnerable_params: List[str] = []
+    injection_types: List[str] = []
+    findings: Optional[List[Dict[str, Any]]] = []
+    meta: Dict[str, Any]
+
+
+class FfufResult(BaseModel):
+    target: str
+    wordlist: str
+    findings_file: str
+    findings_count: int
+    endpoints_found: List[str] = []
+    meta: Dict[str, Any]
+
+
+class XssChecksResult(BaseModel):
+    target_url: str
+    findings_file: str
+    vulnerable: bool
+    xss_type: Optional[str] = None  # reflected, dom, stored
+    context: Optional[str] = None  # html, attribute, js, url
+    findings: Optional[List[Dict[str, Any]]] = []
+    meta: Dict[str, Any]
 
 
 # ---------- JWT/Auth Check Models ----------
@@ -1274,10 +1344,9 @@ def run_js_miner(body: Dict[str, Any]):
 
 @app.post("/mcp/run_backup_hunt")
 def run_backup_hunt(body: Dict[str, Any]):
-    """Kick off a backup/VCS file hunter for a given base URL.
+    """Run backup/VCS file hunter for a given base URL.
 
-    This runs tools/backup_hunt.py in the background against a single
-    base URL, looking for common backup/config artifacts.
+    Probes common backup file paths and returns results synchronously.
     """
 
     base_url = body.get("base_url") or body.get("url")
@@ -1285,24 +1354,70 @@ def run_backup_hunt(body: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Missing 'base_url' in request body.")
 
     host = _enforce_scope(base_url)
+    
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(base_url)
 
-    artifact_dir = os.path.join(ARTIFACTS_DIR, "backup_hunt", host)
-
-    script_path = os.path.join(os.path.dirname(__file__), "tools", "backup_hunt.py")
-    if not os.path.exists(script_path):
-        raise HTTPException(status_code=500, detail=f"backup_hunt.py not found at {script_path}")
-
-    cmd = [
-        sys.executable,
-        script_path,
-        "--base-url",
-        base_url,
-        "--output-dir",
-        artifact_dir,
-    ]
-
-    job_id = _spawn_job(cmd, job_kind="backup_hunt", artifact_dir=artifact_dir)
-    return {"job_id": job_id, "artifact_dir": artifact_dir}
+    # Run backup hunt synchronously using the module
+    try:
+        from tools.backup_hunt import COMMON_BACKUP_PATHS, probe_url
+        
+        base = translated_url.rstrip("/")
+        hits = []
+        findings = []
+        
+        for rel in COMMON_BACKUP_PATHS:
+            if "*" in rel:  # Skip glob patterns
+                continue
+            target = f"{base}/{rel}"
+            info = probe_url(target)
+            # Treat non-404/400 responses without errors as interesting
+            if info.get("error") is None and info.get("status") not in (400, 404):
+                hits.append(info)
+                findings.append({
+                    "type": "backup_file",
+                    "url": info["url"],
+                    "status_code": info["status"],
+                    "file_path": rel,
+                    "vulnerable": True,
+                    "evidence": {
+                        "url": info["url"],
+                        "status": info["status"],
+                        "length": info.get("length", 0),
+                    }
+                })
+        
+        # Save results
+        ts = int(time.time())
+        host_key = host.replace(":", "_").replace("/", "_")
+        out_name = f"backup_hunt_{host_key}_{ts}.json"
+        out_path = os.path.join(OUTPUT_DIR, out_name)
+        
+        result = {
+            "base_url": base_url,
+            "wordlist_size": len(COMMON_BACKUP_PATHS),
+            "hits": hits,
+            "vulnerable": len(hits) > 0,
+            "findings": findings,
+        }
+        
+        with open(out_path, "w", encoding="utf-8") as fh:
+            json.dump(result, fh, indent=2)
+        
+        return {
+            "base_url": base_url,
+            "findings_file": out_path,
+            "vulnerable": len(hits) > 0,
+            "hits_count": len(hits),
+            "findings": findings,
+            "meta": {
+                "wordlist_size": len(COMMON_BACKUP_PATHS),
+                "paths_checked": len([p for p in COMMON_BACKUP_PATHS if "*" not in p]),
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backup hunt failed: {e}")
 
 
 @app.get("/mcp/job/{job_id}")
@@ -1383,35 +1498,69 @@ def run_katana_nuclei(req: KatanaNucleiRequest):
         print(f"[KATANA+NUCLEI] Command: {' '.join(cmd)}", file=sys.stderr)
         raise HTTPException(status_code=500, detail=error_msg)
 
+    # Check stdout for the actual output path (script prints it)
+    actual_out_path = None
+    if proc.stdout:
+        stdout_lines = proc.stdout.strip().split('\n')
+        # The script prints the output path as the last line
+        for line in reversed(stdout_lines):
+            line = line.strip()
+            if line and (line.endswith('.json') or '/' in line or '\\' in line):
+                # Check if it's a valid path
+                if os.path.exists(line):
+                    actual_out_path = line
+                    break
+                # Also check if it's a relative path that might exist
+                elif os.path.exists(os.path.join(OUTPUT_DIR, os.path.basename(line))):
+                    actual_out_path = os.path.join(OUTPUT_DIR, os.path.basename(line))
+                    break
+    
+    # Use actual path if found, otherwise use expected path
+    final_out_path = actual_out_path or out_path
+    
     if proc.returncode != 0:
         error_detail = proc.stderr.strip() or proc.stdout.strip() or "Unknown error"
         error_msg = f"katana_nuclei_recon.py failed with return code {proc.returncode}: {error_detail}"
         print(f"[KATANA+NUCLEI] {error_msg}", file=sys.stderr)
         if proc.stdout:
-            print(f"[KATANA+NUCLEI] stdout: {proc.stdout[:500]}", file=sys.stderr)
+            print(f"[KATANA+NUCLEI] stdout: {proc.stdout[:1000]}", file=sys.stderr)
         if proc.stderr:
-            print(f"[KATANA+NUCLEI] stderr: {proc.stderr[:500]}", file=sys.stderr)
+            print(f"[KATANA+NUCLEI] stderr: {proc.stderr[:1000]}", file=sys.stderr)
         raise HTTPException(
             status_code=500,
             detail=error_msg,
         )
 
-    if not os.path.exists(out_path):
-        error_msg = f"Expected output file not found: {out_path}. Script may have failed silently."
+    if not os.path.exists(final_out_path):
+        error_msg = f"Expected output file not found: {final_out_path}. Script may have failed silently."
         print(f"[KATANA+NUCLEI] {error_msg}", file=sys.stderr)
         print(f"[KATANA+NUCLEI] Script return code: {proc.returncode}", file=sys.stderr)
+        print(f"[KATANA+NUCLEI] Expected path: {out_path}", file=sys.stderr)
+        if proc.stdout:
+            print(f"[KATANA+NUCLEI] Script stdout: {proc.stdout[:1000]}", file=sys.stderr)
+        if proc.stderr:
+            print(f"[KATANA+NUCLEI] Script stderr: {proc.stderr[:1000]}", file=sys.stderr)
+        # Check if OUTPUT_DIR exists and is writable
+        if not os.path.exists(OUTPUT_DIR):
+            error_msg += f" OUTPUT_DIR does not exist: {OUTPUT_DIR}"
+        elif not os.access(OUTPUT_DIR, os.W_OK):
+            error_msg += f" OUTPUT_DIR is not writable: {OUTPUT_DIR}"
         raise HTTPException(
             status_code=500,
             detail=error_msg,
         )
+    
+    # Update out_path to the actual path found
+    out_path = final_out_path
 
     with open(out_path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
 
     findings = data.get("nuclei_findings", [])
+    # Derive findings filename from actual output path (not original out_name)
     findings_file = os.path.join(
         OUTPUT_DIR,
-        os.path.splitext(out_name)[0] + "_findings.json",
+        os.path.splitext(os.path.basename(out_path))[0] + "_findings.json",
     )
     with open(findings_file, "w", encoding="utf-8") as fh:
         json.dump(findings, fh, indent=2)
@@ -2624,8 +2773,23 @@ def _get_auth_token(base_url: str, req: BacChecksRequest) -> Optional[str]:
             login_url = base_url.rstrip("/") + req.quick_login_url
             resp = requests.get(login_url, timeout=10)
             if resp.status_code == 200:
-                data = resp.json()
-                return data.get("token") or resp.headers.get("X-Auth-Token")
+                # Check for token in JSON response
+                try:
+                    data = resp.json()
+                    token = data.get("token")
+                    if token:
+                        return token
+                except Exception:
+                    pass
+                
+                # Check for token in various headers
+                for header in ["X-Auth-Token", "X-Demo-Token", "Authorization", "X-Token", "Token"]:
+                    token = resp.headers.get(header)
+                    if token:
+                        # Strip "Bearer " prefix if present
+                        if token.startswith("Bearer "):
+                            token = token[7:]
+                        return token
         except Exception:
             pass
     
@@ -2635,8 +2799,21 @@ def _get_auth_token(base_url: str, req: BacChecksRequest) -> Optional[str]:
             login_url = base_url.rstrip("/") + req.login_url
             resp = requests.post(login_url, json=req.credentials, timeout=10)
             if resp.status_code == 200:
-                data = resp.json()
-                return data.get("token") or resp.headers.get("X-Auth-Token")
+                try:
+                    data = resp.json()
+                    token = data.get("token")
+                    if token:
+                        return token
+                except Exception:
+                    pass
+                
+                # Check headers
+                for header in ["X-Auth-Token", "X-Demo-Token", "Authorization", "X-Token", "Token"]:
+                    token = resp.headers.get(header)
+                    if token:
+                        if token.startswith("Bearer "):
+                            token = token[7:]
+                        return token
         except Exception:
             pass
     
@@ -2826,14 +3003,19 @@ def run_bac_checks(req: BacChecksRequest):
                 pass
     
     # Additional IDOR tests with authentication on common patterns
+    # Always test these when we have auth, even without a profile
+    idor_test_paths = [
+        ("/api/users/1", "/api/users/2", "user"),
+        ("/api/users/2", "/api/users/1", "user"),  # Also reverse
+        ("/api/users/2", "/api/users/3", "user"),
+        ("/api/orders/1", "/api/orders/2", "order"),
+        ("/api/orders/2", "/api/orders/3", "order"),
+        ("/api/profile/1", "/api/profile/2", "profile"),
+        ("/users/1", "/users/2", "user"),  # Without /api prefix
+        ("/users/2", "/users/1", "user"),
+    ]
+    
     if auth_token:
-        idor_test_paths = [
-            ("/api/users/1", "/api/users/2", "user"),
-            ("/api/users/2", "/api/users/3", "user"),
-            ("/api/orders/1", "/api/orders/2", "order"),
-            ("/api/orders/2", "/api/orders/3", "order"),
-            ("/api/profile/1", "/api/profile/2", "profile"),
-        ]
         
         for own_path, other_path, resource_type in idor_test_paths:
             test_url = base_url.rstrip("/") + other_path
@@ -3143,12 +3325,15 @@ def run_xxe_checks(req: XxeChecksRequest):
     host = parsed.netloc
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target)
+    
     # Get callback server URL if enabled
     callback_url = None
     if req.use_callback:
         callback_url = os.environ.get("CALLBACK_SERVER_URL")
     
-    discovery_data = {"target": req.target}
+    discovery_data = {"target": translated_url}
     results = validate_xxe(discovery_data, callback_url)
     
     # Save results
@@ -3306,7 +3491,7 @@ def run_cloud_checks(req: CloudChecksRequest):
     2. Storage bucket misconfigurations (S3, GCS, Azure Blob)
     3. IAM misconfigurations and credential exposure
     
-    Note: Requires SSRF vulnerability or direct metadata access.
+    Note: Tests for both direct metadata exposure and SSRF to metadata endpoints.
     """
     from tools.cloud_metadata_tester import test_cloud_metadata
     from tools.cloud_storage_tester import test_cloud_storage
@@ -3316,19 +3501,26 @@ def run_cloud_checks(req: CloudChecksRequest):
     host = parsed.netloc if parsed.netloc else req.target
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_target = translate_url_for_docker(req.target)
+    
     results = {
         "metadata_tests": {},
         "storage_tests": {},
         "iam_analysis": {},
-        "vulnerable": False
+        "vulnerable": False,
+        "findings": []  # Add findings for validation
     }
     
-    # Test metadata endpoints
+    # Test metadata endpoints (includes direct exposure and SSRF)
     callback_url = os.environ.get("CALLBACK_SERVER_URL")
-    metadata_results = test_cloud_metadata(req.target, callback_url)
+    metadata_results = test_cloud_metadata(translated_target, callback_url)
     results["metadata_tests"] = metadata_results
     if metadata_results.get("vulnerable"):
         results["vulnerable"] = True
+        # Extract findings
+        for finding in metadata_results.get("findings", []):
+            results["findings"].append(finding)
     
     # If metadata response provided, analyze it
     if req.metadata_response:
@@ -3359,7 +3551,8 @@ def run_cloud_checks(req: CloudChecksRequest):
         meta={
             "vulnerable": results["vulnerable"],
             "metadata_tests_run": metadata_results.get("tests_run", 0),
-            "findings_file": out_path
+            "findings_file": out_path,
+            "findings_count": len(results["findings"])
         },
         results=results
     )
@@ -3838,6 +4031,9 @@ def run_graphql_security(req: GraphQLSecurityRequest):
     host = parsed.netloc.split(":")[0]
     _enforce_scope(host)
     
+    # Translate endpoint for Docker environment
+    translated_endpoint = translate_url_for_docker(req.endpoint)
+    
     script = os.path.join(os.path.dirname(__file__), "tools", "graphql_security.py")
     
     # Verify script exists
@@ -3850,7 +4046,7 @@ def run_graphql_security(req: GraphQLSecurityRequest):
     
     try:
         result_proc = subprocess.run(
-            [sys.executable, script, "--endpoint", req.endpoint, "--output", output_file],
+            [sys.executable, script, "--endpoint", translated_endpoint, "--output", output_file],
             timeout=120,
             capture_output=True,
             text=True
@@ -3875,12 +4071,15 @@ def run_graphql_security(req: GraphQLSecurityRequest):
         with open(out_path, "w") as fh:
             json.dump(result, fh, indent=2)
         
-        vulnerable = result.get("depth_attack", {}).get("vulnerable") or result.get("batching", {}).get("vulnerable")
+        # Check for any vulnerability
+        findings = result.get("findings", [])
+        vulnerable = len(findings) > 0 or result.get("depth_attack", {}).get("vulnerable") or result.get("batching", {}).get("vulnerable")
         
         return GraphQLSecurityResult(
             endpoint=req.endpoint,
             findings_file=out_path,
             vulnerable=vulnerable,
+            findings=findings,
             meta=result,
         )
     finally:
@@ -3994,6 +4193,282 @@ def run_nuclei(req: NucleiRequest):
         findings_file=out_path,
         mode=mode,
         templates_used=templates_used,
+    )
+
+
+# ---------- SQLmap & Ffuf Endpoints ----------
+
+@app.post("/mcp/run_sqlmap", response_model=SqlmapResult)
+def run_sqlmap(req: SqlmapRequest):
+    """
+    Run sqlmap SQL injection scanner against a target.
+    
+    This endpoint wraps the sqlmap tool with safe defaults:
+    - Automatic parameter detection
+    - Batch mode (no user interaction)
+    - Risk level 1 (safe tests only)
+    - Level 1 (basic tests)
+    - Timeout protection
+    
+    Args:
+        target: Full URL to test (with parameters)
+        data: Optional POST data
+        headers: Optional custom headers
+    
+    Returns:
+        SqlmapResult with vulnerability details
+    """
+    host = _enforce_scope(req.target)
+    
+    sqlmap_bin = os.environ.get("SQLMAP_BIN", "sqlmap")
+    
+    # Build sqlmap command with safe defaults
+    ts = int(time.time())
+    host_key = normalize_target(host).replace(":", "_").replace("/", "_")[:50]
+    output_dir = os.path.join(OUTPUT_DIR, f"sqlmap_{host_key}_{ts}")
+    findings_file = os.path.join(OUTPUT_DIR, f"sqlmap_findings_{host_key}_{ts}.json")
+    
+    # Translate URL for Docker if needed
+    target_url = translate_url_for_docker(req.target)
+    
+    cmd = [
+        sqlmap_bin,
+        "-u", target_url,
+        "--batch",  # Non-interactive mode
+        "--risk=1",  # Safe risk level
+        "--level=1",  # Basic tests
+        "--output-dir", output_dir,
+        "--technique=BEUSTQ",  # All techniques
+        "--threads=1",  # Single thread for safety
+    ]
+    
+    # Add POST data if provided
+    if req.data:
+        cmd.extend(["--data", req.data])
+    
+    # Add custom headers if provided
+    if req.headers:
+        for key, value in req.headers.items():
+            cmd.extend(["--header", f"{key}: {value}"])
+    
+    print(f"[SQLMAP] Running: {' '.join(cmd)}", file=sys.stderr)
+    
+    rate_limit_wait()
+    
+    vulnerable = False
+    dbms = None
+    vulnerable_params: List[str] = []
+    injection_types: List[str] = []
+    findings: List[Dict[str, Any]] = []
+    error_msg = None
+    
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minute timeout
+        )
+        
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+        output = stdout + "\n" + stderr
+        
+        # Parse sqlmap output for vulnerability indicators
+        if "is vulnerable" in output.lower() or "injectable" in output.lower():
+            vulnerable = True
+        
+        # Extract DBMS type
+        import re
+        dbms_match = re.search(r"back-end DBMS:\s*(\S+)", output, re.IGNORECASE)
+        if dbms_match:
+            dbms = dbms_match.group(1)
+        
+        # Extract vulnerable parameters
+        param_matches = re.findall(r"Parameter:\s*(\S+)\s+\(", output)
+        vulnerable_params = list(set(param_matches))
+        
+        # Extract injection types
+        type_patterns = [
+            (r"boolean-based blind", "boolean-blind"),
+            (r"time-based blind", "time-blind"),
+            (r"error-based", "error-based"),
+            (r"UNION query", "union"),
+            (r"stacked queries", "stacked"),
+        ]
+        for pattern, type_name in type_patterns:
+            if re.search(pattern, output, re.IGNORECASE):
+                injection_types.append(type_name)
+        
+        # Create findings for each vulnerable parameter
+        for param in vulnerable_params:
+            finding = {
+                "type": "sql_injection",
+                "url": req.target,
+                "param": param,
+                "vulnerable": True,
+                "dbms": dbms,
+                "injection_types": injection_types,
+                "evidence": {
+                    "tool": "sqlmap",
+                    "output_snippet": output[:2000] if output else None,
+                }
+            }
+            findings.append(finding)
+        
+    except subprocess.TimeoutExpired:
+        error_msg = "sqlmap scan timed out (10 minutes)"
+    except FileNotFoundError:
+        error_msg = f"sqlmap binary not found: {sqlmap_bin}"
+    except Exception as e:
+        error_msg = str(e)
+    
+    # Write findings to JSON file
+    with open(findings_file, "w", encoding="utf-8") as fh:
+        json.dump({
+            "target": req.target,
+            "vulnerable": vulnerable,
+            "dbms": dbms,
+            "vulnerable_params": vulnerable_params,
+            "injection_types": injection_types,
+            "findings": findings,
+            "error": error_msg,
+        }, fh, indent=2)
+    
+    return SqlmapResult(
+        target=req.target,
+        findings_file=findings_file,
+        vulnerable=vulnerable,
+        dbms=dbms,
+        vulnerable_params=vulnerable_params,
+        injection_types=injection_types,
+        findings=findings,
+        meta={
+            "output_dir": output_dir,
+            "error": error_msg,
+        }
+    )
+
+
+@app.post("/mcp/run_ffuf", response_model=FfufResult)
+def run_ffuf(req: FfufRequest):
+    """
+    Run ffuf content discovery/fuzzing against a target.
+    
+    This endpoint wraps ffuf with configurable options:
+    - Custom wordlists
+    - Rate limiting
+    - Response filtering
+    
+    Args:
+        target: URL with FUZZ placeholder for fuzzing
+        wordlist: Path to wordlist file
+        headers: Optional custom headers
+        rate: Requests per second (default: 50)
+    
+    Returns:
+        FfufResult with discovered endpoints
+    """
+    host = _enforce_scope(req.target)
+    
+    ffuf_bin = os.environ.get("FFUF_BIN", "ffuf")
+    
+    # Translate URL for Docker if needed
+    target_url = translate_url_for_docker(req.target)
+    
+    # Ensure FUZZ placeholder exists
+    if "FUZZ" not in target_url:
+        # Add FUZZ at the end of path
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(target_url)
+        if parsed.path.endswith("/"):
+            new_path = parsed.path + "FUZZ"
+        else:
+            new_path = parsed.path + "/FUZZ"
+        target_url = urlunparse((
+            parsed.scheme, parsed.netloc, new_path,
+            parsed.params, parsed.query, parsed.fragment
+        ))
+    
+    # Setup output
+    ts = int(time.time())
+    host_key = normalize_target(host).replace(":", "_").replace("/", "_")[:50]
+    findings_file = os.path.join(OUTPUT_DIR, f"ffuf_{host_key}_{ts}.json")
+    
+    # Rate limit (default 50 req/s, respect scope limits)
+    rate = req.rate or min(50, get_katana_rate_limit())
+    
+    cmd = [
+        ffuf_bin,
+        "-u", target_url,
+        "-w", req.wordlist,
+        "-o", findings_file,
+        "-of", "json",  # JSON output format
+        "-rate", str(rate),
+        "-mc", "all",  # Match all status codes initially
+        "-fc", "404",  # Filter 404s
+        "-t", "10",  # 10 threads
+        "-timeout", "10",  # 10 second timeout per request
+    ]
+    
+    # Add custom headers if provided
+    if req.headers:
+        for key, value in req.headers.items():
+            cmd.extend(["-H", f"{key}: {value}"])
+    
+    print(f"[FFUF] Running: {' '.join(cmd)}", file=sys.stderr)
+    
+    rate_limit_wait()
+    
+    endpoints_found: List[str] = []
+    findings_count = 0
+    error_msg = None
+    
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minute timeout
+        )
+        
+        # Parse ffuf JSON output
+        if os.path.exists(findings_file):
+            try:
+                with open(findings_file, "r", encoding="utf-8") as fh:
+                    ffuf_data = json.load(fh)
+                    results = ffuf_data.get("results", [])
+                    findings_count = len(results)
+                    for result in results:
+                        # Build full URL from result
+                        url = result.get("url", "")
+                        if url:
+                            endpoints_found.append(url)
+            except json.JSONDecodeError:
+                pass
+        
+    except subprocess.TimeoutExpired:
+        error_msg = "ffuf scan timed out (10 minutes)"
+    except FileNotFoundError:
+        error_msg = f"ffuf binary not found: {ffuf_bin}"
+    except Exception as e:
+        error_msg = str(e)
+    
+    # Create empty findings file if it doesn't exist
+    if not os.path.exists(findings_file):
+        with open(findings_file, "w", encoding="utf-8") as fh:
+            json.dump({"results": [], "error": error_msg}, fh)
+    
+    return FfufResult(
+        target=req.target,
+        wordlist=req.wordlist,
+        findings_file=findings_file,
+        findings_count=findings_count,
+        endpoints_found=endpoints_found[:100],  # Limit to first 100
+        meta={
+            "rate": rate,
+            "error": error_msg,
+        }
     )
 
 
@@ -4277,44 +4752,154 @@ def run_ssti_checks(req: SstiChecksRequest):
     # Get callback URL from environment if not provided
     callback_url = req.callback_url or os.environ.get("CALLBACK_SERVER_URL")
     
-    # Run tester
+    # Run tester - test multiple parameters if param not specified
     try:
-        from tools.template_injection_tester import test_ssti
-        result = test_ssti(req.target_url, req.param, callback_url)
+        from tools.template_injection_tester import test_ssti, test_ssti_params
+        # Translate URL for Docker if needed (MCP server runs in Docker, needs service names)
+        translated_url = translate_url_for_docker(req.target_url)
+        if req.param:
+            # Single parameter test
+            result = test_ssti(translated_url, req.param, callback_url)
+            all_findings = [result] if result.get("vulnerable") else []
+            detected_param = req.param  # Use provided param
+        else:
+            # Test multiple parameters - keep ALL findings
+            multi_result = test_ssti_params(translated_url, callback_url=callback_url)
+            all_findings = multi_result.get("findings", [])
+            # Use first finding for response metadata (template_engine, etc.)
+            # but keep all findings in the saved file
+            result = multi_result.get("findings", [{}])[0] if all_findings else {}
+            detected_param = result.get("param") if result else None
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"SSTI tester failed: {e}",
         )
     
-    # Save results
+    # Save results - include ALL findings
     ts = int(time.time())
     host_key = host.replace(":", "_").replace("/", "_")
     out_name = f"ssti_checks_{host_key}_{ts}.json"
     out_path = os.path.join(OUTPUT_DIR, out_name)
     
-    findings = {
+    # Use detected_param if req.param was None (multi-param testing)
+    param_to_save = detected_param if detected_param is not None else req.param
+    
+    # Save all findings, not just the first one
+    findings_data = {
         "target_url": req.target_url,
-        "param": req.param,
-        "vulnerable": result.get("vulnerable", False),
-        "template_engine": result.get("template_engine"),
-        "evidence": result.get("evidence"),
-        "rce_tested": result.get("rce_tested", False),
+        "param": param_to_save,  # Primary parameter (first found or specified)
+        "vulnerable": result.get("vulnerable", False) if result else False,
+        "template_engine": result.get("template_engine") if result else None,
+        "findings": all_findings,  # Include ALL findings
+        "findings_count": len(all_findings),
         "timestamp": ts,
     }
     
     with open(out_path, "w", encoding="utf-8") as fh:
-        json.dump(findings, fh, indent=2)
+        json.dump(findings_data, fh, indent=2)
     
     return SstiChecksResult(
         target_url=req.target_url,
         findings_file=out_path,
-        vulnerable=result.get("vulnerable", False),
-        template_engine=result.get("template_engine"),
+        vulnerable=result.get("vulnerable", False) if result else False,
+        template_engine=result.get("template_engine") if result else None,
+        findings=all_findings,  # Include findings in response
         meta={
             "param_tested": req.param,
+            "params_tested": [f.get("param") for f in all_findings if f.get("param")] if not req.param else [req.param],
+            "findings_count": len(all_findings),
             "callback_url_used": callback_url is not None,
-            "rce_tested": result.get("rce_tested", False),
+            "rce_tested": result.get("rce_tested", False) if result else False,
+        }
+    )
+
+
+@app.post("/mcp/run_xss_checks", response_model=XssChecksResult)
+def run_xss_checks(req: XssChecksRequest):
+    """
+    Run Cross-Site Scripting (XSS) vulnerability checks.
+    
+    Tests for XSS vulnerabilities including:
+    - Reflected XSS (GET/POST parameters)
+    - DOM-based XSS patterns
+    - Context-aware payloads (HTML, attribute, JavaScript, URL)
+    
+    Args:
+        target_url: URL to test
+        params: Optional list of parameters to test
+        callback_url: Optional callback URL for blind XSS detection
+    
+    Returns:
+        XssChecksResult with vulnerability details
+    """
+    from urllib.parse import urlparse
+    
+    # Enforce scope
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Import tester
+    tester_script = os.path.join(os.path.dirname(__file__), "tools", "xss_tester.py")
+    if not os.path.exists(tester_script):
+        raise HTTPException(
+            status_code=500,
+            detail=f"xss_tester.py not found at {tester_script}",
+        )
+    
+    # Get callback URL from environment if not provided
+    callback_url = req.callback_url or os.environ.get("CALLBACK_SERVER_URL")
+    
+    # Run tester
+    try:
+        from tools.xss_tester import test_xss_params, test_dom_xss
+        # Translate URL for Docker if needed
+        translated_url = translate_url_for_docker(req.target_url)
+        
+        # Test multiple parameters
+        result = test_xss_params(translated_url, params=req.params, callback_url=callback_url)
+        all_findings = result.get("findings", [])
+        
+        # Get first finding for metadata
+        first_finding = all_findings[0] if all_findings else {}
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"XSS tester failed: {e}",
+        )
+    
+    # Save results
+    ts = int(time.time())
+    host_key = host.replace(":", "_").replace("/", "_")
+    out_name = f"xss_checks_{host_key}_{ts}.json"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    
+    findings_data = {
+        "target_url": req.target_url,
+        "vulnerable": result.get("vulnerable", False),
+        "xss_type": first_finding.get("xss_type"),
+        "context": first_finding.get("context"),
+        "findings": all_findings,
+        "findings_count": len(all_findings),
+        "timestamp": ts,
+    }
+    
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(findings_data, fh, indent=2)
+    
+    return XssChecksResult(
+        target_url=req.target_url,
+        findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
+        xss_type=first_finding.get("xss_type"),
+        context=first_finding.get("context"),
+        findings=all_findings,
+        meta={
+            "params_tested": req.params or [],
+            "findings_count": len(all_findings),
+            "callback_url_used": callback_url is not None,
         }
     )
 
@@ -4338,6 +4923,9 @@ def run_deser_checks(req: DeserChecksRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    target_url = translate_url_for_docker(req.target_url)
+    
     # Import tester
     tester_script = os.path.join(os.path.dirname(__file__), "tools", "deserialization_tester.py")
     if not os.path.exists(tester_script):
@@ -4352,7 +4940,7 @@ def run_deser_checks(req: DeserChecksRequest):
     # Run tester
     try:
         from tools.deserialization_tester import test_deserialization
-        result = test_deserialization(req.target_url, req.format_type, callback_url)
+        result = test_deserialization(target_url, req.format_type, callback_url)
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -4397,6 +4985,7 @@ def run_deser_checks(req: DeserChecksRequest):
         findings_file=out_path,
         vulnerable=result.get("vulnerable", False),
         format_type=detected_format or req.format_type,
+        findings=result.get("findings", []),  # Include findings in response
         meta={
             "format_tested": req.format_type,
             "tests_run": result.get("tests_run", 0),
@@ -4517,7 +5106,9 @@ def run_path_traversal_checks(req: PathTraversalRequest):
     # Run tester
     try:
         from tools.path_traversal_tester import validate_path_traversal
-        discovery_data = {"target": req.target_url}
+        # Translate URL for Docker if needed (MCP server runs in Docker, needs service names)
+        translated_url = translate_url_for_docker(req.target_url)
+        discovery_data = {"target": translated_url}
         result = validate_path_traversal(discovery_data, callback_server_url)
     except Exception as e:
         raise HTTPException(
@@ -4559,6 +5150,7 @@ def run_path_traversal_checks(req: PathTraversalRequest):
         vulnerable=result.get("vulnerable", False),
         inclusion_type=inclusion_type,
         files_read=list(set(files_read)),
+        findings=result.get("findings", []),  # Include findings in response
         meta={
             "param_tested": req.param or "auto-discovered",
             "file_paths_tested": req.file_paths or "default",
@@ -4597,9 +5189,12 @@ def run_file_upload_checks(req: FileUploadRequest):
     # Run tester
     try:
         from tools.file_upload_tester import validate_file_upload
-        discovery_data = {"target": req.target_url}
-        if req.upload_endpoint:
-            discovery_data["api_endpoints"] = [{"url": req.upload_endpoint, "method": "POST"}]
+        # Translate URL for Docker if needed (MCP server runs in Docker, needs service names)
+        translated_url = translate_url_for_docker(req.target_url)
+        translated_endpoint = translate_url_for_docker(req.upload_endpoint) if req.upload_endpoint else None
+        discovery_data = {"target": translated_url}
+        if translated_endpoint:
+            discovery_data["api_endpoints"] = [{"url": translated_endpoint, "method": "POST"}]
         result = validate_file_upload(discovery_data, callback_server_url)
     except Exception as e:
         raise HTTPException(
@@ -4647,6 +5242,7 @@ def run_file_upload_checks(req: FileUploadRequest):
         bypass_methods=list(set(bypass_methods)),
         uploaded_files=uploaded_files,
         rce_confirmed=rce_confirmed,
+        findings=result.get("findings", []),  # Include findings in response
         meta={
             "upload_endpoint": req.upload_endpoint or "auto-discovered",
             "tests_run": result.get("tests_run", 0),
@@ -4660,11 +5256,34 @@ def run_file_upload_checks(req: FileUploadRequest):
 def run_csrf_checks(req: CsrfChecksRequest):
     """Run CSRF vulnerability checks."""
     _enforce_scope(req.host)
+    
+    # Translate host for Docker environment
+    translated_host = translate_url_for_docker(f"http://{req.host}")
+    # Extract just host:port from translated URL
+    from urllib.parse import urlparse as csrf_urlparse
+    parsed_translated = csrf_urlparse(translated_host)
+    docker_host = parsed_translated.netloc or req.host
+    
     try:
         from tools.csrf_tester import validate_csrf
         from tools.csrf_discovery import discover_state_changing_endpoints
         
-        discovery_data = discover_state_changing_endpoints(f"https://{req.host}", {"api_endpoints": req.endpoints} if req.endpoints else None)
+        # Use http for local Docker labs
+        protocol = "http" if ":" in docker_host else "https"
+        base_url = f"{protocol}://{docker_host}"
+        
+        # Translate endpoint URLs if provided
+        translated_endpoints = None
+        if req.endpoints:
+            translated_endpoints = []
+            for ep in req.endpoints:
+                ep_copy = dict(ep)
+                if "url" in ep_copy:
+                    ep_copy["url"] = translate_url_for_docker(ep_copy["url"])
+                translated_endpoints.append(ep_copy)
+        
+        # Pass endpoints directly to discovery function
+        discovery_data = discover_state_changing_endpoints(base_url, endpoints=translated_endpoints)
         result = validate_csrf(discovery_data, req.auth_context)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"CSRF tester failed: {e}")
@@ -4678,8 +5297,10 @@ def run_csrf_checks(req: CsrfChecksRequest):
     return CsrfChecksResult(
         host=req.host,
         findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
         vulnerable_endpoints=[f for f in result.get("findings", []) if f.get("vulnerable")],
         poc_html=result.get("poc_html", []),
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -4695,7 +5316,11 @@ def run_secret_exposure_checks(req: SecretExposureRequest):
             target_url = f"http://{req.host}"
         else:
             target_url = f"https://{req.host}"
-        result = validate_secret_exposure(target_url, req.scan_js, req.scan_responses, req.validate_secrets)
+        
+        # Translate URL for Docker environment
+        translated_url = translate_url_for_docker(target_url)
+        
+        result = validate_secret_exposure(translated_url, req.scan_js, req.scan_responses, req.validate_secrets)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Secret exposure tester failed: {e}")
     
@@ -4705,12 +5330,32 @@ def run_secret_exposure_checks(req: SecretExposureRequest):
     with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, indent=2)
     
+    # Convert secrets to findings format for validation matching
+    findings = []
+    secrets_found = result.get("secrets_found", [])
+    for secret in secrets_found:
+        findings.append({
+            "type": "secret_exposure",
+            "url": secret.get("source", target_url),
+            "vulnerable": True,
+            "secret_type": secret.get("type"),
+            "severity": secret.get("severity"),
+            "evidence": {
+                "value_preview": secret.get("value", "")[:20] + "..." if secret.get("value") else None,
+                "context": secret.get("context"),
+            }
+        })
+    
+    vulnerable = len(secrets_found) > 0
+    
     return SecretExposureResult(
         host=req.host,
         findings_file=out_path,
-        secrets_found=result.get("secrets_found", []),
+        vulnerable=vulnerable,
+        secrets_found=secrets_found,
         validated_secrets=result.get("validated_secrets", []),
         severity=result.get("severity", "low"),
+        findings=findings,
         meta={"high_severity_count": result.get("high_severity_count", 0)}
     )
 
@@ -4728,8 +5373,29 @@ def run_nosql_injection_checks(req: NoSqlInjectionRequest):
         callback_server_url = os.environ.get("CALLBACK_SERVER_URL")
     
     try:
-        from tools.nosql_injection_tester import validate_nosql_injection
-        result = validate_nosql_injection({"target": req.target_url}, callback_server_url)
+        from tools.nosql_injection_tester import validate_nosql_injection, test_nosql_injection_params
+        # Translate URL for Docker if needed (MCP server runs in Docker, needs service names)
+        translated_url = translate_url_for_docker(req.target_url)
+        # If specific params provided, use test_nosql_injection_params directly
+        if req.params or req.param:
+            params = req.params or ([req.param] if req.param else None)
+            callback_url = None
+            if callback_server_url:
+                from tools.callback_correlator import CallbackCorrelator
+                correlator = CallbackCorrelator(callback_server_url)
+                job_id = f"nosql_injection_{int(time.time())}"
+                token = correlator.register_job(job_id, "nosql_injection", translated_url, timeout=300)
+                callback_url = correlator.get_callback_url(token)
+            result = test_nosql_injection_params(translated_url, params=params, db_type=req.db_type, callback_url=callback_url)
+            # Convert to validate_nosql_injection format
+            results = {
+                "vulnerable": result.get("vulnerable", False),
+                "tests_run": len(result.get("findings", [])),
+                "findings": result.get("findings", [])
+            }
+            result = results
+        else:
+            result = validate_nosql_injection({"target": translated_url}, callback_server_url)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"NoSQL injection tester failed: {e}")
     
@@ -4752,6 +5418,7 @@ def run_nosql_injection_checks(req: NoSqlInjectionRequest):
         vulnerable=result.get("vulnerable", False),
         db_type=db_type,
         injection_method=injection_method,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0), "callback_used": callback_server_url is not None}
     )
 
@@ -4764,9 +5431,12 @@ def run_ldap_injection_checks(req: LdapInjectionRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
     try:
         from tools.ldap_injection_tester import validate_ldap_injection
-        result = validate_ldap_injection({"target": req.target_url})
+        result = validate_ldap_injection({"target": translated_url, "param": req.param, "endpoint_type": req.endpoint_type})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LDAP injection tester failed: {e}")
     
@@ -4789,6 +5459,7 @@ def run_ldap_injection_checks(req: LdapInjectionRequest):
         vulnerable=result.get("vulnerable", False),
         injection_method=injection_method,
         auth_bypass=auth_bypass,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -4801,9 +5472,13 @@ def run_mass_assignment_checks(req: MassAssignmentRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    translated_endpoint = translate_url_for_docker(req.endpoint) if req.endpoint else None
+    
     try:
         from tools.mass_assignment_tester import validate_mass_assignment
-        result = validate_mass_assignment({"target": req.target_url, "api_endpoints": [{"url": req.endpoint, "method": "POST"}]})
+        result = validate_mass_assignment({"target": translated_url, "api_endpoints": [{"url": translated_endpoint or translated_url, "method": "POST"}]})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Mass assignment tester failed: {e}")
     
@@ -4826,6 +5501,7 @@ def run_mass_assignment_checks(req: MassAssignmentRequest):
         vulnerable=result.get("vulnerable", False),
         manipulated_fields=manipulated_fields,
         privilege_escalation=privilege_escalation,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -4838,10 +5514,14 @@ def run_websocket_checks(req: WebSocketChecksRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment (convert http->ws for websocket)
+    translated_endpoint = translate_url_for_docker(req.endpoint.replace("ws://", "http://").replace("wss://", "https://"))
+    translated_endpoint = translated_endpoint.replace("http://", "ws://").replace("https://", "wss://")
+    
     try:
         from tools.websocket_security_tester import validate_websocket_security
         import asyncio
-        result = asyncio.run(validate_websocket_security({"websocket_endpoints": [req.endpoint]}))
+        result = asyncio.run(validate_websocket_security({"websocket_endpoints": [translated_endpoint]}))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"WebSocket tester failed: {e}")
     
@@ -4860,6 +5540,7 @@ def run_websocket_checks(req: WebSocketChecksRequest):
         findings_file=out_path,
         vulnerable=result.get("vulnerable", False),
         issues=issues,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -4878,7 +5559,9 @@ def run_ssi_injection_checks(req: SsiInjectionRequest):
     
     try:
         from tools.ssi_injection_tester import validate_ssi_injection
-        result = validate_ssi_injection({"target": req.target_url}, callback_server_url)
+        # Translate URL for Docker if needed (MCP server runs in Docker, needs service names)
+        translated_url = translate_url_for_docker(req.target_url)
+        result = validate_ssi_injection({"target": translated_url}, callback_server_url)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"SSI injection tester failed: {e}")
     
@@ -4901,6 +5584,7 @@ def run_ssi_injection_checks(req: SsiInjectionRequest):
         vulnerable=result.get("vulnerable", False),
         injection_method=injection_method,
         rce_confirmed=rce_confirmed,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0), "callback_used": callback_server_url is not None}
     )
 
@@ -4913,9 +5597,12 @@ def run_crypto_checks(req: CryptoChecksRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
     try:
         from tools.crypto_weakness_tester import validate_crypto_weakness
-        result = validate_crypto_weakness({"target": req.target_url, "tokens": req.tokens, "cookies": req.cookies})
+        result = validate_crypto_weakness({"target": translated_url, "tokens": req.tokens, "cookies": req.cookies})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Crypto weakness tester failed: {e}")
     
@@ -4935,8 +5622,10 @@ def run_crypto_checks(req: CryptoChecksRequest):
     return CryptoChecksResult(
         target_url=req.target_url,
         findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
         weak_algorithms=weak_algorithms,
         predictable_tokens=predictable_tokens,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -4949,9 +5638,12 @@ def run_parameter_pollution_checks(req: ParameterPollutionRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
     try:
         from tools.parameter_pollution_tester import validate_parameter_pollution
-        result = validate_parameter_pollution({"target": req.target_url})
+        result = validate_parameter_pollution({"target": translated_url, "params": req.params})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Parameter pollution tester failed: {e}")
     
@@ -4970,6 +5662,7 @@ def run_parameter_pollution_checks(req: ParameterPollutionRequest):
         findings_file=out_path,
         vulnerable=result.get("vulnerable", False),
         pollution_method=pollution_method,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -4982,9 +5675,12 @@ def run_dns_rebinding_checks(req: DnsRebindingRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
     try:
         from tools.dns_rebinding_tester import validate_dns_rebinding
-        result = validate_dns_rebinding({"target": req.target_url})
+        result = validate_dns_rebinding({"target": translated_url, "internal_target": req.internal_target})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DNS rebinding tester failed: {e}")
     
@@ -5003,6 +5699,7 @@ def run_dns_rebinding_checks(req: DnsRebindingRequest):
         findings_file=out_path,
         vulnerable=result.get("vulnerable", False),
         internal_access=internal_access,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -5015,9 +5712,12 @@ def run_cache_poisoning_checks(req: CachePoisoningRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
     try:
         from tools.cache_poisoning_tester import validate_cache_poisoning
-        result = validate_cache_poisoning({"target": req.target_url})
+        result = validate_cache_poisoning({"target": translated_url, "cache_headers": req.cache_headers})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cache poisoning tester failed: {e}")
     
@@ -5036,6 +5736,7 @@ def run_cache_poisoning_checks(req: CachePoisoningRequest):
         findings_file=out_path,
         vulnerable=result.get("vulnerable", False),
         poisoning_method=poisoning_method,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 
@@ -5048,9 +5749,12 @@ def run_random_generation_checks(req: RandomGenerationRequest):
     host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
     _enforce_scope(host)
     
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
     try:
         from tools.random_generation_tester import validate_random_generation
-        result = validate_random_generation({"target": req.target_url, "tokens": req.tokens, "auth_context": req.auth_context})
+        result = validate_random_generation({"target": translated_url, "tokens": req.tokens, "auth_context": req.auth_context})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Random generation tester failed: {e}")
     
@@ -5067,8 +5771,10 @@ def run_random_generation_checks(req: RandomGenerationRequest):
     return RandomGenerationResult(
         target_url=req.target_url,
         findings_file=out_path,
+        vulnerable=result.get("vulnerable", False),
         predictable=result.get("vulnerable", False),
         token_type=token_type,
+        findings=result.get("findings", []),  # Include findings in response
         meta={"tests_run": result.get("tests_run", 0)}
     )
 

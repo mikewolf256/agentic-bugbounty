@@ -29,8 +29,11 @@ def test_mass_assignment(
         Dict with test results
     """
     result = {
+        "type": "mass_assignment",
         "test": "mass_assignment",
         "vulnerable": False,
+        "url": target_url,
+        "endpoint": endpoint,
         "manipulated_fields": [],
         "privilege_escalation": False,
         "evidence": None

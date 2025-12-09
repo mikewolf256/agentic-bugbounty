@@ -700,10 +700,11 @@ def _prepare_endpoint_request(
                     # Check if any test_url ends with the finding endpoint
                     for test_url in test_urls:
                         if finding_endpoint in test_url:
-                            # Return param=None to let tester auto-discover - it knows common SSTI params
-                            # This ensures it tests q, template, etc
-                            param = None  # Let tester auto-discover all common params
+                            # Use the known parameter from metadata for accurate testing
+                            param = finding_param
                             break
+                    if param:
+                        break
         
         if test_urls:
             return {"target_url": test_urls[0], "param": param, "callback_url": None}

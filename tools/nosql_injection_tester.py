@@ -6,14 +6,30 @@ Tests for NoSQL injection vulnerabilities:
 - CouchDB injection
 - Authentication bypass via NoSQL injection
 - Boolean-based blind injection
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import os
 import time
-import requests
+import json
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, parse_qs, urlencode
-import json
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    # Fallback functions
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_nosql_injection(
@@ -85,7 +101,7 @@ def test_nosql_injection(
             test_data = {param: payload}
             
             # Try POST with JSON (single param injection)
-            resp1 = requests.post(
+            resp1 = safe_post(
                 base_url,
                 json=test_data,
                 headers={"Content-Type": "application/json"},
@@ -115,7 +131,7 @@ def test_nosql_injection(
                     "username": payload,
                     "password": payload
                 }
-                resp_auth = requests.post(
+                resp_auth = safe_post(
                     base_url,
                     json=auth_bypass_data,
                     headers={"Content-Type": "application/json"},
@@ -140,7 +156,7 @@ def test_nosql_injection(
             # Method 3: Try with query filter pattern (for search/api endpoints)
             if "search" in target_url.lower() or "api" in target_url.lower():
                 query_data = {"query": {param: payload}}
-                resp_query = requests.post(
+                resp_query = safe_post(
                     base_url,
                     json=query_data,
                     headers={"Content-Type": "application/json"},
@@ -168,7 +184,7 @@ def test_nosql_injection(
             
             # Method 4: Try POST with form data (URL-encoded)
             payload_str = json.dumps(payload)
-            resp2 = requests.post(
+            resp2 = safe_post(
                 base_url,
                 data={param: payload_str},
                 timeout=10
@@ -195,7 +211,7 @@ def test_nosql_injection(
             test_params[param] = [payload_str]
             test_url = base_url + "?" + urlencode(test_params, doseq=True)
             
-            resp3 = requests.get(test_url, timeout=10)
+            resp3 = safe_get(test_url, timeout=10)
             
             if resp3.status_code == 200:
                 response_lower = resp3.text.lower()

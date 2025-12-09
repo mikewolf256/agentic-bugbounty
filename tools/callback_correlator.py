@@ -7,8 +7,22 @@ Provides easy integration with SSRF, XXE, and other out-of-band validators.
 
 import os
 import time
-import requests
 from typing import Dict, List, Optional, Any
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 class CallbackCorrelator:

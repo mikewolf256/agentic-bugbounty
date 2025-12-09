@@ -7,10 +7,24 @@ Tests for deserialization vulnerabilities:
 - .NET (BinaryFormatter)
 """
 
-import requests
 from typing import Dict, Any, Optional, List
 import base64
 import pickle
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_python_pickle(target_url: str, callback_url: Optional[str] = None) -> Dict[str, Any]:
@@ -39,7 +53,7 @@ def test_python_pickle(target_url: str, callback_url: Optional[str] = None) -> D
     
     # Try POST with form data (common pattern)
     try:
-        resp = requests.post(
+        resp = safe_post(
             target_url,
             data={"data": safe_pickle},
             timeout=10
@@ -61,7 +75,7 @@ def test_python_pickle(target_url: str, callback_url: Optional[str] = None) -> D
     
     # Try JSON API endpoint
     try:
-        resp = requests.post(
+        resp = safe_post(
             target_url,
             json={"format": "pickle", "data": safe_pickle},
             headers={"Content-Type": "application/json"},
@@ -112,7 +126,7 @@ list:
     
     # Try POST with form data
     try:
-        resp = requests.post(
+        resp = safe_post(
             target_url,
             data={"data": safe_yaml},
             timeout=10
@@ -133,7 +147,7 @@ list:
     
     # Try JSON API endpoint
     try:
-        resp = requests.post(
+        resp = safe_post(
             target_url,
             json={"format": "yaml", "data": safe_yaml},
             headers={"Content-Type": "application/json"},
@@ -180,7 +194,7 @@ def test_java_deserialization(target_url: str, callback_url: Optional[str] = Non
     
     # Check if server accepts Java serialization
     try:
-        resp = requests.post(
+        resp = safe_post(
             target_url,
             data=base64.b64decode(java_magic),
             headers={"Content-Type": "application/x-java-serialized-object"},

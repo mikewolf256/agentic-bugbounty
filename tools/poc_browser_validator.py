@@ -10,10 +10,24 @@ import sys
 import json
 import time
 import base64
-import requests
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 try:
     import websocket
@@ -47,7 +61,7 @@ class BrowserPOCValidator:
             WebSocket URL or None if not available
         """
         try:
-            resp = requests.get(f"{self.http_endpoint}/json", timeout=2)
+            resp = safe_get(f"{self.http_endpoint}/json", timeout=2)
             if resp.status_code == 200:
                 tabs = resp.json()
                 if tabs:
@@ -181,7 +195,7 @@ class BrowserPOCValidator:
             # Inject obfuscation script via Runtime.evaluate
             script = self._get_obfuscation_script()
             
-            resp = requests.post(
+            resp = safe_post(
                 f"{self.http_endpoint}/json/runtime/evaluate",
                 json={
                     "expression": script,
@@ -203,7 +217,7 @@ class BrowserPOCValidator:
             Tab ID or None
         """
         try:
-            resp = requests.get(f"{self.http_endpoint}/json", timeout=2)
+            resp = safe_get(f"{self.http_endpoint}/json", timeout=2)
             if resp.status_code == 200:
                 tabs = resp.json()
                 if tabs:
@@ -228,7 +242,7 @@ class BrowserPOCValidator:
                 self._apply_obfuscation(tab_id)
             
             # Navigate to URL
-            navigate_resp = requests.post(
+            navigate_resp = safe_post(
                 f"{self.http_endpoint}/json/runtime/evaluate",
                 json={
                     "expression": f"window.location.href = '{url}'"
@@ -288,7 +302,7 @@ class BrowserPOCValidator:
                 self._apply_obfuscation(tab_id)
             
             # Capture screenshot using HTTP API
-            screenshot_resp = requests.get(
+            screenshot_resp = safe_get(
                 f"{self.http_endpoint}/json/runtime/evaluate",
                 params={
                     "expression": "document.body.scrollHeight"
@@ -374,7 +388,7 @@ class BrowserPOCValidator:
                 self._apply_obfuscation(tab_id)
             
             # Get page content
-            content_resp = requests.post(
+            content_resp = safe_post(
                 f"{self.http_endpoint}/json/runtime/evaluate",
                 json={
                     "expression": "document.documentElement.outerHTML"

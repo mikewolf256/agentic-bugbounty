@@ -2,7 +2,21 @@
 import os
 import json
 import argparse
-import requests
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 ZAP_API_BASE = os.environ.get("ZAP_API_BASE", "http://localhost:8080")
 ZAP_API_KEY = os.environ.get("ZAP_API_KEY", "")
@@ -15,7 +29,7 @@ def zap_api(endpoint_path: str, params: dict | None = None):
     if ZAP_API_KEY:
         params["apikey"] = ZAP_API_KEY
     url = ZAP_API_BASE.rstrip("/") + endpoint_path
-    r = requests.get(url, params=params, timeout=60)
+    r = safe_get(url, params=params, timeout=60)
     r.raise_for_status()
     return r.json()
 

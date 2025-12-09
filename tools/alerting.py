@@ -12,7 +12,21 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-import requests
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 class AlertManager:
@@ -163,7 +177,7 @@ class AlertManager:
                 })
         
         try:
-            response = requests.post(
+            response = safe_post(
                 self.slack_webhook,
                 json=payload,
                 timeout=10,
@@ -265,7 +279,7 @@ class AlertManager:
         }
         
         try:
-            response = requests.post(
+            response = safe_post(
                 self.teams_webhook,
                 json=payload,
                 timeout=10,
@@ -342,7 +356,7 @@ class AlertManager:
         }
         
         try:
-            response = requests.post(
+            response = safe_post(
                 self.discord_webhook,
                 json=payload,
                 timeout=10,
@@ -432,7 +446,7 @@ class AlertManager:
         }
         
         try:
-            response = requests.post(
+            response = safe_post(
                 self.discord_webhook,
                 json=payload,
                 timeout=10,

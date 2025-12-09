@@ -6,13 +6,29 @@ Tests for path traversal and file inclusion vulnerabilities:
 - Local file inclusion (LFI)
 - Remote file inclusion (RFI)
 - Callback-based validation for blind LFI
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import os
 import time
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, quote, unquote
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    # Fallback functions
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_path_traversal(
@@ -118,14 +134,14 @@ def test_path_traversal(
             for method in ["GET", "POST"]:
                 try:
                     if method == "GET":
-                        resp = requests.get(
+                        resp = safe_get(
                             base_url,
                             params={param: payload},
                             timeout=10
                         )
                     else:
                         # Try both form data and JSON for POST
-                        resp = requests.post(
+                        resp = safe_post(
                             base_url,
                             data={param: payload},
                             timeout=10
@@ -165,7 +181,7 @@ def test_path_traversal(
         
         for rfi_payload in rfi_payloads:
             try:
-                resp = requests.get(
+                resp = safe_get(
                     base_url,
                     params={param: rfi_payload},
                     timeout=10

@@ -11,9 +11,23 @@ Tests for cryptographic weaknesses:
 
 import os
 import hashlib
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_crypto_weakness(
@@ -76,7 +90,7 @@ def test_crypto_weakness(
     
     # Check for MD5/SHA1 in responses (indicating weak hashing)
     try:
-        resp = requests.get(target_url, timeout=10)
+        resp = safe_get(target_url, timeout=10)
         response_lower = resp.text.lower()
         
         if "md5" in response_lower or "sha1" in response_lower:

@@ -24,9 +24,23 @@ from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse, urljoin
 from dataclasses import dataclass
 
-import requests
 
 from tools.h1_models import (
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
     H1Program, ScopeAsset, AssetType, BountyRange, 
     ProgramPolicy, SeverityRating
 )

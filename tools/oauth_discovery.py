@@ -14,7 +14,21 @@ import sys
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 
 def discover_oauth_endpoints(base_url: str) -> Dict[str, Any]:
@@ -59,7 +73,7 @@ def discover_oauth_endpoints(base_url: str) -> Dict[str, Any]:
     for path in oauth_paths:
         url = urljoin(base, path)
         try:
-            resp = requests.get(url, timeout=5, allow_redirects=False)
+            resp = safe_get(url, timeout=5, allow_redirects=False)
             if resp.status_code in (200, 400, 401):  # 400/401 indicate endpoint exists
                 results["oauth_endpoints"].append({
                     "url": url,
@@ -73,7 +87,7 @@ def discover_oauth_endpoints(base_url: str) -> Dict[str, Any]:
     for path in oidc_paths:
         url = urljoin(base, path)
         try:
-            resp = requests.get(url, timeout=5, allow_redirects=False)
+            resp = safe_get(url, timeout=5, allow_redirects=False)
             if resp.status_code == 200:
                 try:
                     discovery = resp.json()

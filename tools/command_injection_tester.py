@@ -6,13 +6,29 @@ Tests for OS command injection vulnerabilities:
 - File upload filename injection
 - System call injection
 - Callback-based RCE validation
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import os
 import time
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, parse_qs
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    # Fallback functions
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_command_injection(
@@ -90,13 +106,13 @@ def test_command_injection(
             start_time = time.time()
             
             if method.upper() == "GET":
-                resp = requests.get(
+                resp = safe_get(
                     base_url,
                     params={param: payload},
                     timeout=15
                 )
             else:
-                resp = requests.post(
+                resp = safe_post(
                     base_url,
                     data={param: payload},
                     timeout=15
@@ -290,7 +306,7 @@ def test_command_injection_json(
             start_time = time.time()
             
             # Send JSON body with command injection payload
-            resp = requests.post(
+            resp = safe_post(
                 target_url,
                 json={json_param: payload},
                 headers={"Content-Type": "application/json"},
@@ -412,7 +428,7 @@ def test_command_injection_file_upload(
                 "file": (filename, BytesIO(b"test content"), "image/jpeg"),
             }
             
-            resp = requests.post(
+            resp = safe_post(
                 target_url,
                 files=files,
                 timeout=15

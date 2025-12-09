@@ -8,9 +8,23 @@ Tests for predictable random number generation:
 """
 
 import os
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_random_generation(
@@ -50,7 +64,7 @@ def test_random_generation(
                 endpoint_url = urljoin(target_url, endpoint)
                 # Fetch multiple tokens
                 for _ in range(3):
-                    resp = requests.get(endpoint_url, timeout=5)
+                    resp = safe_get(endpoint_url, timeout=5)
                     if resp.status_code == 200:
                         try:
                             data = resp.json()

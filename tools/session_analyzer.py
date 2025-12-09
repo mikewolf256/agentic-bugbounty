@@ -7,8 +7,22 @@ Tests session security:
 - Session replay
 """
 
-import requests
 from typing import Dict, Any, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_session_fixation(target_url: str, login_url: str, credentials: Dict[str, str]) -> Dict[str, Any]:

@@ -8,9 +8,23 @@ Tests for cache poisoning vulnerabilities:
 """
 
 import os
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, urljoin
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_cache_poisoning(
@@ -58,7 +72,7 @@ def test_cache_poisoning(
     for endpoint in test_endpoints:
         for poison_headers in poison_headers_sets:
             try:
-                resp = requests.get(endpoint, headers=poison_headers, timeout=10)
+                resp = safe_get(endpoint, headers=poison_headers, timeout=10)
                 
                 # Check if poisoned header appears in response body or headers
                 response_contains_poison = "evil.com" in resp.text

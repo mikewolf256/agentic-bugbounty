@@ -7,8 +7,22 @@ Tests for 2FA bypass techniques:
 - Backup code abuse
 """
 
-import requests
 from typing import Dict, Any, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_2fa_bypass(target_url: str, auth_context: Optional[Dict] = None) -> Dict[str, Any]:
@@ -44,7 +58,7 @@ def test_2fa_bypass(target_url: str, auth_context: Optional[Dict] = None) -> Dic
     
     for code in bypass_codes:
         try:
-            resp = requests.post(
+            resp = safe_post(
                 target_url,
                 json={"code": code, "token": code},
                 headers=headers,

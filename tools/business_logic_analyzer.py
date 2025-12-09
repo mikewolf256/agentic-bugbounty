@@ -11,9 +11,23 @@ Analyzes application workflows and business rules to identify logic flaws:
 
 import os
 import re
-import requests
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def analyze_workflow(discovery_data: Dict[str, Any], auth_context: Optional[Dict] = None) -> Dict[str, Any]:
@@ -150,7 +164,7 @@ def test_pricing_manipulation(target_url: str, auth_context: Optional[Dict] = No
     
     for payload in test_payloads:
         try:
-            resp = requests.post(
+            resp = safe_post(
                 target_url,
                 json=payload,
                 headers=headers,
@@ -191,7 +205,7 @@ def test_pricing_manipulation(target_url: str, auth_context: Optional[Dict] = No
     # Try to modify price parameter directly
     try:
         # First, get a normal request to see structure
-        resp = requests.get(target_url, headers=headers, cookies=cookies, timeout=10)
+        resp = safe_get(target_url, headers=headers, cookies=cookies, timeout=10)
         if resp.status_code == 200:
             # Try to find price in response and modify it
             # This is a simplified test - real implementation would parse forms/JSON
@@ -241,7 +255,7 @@ def test_workflow_bypass(target_url: str, workflow: Dict[str, Any], auth_context
                     endpoint_url = f"{parsed.scheme}://{parsed.netloc}{endpoint_url}"
                 
                 try:
-                    resp = requests.post(
+                    resp = safe_post(
                         endpoint_url,
                         json={"skip_steps": True},
                         headers=headers,
@@ -312,7 +326,7 @@ def test_rate_limit_bypass(target_url: str, auth_context: Optional[Dict] = None)
         test_headers.update(technique)
         
         try:
-            resp = requests.post(
+            resp = safe_post(
                 target_url,
                 headers=test_headers,
                 cookies=cookies,

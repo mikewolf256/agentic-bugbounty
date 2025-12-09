@@ -5,12 +5,28 @@ Tests for XSS vulnerabilities:
 - Reflected XSS (GET/POST parameters)
 - DOM-based XSS (basic patterns)
 - Context-aware payloads (HTML, attribute, JS, URL)
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import re
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    # Fallback functions
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_reflected_xss(
@@ -75,25 +91,25 @@ def test_reflected_xss(
     # Unique canary for detection
     canary = "xss_test_canary_12345"
     
-    def try_request(method: str, payload: str) -> Optional[requests.Response]:
-        """Try a request with the given method and payload."""
+    def try_request(method: str, payload: str):
+        """Try a request with the given method and payload using stealth client."""
         try:
             if method == "GET":
-                return requests.get(
+                return safe_get(
                     target_url,
                     params={param: payload},
                     timeout=10,
                     allow_redirects=True
                 )
             elif method == "POST_FORM":
-                return requests.post(
+                return safe_post(
                     target_url,
                     data={param: payload},
                     timeout=10,
                     allow_redirects=True
                 )
             elif method == "POST_JSON":
-                return requests.post(
+                return safe_post(
                     target_url,
                     json={param: payload},
                     headers={"Content-Type": "application/json"},
@@ -170,7 +186,7 @@ def test_dom_xss(target_url: str) -> Dict[str, Any]:
     }
     
     try:
-        resp = requests.get(target_url, timeout=10)
+        resp = safe_get(target_url, timeout=10)
         content = resp.text
     except Exception as e:
         result["error"] = str(e)
@@ -366,7 +382,7 @@ def discover_xss_endpoints(base_url: str) -> List[str]:
     
     # Try to crawl the page for forms and links
     try:
-        resp = requests.get(base_url, timeout=10)
+        resp = safe_get(base_url, timeout=10)
         if resp.status_code == 200:
             import re
             # Find all href links

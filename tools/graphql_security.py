@@ -10,7 +10,21 @@ import os
 import time
 from typing import Any, Dict, List
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 
 def introspect_schema(endpoint: str) -> Dict[str, Any]:
@@ -46,7 +60,7 @@ def introspect_schema(endpoint: str) -> Dict[str, Any]:
     """
     
     try:
-        resp = requests.post(endpoint, json={"query": query}, timeout=10)
+        resp = safe_post(endpoint, json={"query": query}, timeout=10)
         if resp.status_code == 200:
             return resp.json()
     except Exception:
@@ -61,7 +75,7 @@ def test_depth_attack(endpoint: str, max_depth: int = 20) -> Dict[str, Any]:
     
     try:
         start = time.time()
-        resp = requests.post(endpoint, json={"query": query}, timeout=5)
+        resp = safe_post(endpoint, json={"query": query}, timeout=5)
         elapsed = time.time() - start
         
         return {
@@ -79,7 +93,7 @@ def test_batching(endpoint: str) -> Dict[str, Any]:
     queries = [{"query": "query { __typename }"} for _ in range(100)]
     
     try:
-        resp = requests.post(endpoint, json=queries, timeout=10)
+        resp = safe_post(endpoint, json=queries, timeout=10)
         return {
             "vulnerable": resp.status_code == 200,
             "batches_sent": 100,

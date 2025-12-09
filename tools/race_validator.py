@@ -18,7 +18,21 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 
 def send_parallel_requests(
@@ -53,7 +67,7 @@ def send_parallel_requests(
         
         try:
             if method.upper() == "POST":
-                resp = requests.post(url, json=data, headers=headers, timeout=timeout)
+                resp = safe_post(url, json=data, headers=headers, timeout=timeout)
             elif method.upper() == "PUT":
                 resp = requests.put(url, json=data, headers=headers, timeout=timeout)
             elif method.upper() == "PATCH":
@@ -61,7 +75,7 @@ def send_parallel_requests(
             elif method.upper() == "DELETE":
                 resp = requests.delete(url, headers=headers, timeout=timeout)
             else:
-                resp = requests.get(url, headers=headers, timeout=timeout)
+                resp = safe_get(url, headers=headers, timeout=timeout)
             
             return {
                 "request_id": request_id,

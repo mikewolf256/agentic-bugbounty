@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
+"""Backup/VCS File Hunter
+
+Probes for common backup files, VCS leaks, and sensitive file exposure.
+Uses stealth HTTP client for WAF evasion on live targets.
+"""
+
 import argparse
 import json
 import os
 from typing import List, Dict, Any
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
 
 
 COMMON_BACKUP_PATHS: List[str] = [
@@ -75,8 +90,9 @@ COMMON_BACKUP_PATHS: List[str] = [
 
 
 def probe_url(url: str, timeout: int = 10) -> Dict[str, Any]:
+    """Probe a URL for backup/sensitive file existence using stealth client."""
     try:
-        r = requests.get(url, timeout=timeout, allow_redirects=True)
+        r = safe_get(url, timeout=timeout, allow_redirects=True)
         return {
             "url": url,
             "status": r.status_code,

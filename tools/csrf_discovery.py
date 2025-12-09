@@ -15,7 +15,21 @@ import sys
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-import requests
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
+
 
 
 def discover_state_changing_endpoints(
@@ -153,7 +167,7 @@ def _crawl_for_endpoints(base_url: str, max_pages: int = 10) -> List[str]:
         visited.add(current_url)
         
         try:
-            resp = requests.get(current_url, timeout=10)
+            resp = safe_get(current_url, timeout=10)
             html = resp.text
             
             # Find forms with action attributes

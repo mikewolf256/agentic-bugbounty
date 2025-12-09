@@ -4,9 +4,23 @@
 Tests for cloud storage bucket misconfigurations (S3, GCS, Azure Blob).
 """
 
-import requests
 import re
 from typing import Dict, Any, List, Optional
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_s3_bucket(bucket_name: str, region: Optional[str] = None) -> Dict[str, Any]:
@@ -39,7 +53,7 @@ def test_s3_bucket(bucket_name: str, region: Optional[str] = None) -> Dict[str, 
     for endpoint in s3_endpoints:
         try:
             # Test list access
-            resp = requests.get(endpoint, timeout=10)
+            resp = safe_get(endpoint, timeout=10)
             if resp.status_code == 200:
                 result["vulnerable"] = True
                 result["permissions"].append("list")
@@ -87,7 +101,7 @@ def test_gcs_bucket(bucket_name: str) -> Dict[str, Any]:
     
     for endpoint in gcs_endpoints:
         try:
-            resp = requests.get(endpoint, timeout=10)
+            resp = safe_get(endpoint, timeout=10)
             if resp.status_code == 200:
                 result["vulnerable"] = True
                 result["permissions"].append("list")

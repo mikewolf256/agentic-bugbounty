@@ -33,9 +33,11 @@ def test_command_injection(
         Dict with test results
     """
     result = {
+        "type": "command_injection",
         "test": "command_injection",
         "vulnerable": False,
         "injection_point": None,
+        "url": target_url,  # Include URL for detection matching
         "evidence": None,
         "rce_confirmed": False
     }
@@ -130,9 +132,11 @@ def test_command_injection(
             if found_indicator:
                 result["vulnerable"] = True
                 result["injection_point"] = param
+                result["method"] = method.upper()  # Include HTTP method in result
                 result["evidence"] = {
                     "payload": payload,
                     "payload_type": payload_name,
+                    "method": method.upper(),
                     "status_code": resp.status_code,
                     "response_snippet": resp.text[:500],
                     "text_content_snippet": text_content[:500],  # HTML-stripped content
@@ -146,9 +150,11 @@ def test_command_injection(
                 if elapsed >= 4:  # Sleep was executed
                     result["vulnerable"] = True
                     result["injection_point"] = param
+                    result["method"] = method.upper()  # Include HTTP method in result
                     result["evidence"] = {
                         "payload": payload,
                         "payload_type": payload_name,
+                        "method": method.upper(),
                         "response_time": elapsed,
                         "status_code": resp.status_code,
                         "note": "Time delay detected - command likely executed"
@@ -160,9 +166,11 @@ def test_command_injection(
             if "sleep" in payload_name or "ping" in payload_name:
                 result["vulnerable"] = True
                 result["injection_point"] = param
+                result["method"] = method.upper()  # Include HTTP method in result
                 result["evidence"] = {
                     "payload": payload,
                     "payload_type": payload_name,
+                    "method": method.upper(),
                     "note": "Request timeout - command may have executed"
                 }
                 break
@@ -201,7 +209,10 @@ def test_command_injection_params(
     # Discover parameters if not provided
     if not params:
         from tools.rest_api_fuzzer import discover_parameters
-        params = discover_parameters(target_url)
+        discovered_params = discover_parameters(target_url)
+        # Always include common command injection parameter names
+        cmd_params = ["cmd", "command", "exec", "execute", "run", "system", "shell", "input", "query"]
+        params = list(set(discovered_params + cmd_params))
     
     # Test each parameter
     for param in params:
@@ -213,9 +224,12 @@ def test_command_injection_params(
         )
         if test_result["vulnerable"]:
             result["vulnerable"] = True
+            # Ensure URL is set
+            if "url" not in test_result:
+                test_result["url"] = target_url
             result["findings"].append(test_result)
         
-        # Also test POST
+        # Also test POST (always test both methods)
         test_result_post = test_command_injection(
             target_url,
             param=param,
@@ -224,6 +238,9 @@ def test_command_injection_params(
         )
         if test_result_post["vulnerable"]:
             result["vulnerable"] = True
+            # Ensure URL is set
+            if "url" not in test_result_post:
+                test_result_post["url"] = target_url
             result["findings"].append(test_result_post)
     
     return result
@@ -245,9 +262,12 @@ def test_command_injection_json(
         Dict with test results
     """
     result = {
+        "type": "command_injection",
         "test": "command_injection_json",
         "vulnerable": False,
         "injection_point": None,
+        "url": target_url,  # Include URL for detection matching
+        "method": "POST",  # JSON is typically POST
         "evidence": None,
         "rce_confirmed": False
     }
@@ -361,9 +381,12 @@ def test_command_injection_file_upload(
         Dict with test results
     """
     result = {
+        "type": "command_injection",
         "test": "command_injection_file_upload",
         "vulnerable": False,
         "injection_point": "filename",
+        "url": target_url,  # Include URL for detection matching
+        "method": "POST",  # File upload is typically POST
         "evidence": None,
         "rce_confirmed": False
     }

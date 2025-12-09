@@ -62,6 +62,137 @@ This project is designed to:
 | **RAG Knowledge Base** | Semantic search over 8k+ historical HackerOne reports for context-aware triage. |
 | **Distributed Execution** | Scale-to-zero AWS workers via EKS/KEDA — only pay when scanning. |
 | **HackerOne Integration** | Auto-import program scopes, bounty ranges, and rules directly from HackerOne. |
+| **Human Validation Workflow** | Queue high-value findings for manual review before submission with Discord/Slack alerts. |
+| **Browser PoC Validation** | Chrome DevTools integration for visual PoC validation with screenshot capture. |
+| **HackerOne Submission** | Automated submission of approved findings to HackerOne via API. |
+
+---
+
+## 🔍 Human Validation Workflow
+
+The system includes a complete human validation workflow that queues high-value findings for manual review before optional submission to HackerOne.
+
+### Features
+
+- **Automatic Queueing**: Findings with CVSS ≥ 7.0 or estimated bounty ≥ $500 are automatically queued
+- **Discord/Slack Alerts**: Receive notifications when findings need validation
+- **CLI Management**: Easy approve/reject workflow via command-line tools
+- **HackerOne Integration**: Submit approved findings directly to HackerOne via API
+
+### Environment Variables
+
+```bash
+# Discord webhook for validation alerts
+export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+
+# HackerOne API credentials (optional, for submission)
+export H1_API_TOKEN="your_api_token"
+export H1_USERNAME="your_h1_username"
+```
+
+### CLI Usage
+
+#### Validation Management
+
+```bash
+# List pending validations
+python tools/validation_cli.py list
+
+# Show details of a specific validation
+python tools/validation_cli.py show <validation_id>
+
+# Approve a finding
+python tools/validation_cli.py approve <validation_id> --notes "Looks good, confirmed exploit"
+
+# Reject a finding
+python tools/validation_cli.py reject <validation_id> --reason "False positive, already patched"
+
+# Show validation statistics
+python tools/validation_cli.py stats
+```
+
+#### HackerOne Submission
+
+```bash
+# List approved findings ready for submission
+python tools/submission_cli.py list-approved
+
+# Submit a single approved finding
+python tools/submission_cli.py submit <validation_id> --program <handle>
+
+# Submit all approved findings for a program
+python tools/submission_cli.py submit-all --program <handle>
+
+# Check submission status
+python tools/submission_cli.py status <validation_id>
+```
+
+### Configuration
+
+Add to your scan profile (`profiles/full.yaml`):
+
+```yaml
+human_validation:
+  enabled: true
+  auto_queue_cvss_threshold: 7.0
+  auto_queue_bounty_threshold: 500
+  require_validation: true  # Findings must be approved before submission
+```
+
+---
+
+## 🌐 Browser PoC Validation
+
+The system includes headless browser PoC validation using Chrome DevTools Protocol for visual proof-of-concept validation.
+
+### Features
+
+- **Screenshot Capture**: Automatically captures screenshots of exploited vulnerabilities
+- **Visual Validation**: Detects visual indicators of exploitation (XSS, UI-based issues)
+- **Console Log Capture**: Captures browser console logs for debugging
+- **Chrome DevTools Integration**: Uses existing Chrome DevTools infrastructure
+
+### Setup
+
+1. **Start Chrome with remote debugging**:
+   ```bash
+   chrome --remote-debugging-port=9222
+   ```
+
+2. **Configure in profile** (`profiles/full.yaml`):
+   ```yaml
+   browser_validation:
+     enabled: true
+     auto_validate_xss: true
+     auto_validate_ui: true
+     devtools_port: 9222
+     screenshot_timeout: 5
+     require_devtools: false  # Skip if DevTools unavailable
+   ```
+
+### MCP Endpoint
+
+```bash
+POST /mcp/validate_poc_with_browser
+{
+  "finding": {
+    "url": "https://example.com/page?param=<script>alert(1)</script>",
+    "type": "xss",
+    "payload": "<script>alert(1)</script>"
+  },
+  "devtools_port": 9222,
+  "wait_timeout": 5
+}
+```
+
+### Workflow
+
+1. **Scan** → Findings are discovered
+2. **Triage** → AI triage analyzes findings
+3. **Browser PoC Validation** → Eligible findings (XSS, UI-based) are validated with browser
+4. **Validation Queue** → High-value findings are queued for human review
+5. **Approval** → Human reviewer approves/rejects
+6. **Submission** → Approved findings are submitted to HackerOne
 
 ---
 

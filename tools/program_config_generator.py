@@ -77,6 +77,33 @@ def generate_program_config(
             "max_bounty": getattr(h1_program, "max_bounty", None),
             "currency": getattr(h1_program, "currency", "USD"),
         },
+        
+        # Human validation workflow
+        "human_validation": {
+            "enabled": True,
+            "auto_queue_cvss_threshold": 7.0,
+            "auto_queue_bounty_threshold": 500,
+            "require_validation": True,  # If true, findings must be approved before submission
+        },
+        
+        # Browser PoC validation
+        "browser_validation": {
+            "enabled": True,
+            "auto_validate_xss": True,
+            "auto_validate_ui": True,
+            "devtools_port": 9222,
+            "screenshot_timeout": 5,
+            "require_devtools": False,  # If false, skip browser validation if DevTools unavailable
+            "enable_obfuscation": True,  # Enable anti-detection techniques to hide DevTools
+        },
+        
+        # HackerOne submission
+        "submission": {
+            "auto_submit_approved": False,  # Manual submission via CLI
+            "h1_api_token": "${H1_API_TOKEN}",
+            "h1_username": "${H1_USERNAME}",
+            "rate_limit_per_day": 10,
+        },
     }
     
     # Write config file

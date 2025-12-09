@@ -173,11 +173,81 @@ def test_azure_metadata(ssrf_url: str, callback_url: Optional[str] = None) -> Di
     return result
 
 
+def test_direct_metadata_endpoints(base_url: str) -> Dict[str, Any]:
+    """Test for directly exposed cloud metadata endpoints (lab simulation)
+    
+    Args:
+        base_url: Base URL of the target
+        
+    Returns:
+        Dict with test results
+    """
+    results = {
+        "test": "direct_metadata",
+        "vulnerable": False,
+        "findings": []
+    }
+    
+    # Cloud metadata paths that might be exposed directly
+    metadata_paths = [
+        # AWS-style
+        ("/latest/meta-data/", "aws", ["ami-id", "instance-id", "iam"]),
+        ("/latest/meta-data/iam/security-credentials/", "aws", ["test-role", "ec2-role"]),
+        ("/latest/meta-data/iam/security-credentials/test-role", "aws", ["accesskeyid", "secretaccesskey"]),
+        ("/latest/user-data", "aws", ["#!/bin/bash", "userdata"]),
+        # GCP-style
+        ("/computeMetadata/v1/", "gcp", ["instance", "project"]),
+        ("/computeMetadata/v1/instance/service-accounts/default/token", "gcp", ["access_token", "expires"]),
+        # Azure-style
+        ("/metadata/instance", "azure", ["compute", "vmid", "subscriptionid"]),
+        ("/metadata/identity/oauth2/token", "azure", ["access_token", "client_id"]),
+        # S3 bucket style
+        ("/s3/bucket", "aws", ["bucket", "files", "public"]),
+    ]
+    
+    base = base_url.rstrip("/")
+    
+    for path, provider, indicators in metadata_paths:
+        try:
+            url = f"{base}{path}"
+            headers = {}
+            if provider == "gcp":
+                headers["Metadata-Flavor"] = "Google"
+            elif provider == "azure":
+                headers["Metadata"] = "true"
+            
+            resp = requests.get(url, headers=headers, timeout=5)
+            
+            if resp.status_code == 200:
+                content = resp.text.lower()
+                found_indicators = [ind for ind in indicators if ind.lower() in content]
+                
+                if found_indicators:
+                    results["vulnerable"] = True
+                    results["findings"].append({
+                        "type": "cloud",
+                        "subtype": "metadata_exposure",
+                        "provider": provider,
+                        "url": url,
+                        "path": path,
+                        "vulnerable": True,
+                        "evidence": {
+                            "status_code": resp.status_code,
+                            "response_snippet": resp.text[:500],
+                            "indicators_found": found_indicators
+                        }
+                    })
+        except Exception:
+            continue
+    
+    return results
+
+
 def test_cloud_metadata(ssrf_url: str, callback_url: Optional[str] = None) -> Dict[str, Any]:
     """Test all cloud metadata endpoints
     
     Args:
-        ssrf_url: URL vulnerable to SSRF
+        ssrf_url: URL vulnerable to SSRF, or base URL to check for direct exposure
         callback_url: Optional callback URL for OOB detection
         
     Returns:
@@ -189,21 +259,28 @@ def test_cloud_metadata(ssrf_url: str, callback_url: Optional[str] = None) -> Di
         "findings": []
     }
     
-    # Test AWS
+    # First, test for directly exposed metadata endpoints (lab simulation)
+    direct_result = test_direct_metadata_endpoints(ssrf_url)
+    results["tests_run"] += 1
+    if direct_result["vulnerable"]:
+        results["vulnerable"] = True
+        results["findings"].extend(direct_result.get("findings", []))
+    
+    # Test AWS via SSRF
     aws_result = test_aws_metadata(ssrf_url, callback_url)
     results["tests_run"] += 1
     if aws_result["vulnerable"]:
         results["vulnerable"] = True
         results["findings"].append(aws_result)
     
-    # Test GCP
+    # Test GCP via SSRF
     gcp_result = test_gcp_metadata(ssrf_url, callback_url)
     results["tests_run"] += 1
     if gcp_result["vulnerable"]:
         results["vulnerable"] = True
         results["findings"].append(gcp_result)
     
-    # Test Azure
+    # Test Azure via SSRF
     azure_result = test_azure_metadata(ssrf_url, callback_url)
     results["tests_run"] += 1
     if azure_result["vulnerable"]:

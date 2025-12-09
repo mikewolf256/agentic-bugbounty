@@ -76,8 +76,10 @@ def test_file_upload(
         Dict with test results
     """
     result = {
+        "type": "file_upload",
         "test": "file_upload",
         "vulnerable": False,
+        "url": target_url,  # Include URL for detection matching
         "bypass_methods": [],
         "uploaded_files": [],
         "rce_confirmed": False,

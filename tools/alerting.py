@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Alerting System for Critical Findings and Scan Status
 
-Supports multiple notification channels: Slack, Email, Teams.
+Supports multiple notification channels: Slack, Email, Teams, Discord.
 Configurable per-program with alert throttling and aggregation.
 """
 
@@ -30,6 +30,7 @@ class AlertManager:
         self.email_from = os.environ.get("EMAIL_FROM")
         self.email_password = os.environ.get("EMAIL_PASSWORD")
         self.teams_webhook = os.environ.get("TEAMS_WEBHOOK_URL")
+        self.discord_webhook = os.environ.get("DISCORD_WEBHOOK_URL")
         
         # Alert throttling state
         self.alert_history: Dict[str, List[float]] = {}
@@ -275,6 +276,173 @@ class AlertManager:
             print(f"[ALERT] Teams alert failed: {e}", file=sys.stderr)
             return False
     
+    def send_discord_alert(
+        self,
+        title: str,
+        message: str,
+        level: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Send alert to Discord via webhook.
+        
+        Args:
+            title: Alert title
+            message: Alert message
+            level: Alert level
+            details: Optional additional details
+            
+        Returns:
+            True if sent successfully
+        """
+        if not self.discord_webhook:
+            return False
+        
+        # Color coding by level (Discord embed colors)
+        colors = {
+            "critical": 15158332,  # Red
+            "high": 15105570,     # Orange
+            "medium": 15844367,   # Gold
+            "info": 3447003,      # Blue
+        }
+        
+        color = colors.get(level, 9807270)  # Default gray
+        
+        # Build Discord embed
+        embed = {
+            "title": title,
+            "description": message,
+            "color": color,
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {
+                "text": "Agentic Bug Bounty System"
+            }
+        }
+        
+        # Add details as fields
+        fields = []
+        if details:
+            for key, value in details.items():
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value, indent=2)
+                value_str = str(value)
+                # Discord field value limit is 1024 characters
+                if len(value_str) > 1024:
+                    value_str = value_str[:1021] + "..."
+                fields.append({
+                    "name": key.replace("_", " ").title(),
+                    "value": value_str,
+                    "inline": len(value_str) < 50,
+                })
+        
+        if fields:
+            embed["fields"] = fields
+        
+        payload = {
+            "embeds": [embed]
+        }
+        
+        try:
+            response = requests.post(
+                self.discord_webhook,
+                json=payload,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            print(f"[ALERT] Discord alert failed: {e}", file=sys.stderr)
+            return False
+    
+    def send_discord_validation_alert(
+        self,
+        validation_id: str,
+        finding: Dict[str, Any],
+        program_name: Optional[str] = None,
+    ) -> bool:
+        """Send Discord alert for a finding that needs human validation.
+        
+        Args:
+            validation_id: Unique validation ID
+            finding: Finding dict with details
+            program_name: Optional program name
+            
+        Returns:
+            True if sent successfully
+        """
+        if not self.discord_webhook:
+            print("[ALERT] Discord webhook not configured. Set DISCORD_WEBHOOK_URL environment variable.", file=sys.stderr)
+            return False
+        
+        title = finding.get("title") or "Unknown Finding"
+        cvss = finding.get("cvss_score", 0.0)
+        url = finding.get("url") or finding.get("_raw_finding", {}).get("url", "N/A")
+        estimated_bounty = finding.get("estimated_bounty", 0)
+        report_path = finding.get("report_path", "N/A")
+        
+        # Determine level based on CVSS or bounty
+        if cvss >= 9.0 or estimated_bounty >= 1000:
+            level = "critical"
+        elif cvss >= 7.0 or estimated_bounty >= 500:
+            level = "high"
+        else:
+            level = "medium"
+        
+        message = f"**Finding requires human validation**\n\n**Validation ID:** `{validation_id}`\n\n**Quick Actions:**\n- Approve: `/approve {validation_id}`\n- Reject: `/reject {validation_id} <reason>`"
+        
+        # Build Discord embed
+        embed = {
+            "title": f"🔍 Validation Required: {title}",
+            "description": message,
+            "color": 15158332 if level == "critical" else (15105570 if level == "high" else 15844367),
+            "timestamp": datetime.utcnow().isoformat(),
+            "fields": [
+                {
+                    "name": "Validation ID",
+                    "value": f"`{validation_id}`",
+                    "inline": True
+                },
+                {
+                    "name": "CVSS Score",
+                    "value": f"{cvss:.1f}",
+                    "inline": True
+                },
+                {
+                    "name": "Estimated Bounty",
+                    "value": f"${estimated_bounty}",
+                    "inline": True
+                },
+                {
+                    "name": "Target URL",
+                    "value": url[:1024],
+                    "inline": False
+                },
+                {
+                    "name": "Report Path",
+                    "value": report_path[:1024],
+                    "inline": False
+                }
+            ],
+            "footer": {
+                "text": f"Program: {program_name or 'Unknown'}"
+            }
+        }
+        
+        payload = {
+            "embeds": [embed]
+        }
+        
+        try:
+            response = requests.post(
+                self.discord_webhook,
+                json=payload,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            print(f"[ALERT] Discord validation alert failed: {e}", file=sys.stderr)
+            return False
+    
     def send_alert(
         self,
         level: str,
@@ -307,7 +475,7 @@ class AlertManager:
         
         # Determine which channels to use
         if channels is None:
-            channels = program_config.get("channels", ["slack", "email", "teams"])
+            channels = program_config.get("channels", ["slack", "email", "teams", "discord"])
         
         results = {}
         
@@ -328,6 +496,11 @@ class AlertManager:
         if "teams" in channels and self.teams_webhook:
             title = f"Bug Bounty Alert: {level.upper()}"
             results["teams"] = self.send_teams_alert(title, message, level, details)
+        
+        # Send to Discord
+        if "discord" in channels and self.discord_webhook:
+            title = f"Bug Bounty Alert: {level.upper()}"
+            results["discord"] = self.send_discord_alert(title, message, level, details)
         
         return results
     

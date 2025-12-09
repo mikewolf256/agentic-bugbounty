@@ -20,32 +20,65 @@ import requests
 
 def discover_state_changing_endpoints(
     base_url: str,
-    discovery_data: Optional[Dict[str, Any]] = None
+    discovery_data: Optional[Dict[str, Any]] = None,
+    endpoints: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """Discover state-changing endpoints from discovery data or base URL.
     
     Args:
         base_url: Base URL to scan
         discovery_data: Optional discovery data containing endpoints
+        endpoints: Optional explicit list of endpoints to test
         
     Returns:
         Dict with discovered endpoints and metadata
     """
+    from urllib.parse import urljoin
+    import re
+    
     results = {
         "base_url": base_url,
         "state_changing_endpoints": [],
         "csrf_prone_endpoints": [],
     }
     
-    # Extract endpoints from discovery data
-    endpoints = []
-    if discovery_data:
+    # Use explicit endpoints if provided
+    endpoint_list = endpoints or []
+    
+    # Extract endpoints from discovery data if no explicit list
+    if not endpoint_list and discovery_data:
         if "api_endpoints" in discovery_data:
-            endpoints = discovery_data["api_endpoints"]
+            endpoint_list = discovery_data["api_endpoints"]
         elif "endpoints" in discovery_data:
-            endpoints = discovery_data["endpoints"]
+            endpoint_list = discovery_data["endpoints"]
         elif "web" in discovery_data and "api_endpoints" in discovery_data["web"]:
-            endpoints = discovery_data["web"]["api_endpoints"]
+            endpoint_list = discovery_data["web"]["api_endpoints"]
+    
+    # If still no endpoints, crawl the site to discover them
+    if not endpoint_list:
+        discovered_urls = _crawl_for_endpoints(base_url)
+        for url in discovered_urls:
+            endpoint_list.append({"url": url, "method": "POST"})
+        
+        # Also add common CSRF-prone endpoints
+        common_csrf_endpoints = [
+            "/api/user/update",
+            "/api/profile",
+            "/api/account",
+            "/api/transfer",
+            "/api/settings",
+            "/user/update",
+            "/profile",
+            "/account",
+            "/transfer",
+            "/settings",
+            "/api/change-password",
+            "/api/change-email",
+        ]
+        for ep in common_csrf_endpoints:
+            full_url = urljoin(base_url, ep)
+            if full_url not in [e.get("url") for e in endpoint_list]:
+                endpoint_list.append({"url": full_url, "method": "POST"})
     
     # Keywords that suggest state-changing operations
     state_changing_keywords = [
@@ -54,14 +87,19 @@ def discover_state_changing_endpoints(
         "transfer", "purchase", "order", "checkout", "payment",
         "register", "signup", "subscribe", "unsubscribe",
         "activate", "deactivate", "enable", "disable",
+        "api", "user", "account", "profile", "login",
     ]
     
     # State-changing HTTP methods
     state_changing_methods = ["POST", "PUT", "DELETE", "PATCH"]
     
-    for endpoint in endpoints:
+    for endpoint in endpoint_list:
         url = endpoint.get("url") or endpoint.get("path", "")
-        method = endpoint.get("method", "GET").upper()
+        method = endpoint.get("method", "POST").upper()
+        
+        # Make sure URL is absolute
+        if not url.startswith("http"):
+            url = urljoin(base_url, url)
         
         # Check if endpoint suggests state-changing operation
         url_lower = url.lower()
@@ -81,6 +119,75 @@ def discover_state_changing_endpoints(
             results["csrf_prone_endpoints"].append(endpoint_info)
     
     return results
+
+
+def _crawl_for_endpoints(base_url: str, max_pages: int = 10) -> List[str]:
+    """Crawl a site to discover endpoints.
+    
+    Args:
+        base_url: Base URL to crawl
+        max_pages: Maximum number of pages to crawl
+        
+    Returns:
+        List of discovered endpoint URLs
+    """
+    import re
+    from urllib.parse import urljoin, urlparse
+    
+    discovered = set()
+    visited = set()
+    to_visit = [base_url]
+    
+    # Common API endpoint patterns
+    api_patterns = [
+        r'/api/[a-zA-Z0-9_/]+',
+        r'/v\d+/[a-zA-Z0-9_/]+',
+        r'/[a-zA-Z0-9_]+(?:\.php|\.asp|\.aspx)?',
+    ]
+    
+    while to_visit and len(visited) < max_pages:
+        current_url = to_visit.pop(0)
+        if current_url in visited:
+            continue
+        
+        visited.add(current_url)
+        
+        try:
+            resp = requests.get(current_url, timeout=10)
+            html = resp.text
+            
+            # Find forms with action attributes
+            form_actions = re.findall(r'<form[^>]*action=["\']([^"\']+)["\']', html, re.IGNORECASE)
+            for action in form_actions:
+                full_url = urljoin(current_url, action)
+                if urlparse(full_url).netloc == urlparse(base_url).netloc:
+                    discovered.add(full_url)
+            
+            # Find href links
+            hrefs = re.findall(r'href=["\']([^"\']+)["\']', html, re.IGNORECASE)
+            for href in hrefs:
+                full_url = urljoin(current_url, href)
+                parsed = urlparse(full_url)
+                if parsed.netloc == urlparse(base_url).netloc:
+                    # Add to discovered if it looks like an API endpoint
+                    if '/api/' in full_url or any(kw in full_url.lower() for kw in ['update', 'delete', 'create', 'transfer', 'purchase']):
+                        discovered.add(full_url)
+                    # Add to crawl queue
+                    if full_url not in visited:
+                        to_visit.append(full_url)
+            
+            # Look for API endpoints mentioned in JavaScript
+            for pattern in api_patterns:
+                matches = re.findall(pattern, html)
+                for match in matches:
+                    full_url = urljoin(current_url, match)
+                    if urlparse(full_url).netloc == urlparse(base_url).netloc:
+                        discovered.add(full_url)
+                        
+        except Exception:
+            continue
+    
+    return list(discovered)
 
 
 def main() -> None:

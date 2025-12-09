@@ -9,8 +9,8 @@ Tests for cache poisoning vulnerabilities:
 
 import os
 import requests
-from typing import Dict, Any, Optional
-from urllib.parse import urlparse
+from typing import Dict, Any, Optional, List
+from urllib.parse import urlparse, urljoin
 
 
 def test_cache_poisoning(
@@ -27,34 +27,76 @@ def test_cache_poisoning(
         Dict with test results
     """
     result = {
+        "type": "cache_poisoning",
         "test": "cache_poisoning",
         "vulnerable": False,
+        "url": target_url,
         "poisoning_method": None,
         "evidence": None
     }
     
-    # Test cache key injection via headers
-    poison_headers = {
-        "X-Forwarded-Host": "evil.com",
-        "Host": "evil.com",
-        "X-Original-URL": "/evil",
-    }
+    parsed = urlparse(target_url)
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
     
-    try:
-        resp = requests.get(target_url, headers=poison_headers, timeout=10)
-        
-        # Check if poisoned header appears in response
-        if "evil.com" in resp.text:
-            result["vulnerable"] = True
-            result["poisoning_method"] = "header_injection"
-            result["evidence"] = {
-                "headers_used": poison_headers,
-                "status_code": resp.status_code,
-                "response_snippet": resp.text[:500],
-                "note": "Cache poisoning via header injection detected"
-            }
-    except Exception:
-        pass
+    # Test endpoints - check both the target URL and common cacheable paths
+    test_endpoints = [target_url]
+    if not any(ep in target_url for ep in ["/page", "/api/data"]):
+        test_endpoints.extend([
+            urljoin(target_url, "/page"),
+            urljoin(target_url, "/api/data"),
+        ])
+    
+    # Headers to test for cache poisoning
+    poison_headers_sets = [
+        {"X-Forwarded-Host": "evil.com"},
+        {"X-Forwarded-Host": "evil.com", "Host": "evil.com"},
+        {"X-Original-URL": "/evil"},
+        {"X-Rewrite-URL": "/admin"},
+        {"X-Forwarded-Proto": "https"},
+    ]
+    
+    for endpoint in test_endpoints:
+        for poison_headers in poison_headers_sets:
+            try:
+                resp = requests.get(endpoint, headers=poison_headers, timeout=10)
+                
+                # Check if poisoned header appears in response body or headers
+                response_contains_poison = "evil.com" in resp.text
+                headers_contain_poison = any("evil" in str(v).lower() for v in resp.headers.values())
+                
+                # Check for X-Forwarded-Host in response (indicates header reflection)
+                x_forwarded_in_response = "x-forwarded-host" in resp.text.lower()
+                
+                if response_contains_poison or headers_contain_poison:
+                    result["vulnerable"] = True
+                    result["poisoning_method"] = "header_injection"
+                    result["evidence"] = {
+                        "endpoint": endpoint,
+                        "headers_used": poison_headers,
+                        "status_code": resp.status_code,
+                        "response_snippet": resp.text[:500],
+                        "response_headers": dict(resp.headers),
+                        "note": "Cache poisoning via header injection detected"
+                    }
+                    return result
+                
+                # Check if response has cacheable headers and reflects our header
+                cache_control = resp.headers.get('Cache-Control', '')
+                if ('public' in cache_control or 'max-age' in cache_control) and x_forwarded_in_response:
+                    result["vulnerable"] = True
+                    result["poisoning_method"] = "header_reflection_in_cached_response"
+                    result["evidence"] = {
+                        "endpoint": endpoint,
+                        "headers_used": poison_headers,
+                        "status_code": resp.status_code,
+                        "cache_control": cache_control,
+                        "response_snippet": resp.text[:500],
+                        "note": "Header reflected in cacheable response"
+                    }
+                    return result
+                    
+            except Exception:
+                continue
     
     return result
 
@@ -80,7 +122,9 @@ def validate_cache_poisoning(
     if not target:
         return results
     
-    test_result = test_cache_poisoning(target)
+    cache_headers = discovery_data.get("cache_headers")
+    
+    test_result = test_cache_poisoning(target, cache_headers)
     results["tests_run"] += 1
     if test_result["vulnerable"]:
         results["vulnerable"] = True

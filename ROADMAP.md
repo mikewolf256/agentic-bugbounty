@@ -141,7 +141,7 @@
 
 ---
 
-## P0.1 – XSS (Reflected, Stored, DOM) – P0
+## P0.1 – XSS (Reflected, Stored, DOM) – P0 ✅ **IMPLEMENTED**
 
 - **Discovery**
   - [ ] Extend `host_profile` to track:
@@ -153,7 +153,13 @@
     - [x] Add `validation_engine` and `validation_confidence` fields to triage.
     - [ ] Cache Dalfox results per URL + param + payload.
   - [x] Skip Dalfox for cloud-only findings and hide Dalfox section in XSS-irrelevant markdown.
-**Triage & Reporting**
+- **MCP Endpoint**
+  - [x] Implement `/mcp/run_xss_checks` endpoint - **Implemented**
+    - [x] Parameter discovery and testing - **Working**
+    - [x] Reflected, stored, and DOM XSS detection - **Working**
+    - [x] Context-aware payload generation - **Working**
+    - [x] Blind XSS callback support - **Working**
+- **Triage & Reporting**
   - [x] Update triage prompt to classify:
     - [x] XSS type (reflected, stored, DOM).
     - [x] Context (attribute, body, JS).
@@ -250,7 +256,7 @@
 
 ---
 
-## P0.5 – Secrets, Sensitive Data & Info Disclosure – P0/P1
+## P0.5 – Secrets, Sensitive Data & Info Disclosure – P0/P1 ✅ **IMPLEMENTED**
 
 - **Discovery**
   - [x] Extend cloud/secret scanners to:
@@ -261,6 +267,12 @@
   - [x] For each potential secret:
     - [x] Classify type (API key, JWT, DB URI, credential) - **JS miner classification working**
     - [x] Perform non-destructive checks (e.g., JWT decode, format validation) - **JWT checks endpoint exists**
+- **MCP Endpoint**
+  - [x] Implement `/mcp/run_secret_exposure_checks` endpoint - **Implemented**
+    - [x] JavaScript file scanning - **Working**
+    - [x] HTTP response scanning - **Working**
+    - [x] Secret validation and classification - **Working**
+    - [x] Entropy-based detection - **Working**
 - **Triage & Reporting**
   - [ ] Enhance triage to:
     - [ ] Assess exploitability and blast radius for each secret.
@@ -425,6 +437,7 @@
 - **Notifications & Alerting**
   - [x] Add Slack/Email/Teams alerting for new critical findings or host deltas - **alerting.py implemented**
   - [x] Support per-tenant notification channels - **Per-program alerting working**
+  - [x] Discord webhook integration for validation alerts - **Implemented**
 - **Multi-Tenant Support**
   - [ ] Add workspace/program separation (per-client directories and configs).
   - [ ] Enforce isolation in storage (`output_scans`, `artifacts/`, logs).
@@ -433,6 +446,114 @@
   - [x] Configure alerts when thresholds are exceeded - **Integrated into alerting**
 - **Client Portal (Future UI)**
   - [ ] Prototype a "client portal" UX (even as static-generated HTML) to browse findings, reports, and MITRE coverage.
+
+---
+
+## P1.10 – Human Validation Workflow – P0/P1 ✅ **IMPLEMENTED**
+
+**Rationale:** High-value findings require human review before submission. Streamline the validation and approval process.
+
+- **Core Workflow**
+  - [x] Automatic queueing based on CVSS/bounty thresholds - **human_validation_workflow.py implemented**
+  - [x] Validation queue management (pending, approved, rejected) - **Working**
+  - [x] CLI for validation management (`validation_cli.py`) - **Implemented**
+    - [x] List pending validations - **Working**
+    - [x] Show validation details - **Working**
+    - [x] Approve/reject findings - **Working**
+    - [x] Statistics and reporting - **Working**
+- **Alerting & Notifications**
+  - [x] Discord webhook integration for validation alerts - **alerting.py enhanced**
+  - [x] Slack integration support - **Working**
+  - [x] High-value finding notifications (CVSS ≥ 7.0, bounty ≥ $500) - **Working**
+- **HackerOne Integration**
+  - [x] HackerOne submission CLI (`submission_cli.py`) - **Implemented**
+  - [x] Submit approved findings to HackerOne - **h1_submitter.py working**
+  - [x] Track submission status - **Working**
+  - [x] Rate limiting and submission management - **Working**
+- **Configuration**
+  - [x] Profile-based validation settings - **profiles/full.yaml updated**
+  - [x] Auto-queue thresholds (CVSS, bounty) - **Configurable**
+  - [x] Require validation flag - **Configurable**
+
+**Status:** ✅ Fully functional. Human validation workflow operational with Discord alerts and HackerOne submission.
+
+---
+
+## P1.11 – Browser PoC Validation – P0/P1 ✅ **IMPLEMENTED**
+
+**Rationale:** Visual proof-of-concept validation improves finding quality and reduces false positives.
+
+- **Chrome DevTools Integration**
+  - [x] Chrome DevTools Protocol integration - **poc_browser_validator.py implemented**
+  - [x] Auto-detection of DevTools WebSocket URL - **Working**
+  - [x] Headless browser support via port 9222 - **Working**
+- **Validation Features**
+  - [x] Screenshot capture for visual evidence - **Working**
+  - [x] Console log capture for debugging - **Working**
+  - [x] Visual indicator detection (XSS, UI-based issues) - **Working**
+  - [x] Page content analysis - **Working**
+  - [x] Anti-detection obfuscation - **Working**
+- **MCP Endpoint**
+  - [x] `/mcp/validate_poc_with_browser` endpoint - **Implemented**
+    - [x] Finding validation with browser - **Working**
+    - [x] Screenshot generation - **Working**
+    - [x] Visual validation indicators - **Working**
+- **Integration**
+  - [x] Integration with POC validator - **poc_validator.py enhanced**
+  - [x] Profile-based configuration - **profiles/full.yaml updated**
+  - [x] Auto-validation for XSS and UI-based findings - **Configurable**
+
+**Status:** ✅ Fully functional. Browser PoC validation operational with Chrome DevTools integration.
+
+---
+
+## P1.12 – Additional Vulnerability Testers – P1/P2 ✅ **IMPLEMENTED**
+
+**Rationale:** Comprehensive coverage of common vulnerability classes with dedicated testers.
+
+- **Command Injection**
+  - [x] `/mcp/run_command_injection_checks` endpoint - **Implemented**
+    - [x] Parameter discovery - **Working**
+    - [x] OS command injection testing - **Working**
+    - [x] Callback-based OOB validation - **Working**
+- **File Upload**
+  - [x] `/mcp/run_file_upload_checks` endpoint - **Implemented**
+    - [x] Upload endpoint discovery - **Working**
+    - [x] Bypass method testing - **Working**
+    - [x] RCE confirmation - **Working**
+    - [x] Callback-based execution validation - **Working**
+- **CSRF**
+  - [x] `/mcp/run_csrf_checks` endpoint - **Implemented**
+    - [x] CSRF discovery - **csrf_discovery.py implemented**
+    - [x] Token validation testing - **Working**
+    - [x] PoC HTML generation - **Working**
+- **NoSQL Injection**
+  - [x] `/mcp/run_nosql_injection_checks` endpoint - **Implemented**
+    - [x] MongoDB/CouchDB detection - **Working**
+    - [x] Injection method testing - **Working**
+    - [x] Callback-based validation - **Working**
+- **LDAP Injection**
+  - [x] `/mcp/run_ldap_injection_checks` endpoint - **Implemented**
+    - [x] Auth and search endpoint testing - **Working**
+    - [x] Auth bypass detection - **Working**
+- **SSI Injection**
+  - [x] `/mcp/run_ssi_injection_checks` endpoint - **Implemented**
+    - [x] Server-Side Includes testing - **Working**
+    - [x] RCE confirmation - **Working**
+    - [x] Callback-based validation - **Working**
+- **Crypto Weakness**
+  - [x] `/mcp/run_crypto_checks` endpoint - **Implemented**
+    - [x] Weak algorithm detection - **Working**
+    - [x] Predictable token analysis - **Working**
+- **DNS Rebinding**
+  - [x] `/mcp/run_dns_rebinding_checks` endpoint - **Implemented**
+    - [x] Internal target access testing - **Working**
+- **Random Generation**
+  - [x] `/mcp/run_random_generation_checks` endpoint - **Implemented**
+    - [x] Token predictability analysis - **Working**
+    - [x] Entropy testing - **Working**
+
+**Status:** ✅ All testers implemented and operational.
 
 ---
 
@@ -507,19 +628,19 @@
 
 ---
 
-## P1.9 – WebSocket Security Testing – P1/P2
+## P1.9 – WebSocket Security Testing – P1/P2 ✅ **IMPLEMENTED**
 **Rationale:** WebSockets bypass many traditional security controls. Growing attack surface in modern apps.
 
 - **Discovery**
-  - [ ] Detect WebSocket endpoints from JS analysis.
+  - [x] Detect WebSocket endpoints from JS analysis - **websocket_security_tester.py implemented**
   - [ ] Extract message schemas and event handlers.
-  - [ ] Identify auth mechanisms (token in URL, headers, first message).
+  - [x] Identify auth mechanisms (token in URL, headers, first message) - **Working**
 - **Validation**
-  - [ ] `/mcp/run_websocket_checks` endpoint:
-    - [ ] CSWSH (Cross-Site WebSocket Hijacking) detection.
-    - [ ] Auth bypass via origin manipulation.
-    - [ ] Message injection and privilege escalation.
-    - [ ] Rate limit bypass via persistent connections.
+  - [x] `/mcp/run_websocket_checks` endpoint - **Implemented**
+    - [x] CSWSH (Cross-Site WebSocket Hijacking) detection - **Working**
+    - [x] Auth bypass via origin manipulation - **Working**
+    - [x] Message injection and privilege escalation - **Working**
+    - [x] Subprotocol testing - **Working**
 - **Triage & Reporting**
   - [ ] WebSocket-specific impact (real-time data exfil, impersonation).
 
@@ -544,18 +665,19 @@
 
 ---
 
-## P2.4 – Cache Poisoning Detection – P1/P2
+## P2.4 – Cache Poisoning Detection – P1/P2 ✅ **IMPLEMENTED**
 **Rationale:** Web cache poisoning can escalate to mass user compromise. High-impact, often overlooked.
 
 - **Discovery**
-  - [ ] Detect caching layers (CDN fingerprinting, cache headers).
-  - [ ] Identify unkeyed inputs (headers, cookies, query params).
+  - [x] Detect caching layers (CDN fingerprinting, cache headers) - **cache_poisoning_tester.py implemented**
+  - [x] Identify unkeyed inputs (headers, cookies, query params) - **Working**
 - **Validation**
-  - [ ] `/mcp/run_cache_poison_checks` endpoint:
-    - [ ] Cache key detection via response analysis.
-    - [ ] Unkeyed header injection testing.
-    - [ ] XSS/redirect via cached response.
-  - [ ] Safe testing mode (unique cache busters per test).
+  - [x] `/mcp/run_cache_poisoning_checks` endpoint - **Implemented**
+    - [x] Cache key detection via response analysis - **Working**
+    - [x] Unkeyed header injection testing - **Working**
+    - [x] Header reflection detection - **Working**
+    - [x] Multiple header sets testing - **Working**
+  - [x] Safe testing mode (unique cache busters per test) - **Working**
 - **Triage & Reporting**
   - [ ] Affected user scope estimation.
   - [ ] Cache TTL and purge documentation.
@@ -622,7 +744,7 @@
 
 ---
 
-## P2.8 – Mass Assignment / Parameter Pollution – P2
+## P2.8 – Mass Assignment / Parameter Pollution – P2 ✅ **IMPLEMENTED**
 **Rationale:** Common in REST APIs, especially with auto-binding frameworks (Rails, Django, Spring).
 
 - **Discovery**
@@ -630,17 +752,21 @@
   - [ ] Extract model schemas from API responses.
   - [ ] Identify privileged fields (role, admin, verified, balance).
 - **Validation**
-  - [ ] `/mcp/run_mass_assign_checks` endpoint:
-    - [ ] Inject privileged fields in POST/PUT/PATCH.
-    - [ ] HTTP Parameter Pollution (HPP) testing.
-    - [ ] Array/object injection in form data.
+  - [x] `/mcp/run_mass_assignment_checks` endpoint - **Implemented**
+    - [x] Inject privileged fields in POST/PUT/PATCH - **Working**
+    - [x] Privilege escalation detection - **Working**
+    - [x] Object schema analysis - **Working**
+  - [x] `/mcp/run_parameter_pollution_checks` endpoint - **Implemented**
+    - [x] HTTP Parameter Pollution (HPP) testing - **Working**
+    - [x] Duplicate parameter testing - **Working**
+    - [x] JSON response analysis for pollution - **Working**
 - **Triage & Reporting**
   - [ ] Before/after state comparison.
   - [ ] Privilege escalation path documentation.
 
 ---
 
-## P3.1 – Server-Side Template Injection (SSTI) – P2/P3 ⚠️ **PARTIALLY IMPLEMENTED**
+## P3.1 – Server-Side Template Injection (SSTI) – P2/P3 ✅ **IMPLEMENTED**
 
 **Rationale:** SSTI often leads to RCE. Framework-aware detection improves accuracy.
 
@@ -648,30 +774,30 @@
   - [x] Detect template engines via error messages and behavior - **template_injection_tester.py exists**
   - [x] Identify reflection points in rendered content - **Working**
 - **Validation**
-  - [ ] `/mcp/run_ssti_checks` endpoint - **Tester exists but no MCP endpoint**
-    - [x] Framework-specific polyglot payloads (Jinja2, Twig, Freemarker, etc.) - **Implemented in tester**
+  - [x] `/mcp/run_ssti_checks` endpoint - **Implemented**
+    - [x] Framework-specific polyglot payloads (Jinja2, Twig, Freemarker, etc.) - **Implemented**
     - [x] Blind SSTI via time-based detection - **Working**
     - [x] Safe RCE confirmation (hostname/id output) - **Working**
-
-**Note:** `tools/template_injection_tester.py` exists but needs MCP endpoint wrapper.
+    - [x] Callback-based validation - **Working**
 - **Triage & Reporting**
   - [ ] Confirmed engine and exploitation path.
   - [ ] RCE impact documentation.
 
 ---
 
-## P3.2 – Path Traversal / LFI / RFI Testing – P2
+## P3.2 – Path Traversal / LFI / RFI Testing – P2 ✅ **IMPLEMENTED**
 **Rationale:** File inclusion bugs remain common, especially in legacy code and file handling features.
 
 - **Discovery**
-  - [ ] Identify file-related parameters (file, path, template, include, page).
-  - [ ] Detect upload/download functionality.
+  - [x] Identify file-related parameters (file, path, template, include, page) - **path_traversal_tester.py implemented**
+  - [x] Detect upload/download functionality - **Working**
 - **Validation**
-  - [ ] `/mcp/run_path_traversal_checks` endpoint:
-    - [ ] OS-aware traversal payloads (Windows/Linux).
-    - [ ] Encoding bypass attempts (URL, double, null byte).
-    - [ ] Known sensitive file targets (/etc/passwd, web.config, .env).
-    - [ ] RFI via external URL injection.
+  - [x] `/mcp/run_path_traversal_checks` endpoint - **Implemented**
+    - [x] OS-aware traversal payloads (Windows/Linux) - **Working**
+    - [x] Encoding bypass attempts (URL, double, null byte) - **Working**
+    - [x] Known sensitive file targets (/etc/passwd, web.config, .env) - **Working**
+    - [x] RFI via external URL injection - **Working**
+    - [x] Callback-based blind detection - **Working**
 - **Triage & Reporting**
   - [ ] File content evidence (redacted if sensitive).
   - [ ] Exploitation chain (LFI → log poisoning → RCE).
@@ -733,7 +859,7 @@
 
 ---
 
-## P4.6 – Insecure Deserialization Detection – P3/P4 ⚠️ **PARTIALLY IMPLEMENTED**
+## P4.6 – Insecure Deserialization Detection – P3/P4 ✅ **IMPLEMENTED**
 
 **Rationale:** Deserialization bugs often lead to RCE. Complex but high-value.
 
@@ -741,12 +867,11 @@
   - [x] Detect serialization formats (Java, PHP, .NET, Python pickle) - **deserialization_tester.py exists**
   - [x] Identify endpoints accepting serialized data - **Working**
 - **Validation**
-  - [ ] `/mcp/run_deser_checks` endpoint - **Tester exists but no MCP endpoint**
-    - [x] Framework-specific gadget chain payloads - **Implemented in tester**
+  - [x] `/mcp/run_deser_checks` endpoint - **Implemented**
+    - [x] Framework-specific gadget chain payloads - **Implemented**
     - [x] DNS/HTTP callback for blind detection - **Working**
+    - [x] Auto-format detection (java, python, dotnet, yaml) - **Working**
     - [ ] Integration with ysoserial, phpggc.
-
-**Note:** `tools/deserialization_tester.py` exists but needs MCP endpoint wrapper.
 - **Triage & Reporting**
   - [ ] Confirmed gadget chain and payload.
   - [ ] RCE evidence (callback, command output).
@@ -813,19 +938,34 @@
 | OAuth/OIDC Analyzer | P0/P1 | ✅ Implemented | $5K-$50K per bug |
 | Race Condition Detection | P0/P1 | ✅ Implemented | $10K-$100K per bug |
 | HTTP Request Smuggling | P1 | ✅ Implemented | $10K-$100K per bug |
-| WebSocket Security | P1/P2 | ❌ Not Implemented | $1K-$20K per bug |
+| WebSocket Security | P1/P2 | ✅ Implemented | $1K-$20K per bug |
 | Subdomain Takeover | P1/P2 | ✅ Implemented | $500-$5K per bug |
-| Cache Poisoning | P1/P2 | ❌ Not Implemented | $5K-$50K per bug |
+| Cache Poisoning | P1/P2 | ✅ Implemented | $5K-$50K per bug |
 | Business Logic (AI) | P2 | ✅ Implemented | $5K-$100K per bug |
 | Password Reset Analyzer | P1/P2 | ❌ Not Implemented | $1K-$10K per bug |
 | GraphQL Deep Testing | P1/P2 | ✅ Implemented | $1K-$20K per bug |
-| Mass Assignment | P2 | ❌ Not Implemented | $1K-$10K per bug |
-| SSTI Detection | P2/P3 | ⚠️ Tester exists, needs endpoint | $5K-$50K per bug |
-| Path Traversal/LFI | P2 | ❌ Not Implemented | $1K-$20K per bug |
+| Mass Assignment | P2 | ✅ Implemented | $1K-$10K per bug |
+| Parameter Pollution | P2 | ✅ Implemented | $1K-$10K per bug |
+| SSTI Detection | P2/P3 | ✅ Implemented | $5K-$50K per bug |
+| Path Traversal/LFI | P2 | ✅ Implemented | $1K-$20K per bug |
 | Prototype Pollution | P2/P3 | ❌ Not Implemented | $1K-$15K per bug |
 | Platform Integration | P3 | ⚠️ Partial (no auto-submit) | Efficiency gain |
+| Human Validation Workflow | P0/P1 | ✅ Implemented | Efficiency gain |
+| Browser PoC Validation | P0/P1 | ✅ Implemented | Quality improvement |
+| HackerOne Submission | P1 | ✅ Implemented | Efficiency gain |
 | JWT Analyzer | P2 | ✅ Implemented | $1K-$20K per bug |
-| Deserialization | P3/P4 | ⚠️ Tester exists, needs endpoint | $10K-$100K per bug |
+| Deserialization | P3/P4 | ✅ Implemented | $10K-$100K per bug |
+| XSS Checks | P0 | ✅ Implemented | $1K-$20K per bug |
+| Command Injection | P1 | ✅ Implemented | $5K-$50K per bug |
+| File Upload | P1 | ✅ Implemented | $5K-$50K per bug |
+| CSRF | P1 | ✅ Implemented | $1K-$10K per bug |
+| Secret Exposure | P0/P1 | ✅ Implemented | $1K-$20K per bug |
+| NoSQL Injection | P2 | ✅ Implemented | $5K-$50K per bug |
+| LDAP Injection | P2 | ✅ Implemented | $5K-$50K per bug |
+| SSI Injection | P2 | ✅ Implemented | $5K-$50K per bug |
+| Crypto Weakness | P2 | ✅ Implemented | $1K-$10K per bug |
+| DNS Rebinding | P2 | ✅ Implemented | $5K-$50K per bug |
+| Random Generation | P2 | ✅ Implemented | $1K-$10K per bug |
 | CI/CD Security | P3/P4 | ❌ Not Implemented | $5K-$50K per bug |
 | API Fuzzing Engine | P2/P3 | ⚠️ Partial (needs enhancement) | $1K-$20K per bug |
 
@@ -854,28 +994,43 @@
 - AI nuclei triage
 - Delta analyzer
 - Token tracking
-- Alerting system
+- Alerting system (Discord/Slack)
 - Report quality checker
 - Program config generator
 - Health check endpoint
 - Attack graph builder
 - Finding correlation
 - Lab testing framework (10+ labs)
+- **Human Validation Workflow** (Discord alerts, CLI management)
+- **Browser PoC Validation** (Chrome DevTools integration)
+- **HackerOne Submission** (Automated submission workflow)
+- **XSS Checks** (Reflected, stored, DOM)
+- **Command Injection** (OS command injection testing)
+- **Path Traversal/LFI/RFI** (File inclusion testing)
+- **File Upload** (Upload vulnerability testing)
+- **CSRF** (Cross-site request forgery testing)
+- **Secret Exposure** (Secret scanning and validation)
+- **NoSQL Injection** (MongoDB/CouchDB testing)
+- **LDAP Injection** (LDAP injection testing)
+- **Mass Assignment** (Privilege escalation testing)
+- **Parameter Pollution** (HTTP parameter pollution)
+- **WebSocket Security** (WebSocket vulnerability testing)
+- **SSI Injection** (Server-Side Includes testing)
+- **Crypto Weakness** (Weak cryptography detection)
+- **DNS Rebinding** (DNS rebinding testing)
+- **Random Generation** (Token predictability analysis)
+- **Cache Poisoning** (Cache poisoning detection)
+- **SSTI** (Server-Side Template Injection)
+- **Deserialization** (Insecure deserialization testing)
 
 ### ⚠️ Partially Implemented (Needs Enhancement)
-- SSTI detection (tester exists, needs MCP endpoint)
-- Deserialization (tester exists, needs MCP endpoint)
 - API fuzzing (basic fuzzer exists, needs enhancement)
 - H1 auto-submission (integration exists, manual review preferred)
 - Authenticated Nuclei templates (templates exist, needs cookie passing)
 - Feed authenticated URLs to validators (partially working)
 
 ### ❌ Not Implemented (High Priority Gaps)
-- WebSocket security testing
-- Cache poisoning detection
 - Password reset analyzer
-- Mass assignment testing
-- Path traversal/LFI/RFI
 - Prototype pollution
 - CI/CD security checks
 - MITRE ATT&CK Navigator export
@@ -885,19 +1040,20 @@
 
 ## Next Steps (Recommended Priority Order)
 
-1. **Wrap existing testers in MCP endpoints** (Quick wins):
-   - Add `/mcp/run_ssti_checks` wrapper for `template_injection_tester.py`
-   - Add `/mcp/run_deser_checks` wrapper for `deserialization_tester.py`
-
-2. **High-value missing features**:
-   - WebSocket security testing (P1/P2, $1K-$20K per bug)
-   - Cache poisoning detection (P1/P2, $5K-$50K per bug)
+1. **High-value missing features**:
    - Password reset analyzer (P1/P2, $1K-$10K per bug)
+   - Prototype pollution detection (P2/P3, $1K-$15K per bug)
+   - CI/CD security checks (P3/P4, $5K-$50K per bug)
 
-3. **Enhance authenticated scanning**:
+2. **Enhance authenticated scanning**:
    - Pass authenticated URLs automatically to ffuf/sqlmap/dalfox
    - Support authenticated Nuclei templates with session cookies
 
-4. **Reporting enhancements**:
+3. **Reporting enhancements**:
    - MITRE ATT&CK Navigator export
    - Executive PDF reports
+
+4. **Workflow improvements**:
+   - Enhanced browser validation for more vulnerability types
+   - Improved validation queue management UI
+   - Batch approval/rejection workflows

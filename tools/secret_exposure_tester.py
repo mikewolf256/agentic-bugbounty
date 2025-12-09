@@ -32,6 +32,11 @@ SECRET_PATTERNS = {
     "jwt_secret": re.compile(r'["\']([A-Za-z0-9_-]{32,})["\'].*jwt|jwt.*["\']([A-Za-z0-9_-]{32,})["\']'),
     "api_key_generic": re.compile(r'["\']?api[_-]?key["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{20,})["\']'),
     "secret_generic": re.compile(r'["\']?secret["\']?\s*[:=]\s*["\']([A-Za-z0-9/+=]{20,})["\']'),
+    # Additional patterns for lab detection
+    "api_key_const": re.compile(r'(?:const|let|var)\s+API_KEY\s*=\s*["\']([^"\']{10,})["\']', re.IGNORECASE),
+    "jwt_token": re.compile(r'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'),  # JWT format
+    "session_jwt": re.compile(r'(?:SESSION_JWT|JWT_SECRET|JWT_TOKEN)\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE),
+    "hardcoded_key": re.compile(r'(?:const|let|var|=)\s*["\']?(API_KEY|SECRET_KEY|AUTH_KEY|TOKEN)["\']?\s*[:=]\s*["\']([^"\']{15,})["\']', re.IGNORECASE),
 }
 
 
@@ -155,7 +160,67 @@ def scan_js_files(base_url: str, discovery_data: Optional[Dict[str, Any]] = None
     """
     all_secrets = []
     
-    # Use js_miner to discover JS files
+    # Common JS file paths to check directly
+    common_js_paths = [
+        "/static/config.js", "/js/config.js", "/config.js",
+        "/static/app.js", "/js/app.js", "/app.js",
+        "/static/main.js", "/js/main.js", "/main.js",
+        "/static/bundle.js", "/js/bundle.js", "/bundle.js",
+        "/static/scripts.js", "/js/scripts.js", "/scripts.js",
+        "/assets/js/config.js", "/assets/config.js",
+        "/env.js", "/.env.js", "/settings.js",
+    ]
+    
+    # First, try to fetch common JS paths directly
+    for js_path in common_js_paths:
+        try:
+            js_url = f"{base_url.rstrip('/')}{js_path}"
+            resp = requests.get(js_url, timeout=5)
+            if resp.status_code == 200 and len(resp.text) > 10:
+                # Check if it looks like JS
+                content = resp.text
+                if any(kw in content.lower() for kw in ["function", "const ", "var ", "let ", "=", "api", "key", "token", "secret"]):
+                    secrets = scan_for_secrets(content, source=js_url)
+                    all_secrets.extend(secrets)
+                    print(f"[SECRET-EXPOSURE] Scanned JS file: {js_url}, found {len(secrets)} secrets")
+        except Exception:
+            continue
+    
+    # Also try to parse HTML for script tags
+    try:
+        resp = requests.get(base_url, timeout=10)
+        if resp.status_code == 200:
+            import re
+            # Find script src attributes
+            script_srcs = re.findall(r'<script[^>]*src=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
+            for src in script_srcs:
+                if src.startswith("/"):
+                    js_url = f"{base_url.rstrip('/')}{src}"
+                elif src.startswith(("http://", "https://")):
+                    js_url = src
+                else:
+                    js_url = f"{base_url.rstrip('/')}/{src}"
+                
+                try:
+                    js_resp = requests.get(js_url, timeout=5)
+                    if js_resp.status_code == 200:
+                        secrets = scan_for_secrets(js_resp.text, source=js_url)
+                        all_secrets.extend(secrets)
+                        if secrets:
+                            print(f"[SECRET-EXPOSURE] Found {len(secrets)} secrets in {js_url}")
+                except Exception:
+                    continue
+            
+            # Also check inline scripts
+            inline_scripts = re.findall(r'<script[^>]*>(.*?)</script>', resp.text, re.DOTALL | re.IGNORECASE)
+            for idx, script in enumerate(inline_scripts):
+                if len(script) > 10:
+                    secrets = scan_for_secrets(script, source=f"{base_url}:inline_script_{idx}")
+                    all_secrets.extend(secrets)
+    except Exception as e:
+        print(f"[SECRET-EXPOSURE] HTML parsing failed: {e}")
+    
+    # Use js_miner as fallback
     try:
         from tools.js_miner import run as js_miner_run
         import tempfile
@@ -178,7 +243,7 @@ def scan_js_files(base_url: str, discovery_data: Optional[Dict[str, Any]] = None
     return all_secrets
 
 
-def scan_responses(target_url: str, endpoints: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def scan_http_responses(target_url: str, endpoints: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Scan HTTP responses for exposed secrets
     
     Args:
@@ -235,10 +300,12 @@ def validate_secret_exposure(
     """
     results = {
         "target_url": target_url,
+        "vulnerable": False,
         "secrets_found": [],
         "validated_secrets": [],
         "severity": "low",
-        "high_severity_count": 0
+        "high_severity_count": 0,
+        "findings": []  # Add findings list for validation matching
     }
     
     all_secrets = []
@@ -250,7 +317,7 @@ def validate_secret_exposure(
     
     # Scan HTTP responses
     if scan_responses:
-        response_secrets = scan_responses(target_url)
+        response_secrets = scan_http_responses(target_url)
         all_secrets.extend(response_secrets)
     
     # Deduplicate secrets
@@ -282,6 +349,25 @@ def validate_secret_exposure(
         results["severity"] = "high"
     elif len(unique_secrets) > 5:
         results["severity"] = "medium"
+    
+    # Set vulnerable if any secrets found
+    if unique_secrets:
+        results["vulnerable"] = True
+    
+    # Create findings for validation matching
+    for secret in unique_secrets:
+        finding = {
+            "type": "js_secrets" if "js" in secret.get("source", "").lower() else "secret_exposure",
+            "url": secret.get("source", target_url),
+            "vulnerable": True,
+            "secret_type": secret["type"],
+            "severity": secret["severity"],
+            "evidence": {
+                "value": secret["value"][:50] + "..." if len(secret["value"]) > 50 else secret["value"],
+                "context": secret.get("context", "")[:200],
+            }
+        }
+        results["findings"].append(finding)
     
     return results
 

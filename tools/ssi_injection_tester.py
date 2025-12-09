@@ -5,13 +5,28 @@ Tests for Server-Side Includes (SSI) injection vulnerabilities:
 - SSI injection in templates/static content
 - Command execution via SSI
 - File inclusion via SSI
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import os
 import time
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_ssi_injection(
@@ -60,7 +75,7 @@ def test_ssi_injection(
     for payload, payload_name in ssi_payloads:
         try:
             # Try GET
-            resp = requests.get(
+            resp = safe_get(
                 base_url,
                 params={param: payload},
                 timeout=10
@@ -162,7 +177,7 @@ def discover_ssi_endpoints(base_url: str) -> List[Dict[str, str]]:
     
     # Try to crawl for links
     try:
-        resp = requests.get(base_url, timeout=10)
+        resp = safe_get(base_url, timeout=10)
         if resp.status_code == 200:
             import re
             # Find all href links

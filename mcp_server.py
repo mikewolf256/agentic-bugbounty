@@ -423,6 +423,30 @@ class XssChecksRequest(BaseModel):
     params: Optional[List[str]] = None  # Parameters to test (if None, will discover)
     callback_url: Optional[str] = None  # Optional callback URL for blind XSS
 
+
+class EvasionConfigRequest(BaseModel):
+    """Configuration for WAF evasion / stealth HTTP requests."""
+    enabled: bool = True  # Enable stealth features
+    rate_limit: float = 2.0  # Requests per second
+    jitter: float = 0.5  # Random delay variance in seconds
+    rotate_ua: bool = True  # Rotate User-Agent
+    proxy: Optional[str] = None  # Single proxy URL (http://user:pass@host:port)
+    proxies: Optional[List[str]] = None  # List of proxy URLs for rotation
+    timeout: int = 30  # Request timeout in seconds
+    verify_ssl: bool = True  # Verify SSL certificates
+
+
+class EvasionConfigResult(BaseModel):
+    """Result of evasion configuration."""
+    status: str
+    enabled: bool
+    rate_limit: float
+    jitter: float
+    rotate_ua: bool
+    proxy_configured: bool
+    proxy_count: int
+
+
 class BrowserPOCValidationRequest(BaseModel):
     finding: Dict[str, Any]  # Finding dict with URL, payload, type
     devtools_url: Optional[str] = None  # Chrome DevTools WebSocket URL (auto-detect if None)
@@ -1052,6 +1076,14 @@ def set_scope(cfg: ScopeConfig):
     - Subdomain matching
     
     Also stores rate limit configuration from scope rules.
+    
+    Evasion settings (optional in rules.evasion):
+    - enabled: bool (default True)
+    - rate_limit: float (requests per second, default 2.0)
+    - jitter: float (random delay variance, default 0.5)
+    - rotate_ua: bool (rotate User-Agent, default True)
+    - proxy: str (proxy URL, e.g. http://user:pass@host:port)
+    - proxies: list[str] (list of proxy URLs for rotation)
     """
 
     global SCOPE, _SCOPE_CONFIG
@@ -1061,6 +1093,24 @@ def set_scope(cfg: ScopeConfig):
     
     # Log rate limit being used
     rate_limit = _get_rate_limit_from_scope()
+    
+    # Configure stealth HTTP client with evasion settings
+    evasion_config = _SCOPE_CONFIG.get("rules", {}).get("evasion", {})
+    try:
+        from tools.http_client import configure_global_session
+        configure_global_session(
+            enabled=evasion_config.get("enabled", True),
+            rate_limit=evasion_config.get("rate_limit", rate_limit),
+            jitter=evasion_config.get("jitter", 0.5),
+            rotate_ua=evasion_config.get("rotate_ua", True),
+            proxy=evasion_config.get("proxy"),
+            proxies=evasion_config.get("proxies", []),
+            timeout=evasion_config.get("timeout", 30),
+            verify_ssl=evasion_config.get("verify_ssl", True),
+        )
+        print(f"[SCOPE] Stealth HTTP client configured: rate_limit={evasion_config.get('rate_limit', rate_limit)}, jitter={evasion_config.get('jitter', 0.5)}", file=sys.stderr)
+    except ImportError:
+        print(f"[SCOPE] Warning: tools.http_client not available, using default requests", file=sys.stderr)
     
     # Get scope summary if scope_validator is available
     try:
@@ -1076,6 +1126,91 @@ def set_scope(cfg: ScopeConfig):
         print(f"[SCOPE] Rate limit set to {rate_limit} req/sec (from scope rules or default)", file=sys.stderr)
     
     return {"status": "ok", "program_name": cfg.program_name, "rate_limit": rate_limit}
+
+
+@app.post("/mcp/configure_evasion", response_model=EvasionConfigResult)
+def configure_evasion(req: EvasionConfigRequest):
+    """Configure WAF evasion settings for stealth HTTP requests.
+    
+    This configures the global stealth HTTP client used by vulnerability
+    testers to avoid WAF blocking on protected targets.
+    
+    Settings:
+    - enabled: Enable/disable stealth features
+    - rate_limit: Max requests per second (lower = safer)
+    - jitter: Random delay variance between requests
+    - rotate_ua: Rotate User-Agent headers
+    - proxy: Single proxy URL for all requests
+    - proxies: List of proxy URLs for rotation
+    - timeout: Request timeout in seconds
+    - verify_ssl: Whether to verify SSL certificates
+    
+    Example:
+        POST /mcp/configure_evasion
+        {
+            "enabled": true,
+            "rate_limit": 1.0,
+            "jitter": 1.0,
+            "rotate_ua": true,
+            "proxy": "http://user:pass@proxy:8080"
+        }
+    """
+    try:
+        from tools.http_client import configure_global_session
+        
+        configure_global_session(
+            enabled=req.enabled,
+            rate_limit=req.rate_limit,
+            jitter=req.jitter,
+            rotate_ua=req.rotate_ua,
+            proxy=req.proxy,
+            proxies=req.proxies or [],
+            timeout=req.timeout,
+            verify_ssl=req.verify_ssl,
+        )
+        
+        print(f"[EVASION] Configured: enabled={req.enabled}, rate_limit={req.rate_limit}, jitter={req.jitter}", file=sys.stderr)
+        
+        return EvasionConfigResult(
+            status="ok",
+            enabled=req.enabled,
+            rate_limit=req.rate_limit,
+            jitter=req.jitter,
+            rotate_ua=req.rotate_ua,
+            proxy_configured=bool(req.proxy),
+            proxy_count=len(req.proxies) if req.proxies else (1 if req.proxy else 0),
+        )
+        
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="tools.http_client module not available"
+        )
+
+
+@app.get("/mcp/evasion_stats")
+def get_evasion_stats():
+    """Get statistics from the stealth HTTP client.
+    
+    Returns request counts, WAF blocks detected, errors, etc.
+    """
+    try:
+        from tools.http_client import get_stealth_session
+        
+        session = get_stealth_session()
+        stats = session.get_stats()
+        
+        return {
+            "status": "ok",
+            "stats": stats,
+        }
+        
+    except ImportError:
+        return {
+            "status": "unavailable",
+            "message": "tools.http_client module not available",
+            "stats": {},
+        }
 
 
 @app.post("/mcp/import_h1_scope", response_model=H1ImportResult)
@@ -5268,8 +5403,10 @@ def run_csrf_checks(req: CsrfChecksRequest):
         from tools.csrf_tester import validate_csrf
         from tools.csrf_discovery import discover_state_changing_endpoints
         
-        # Use http for local Docker labs
-        protocol = "http" if ":" in docker_host else "https"
+        # Use http for local Docker labs (localhost, 127.0.0.1, or Docker service names without dots)
+        host_only = docker_host.split(":")[0] if ":" in docker_host else docker_host
+        is_local = host_only.lower() in ("localhost", "127.0.0.1") or "." not in host_only
+        protocol = "http" if is_local else "https"
         base_url = f"{protocol}://{docker_host}"
         
         # Translate endpoint URLs if provided

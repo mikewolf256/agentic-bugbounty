@@ -7,14 +7,29 @@ Tests for exposed API keys and secrets:
 - Scans error messages for sensitive data
 - Validates exposed secrets (tests if still active)
 - Classifies secret types and severity
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import os
 import re
 import time
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 # Secret patterns for common services
@@ -127,7 +142,7 @@ def validate_secret(secret_type: str, secret_value: str) -> Dict[str, Any]:
     elif secret_type == "github_token":
         try:
             headers = {"Authorization": f"token {secret_value}"}
-            resp = requests.get("https://api.github.com/user", headers=headers, timeout=5)
+            resp = safe_get("https://api.github.com/user", headers=headers, timeout=5)
             if resp.status_code == 200:
                 result["active"] = True
                 result["validation_method"] = "api_check"
@@ -175,7 +190,7 @@ def scan_js_files(base_url: str, discovery_data: Optional[Dict[str, Any]] = None
     for js_path in common_js_paths:
         try:
             js_url = f"{base_url.rstrip('/')}{js_path}"
-            resp = requests.get(js_url, timeout=5)
+            resp = safe_get(js_url, timeout=5)
             if resp.status_code == 200 and len(resp.text) > 10:
                 # Check if it looks like JS
                 content = resp.text
@@ -188,7 +203,7 @@ def scan_js_files(base_url: str, discovery_data: Optional[Dict[str, Any]] = None
     
     # Also try to parse HTML for script tags
     try:
-        resp = requests.get(base_url, timeout=10)
+        resp = safe_get(base_url, timeout=10)
         if resp.status_code == 200:
             import re
             # Find script src attributes
@@ -202,7 +217,7 @@ def scan_js_files(base_url: str, discovery_data: Optional[Dict[str, Any]] = None
                     js_url = f"{base_url.rstrip('/')}/{src}"
                 
                 try:
-                    js_resp = requests.get(js_url, timeout=5)
+                    js_resp = safe_get(js_url, timeout=5)
                     if js_resp.status_code == 200:
                         secrets = scan_for_secrets(js_resp.text, source=js_url)
                         all_secrets.extend(secrets)
@@ -267,7 +282,7 @@ def scan_http_responses(target_url: str, endpoints: Optional[List[str]] = None) 
     
     for endpoint in endpoints:
         try:
-            resp = requests.get(endpoint, timeout=10)
+            resp = safe_get(endpoint, timeout=10)
             secrets = scan_for_secrets(resp.text, source=endpoint)
             all_secrets.extend(secrets)
             

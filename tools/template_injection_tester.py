@@ -8,8 +8,22 @@ Tests for Server-Side Template Injection (SSTI):
 - Smarty
 """
 
-import requests
 from typing import Dict, Any, Optional, List
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_ssti(target_url: str, param: str = "q", callback_url: Optional[str] = None) -> Dict[str, Any]:

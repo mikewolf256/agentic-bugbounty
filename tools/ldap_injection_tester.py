@@ -6,13 +6,28 @@ Tests for LDAP injection vulnerabilities:
 - LDAP injection in search endpoints
 - Authentication bypass via LDAP injection
 - Information disclosure via LDAP injection
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import os
 import time
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
 
 
 def test_ldap_injection(
@@ -61,7 +76,7 @@ def test_ldap_injection(
     if endpoint_type == "search":
         for payload, payload_name in ldap_payloads:
             try:
-                resp = requests.get(
+                resp = safe_get(
                     base_url,
                     params={param: payload},
                     timeout=10
@@ -95,7 +110,7 @@ def test_ldap_injection(
             if endpoint_type == "auth":
                 form_data["password"] = payload  # Use same payload for password too
             
-            resp = requests.post(
+            resp = safe_post(
                 base_url,
                 data=form_data,
                 timeout=10
@@ -142,7 +157,7 @@ def test_ldap_injection(
             if endpoint_type == "auth":
                 json_data["password"] = payload
             
-            resp = requests.post(
+            resp = safe_post(
                 base_url,
                 json=json_data,
                 headers={"Content-Type": "application/json"},

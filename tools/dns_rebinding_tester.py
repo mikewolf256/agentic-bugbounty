@@ -8,9 +8,23 @@ Tests for DNS rebinding vulnerabilities:
 """
 
 import os
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, urljoin
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_dns_rebinding(
@@ -61,7 +75,7 @@ def test_dns_rebinding(
         for internal_url in internal_urls:
             # Try POST with form data
             try:
-                resp = requests.post(
+                resp = safe_post(
                     fetch_endpoint,
                     data={"url": internal_url},
                     timeout=10
@@ -96,7 +110,7 @@ def test_dns_rebinding(
             
             # Try GET with url parameter
             try:
-                resp = requests.get(
+                resp = safe_get(
                     fetch_endpoint,
                     params={"url": internal_url},
                     timeout=10

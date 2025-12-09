@@ -8,9 +8,23 @@ Tests for HTTP parameter pollution vulnerabilities:
 """
 
 import os
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, urlencode, parse_qs
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+
 
 
 def test_parameter_pollution(
@@ -52,7 +66,7 @@ def test_parameter_pollution(
         
         try:
             # Test with JSON accept header for API endpoints
-            resp = requests.get(test_url, timeout=10, headers={"Accept": "application/json"})
+            resp = safe_get(test_url, timeout=10, headers={"Accept": "application/json"})
             
             # Check JSON response for pollution indication
             try:

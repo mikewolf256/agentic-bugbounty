@@ -6,13 +6,31 @@ Tests for Cross-Site Request Forgery (CSRF) vulnerabilities:
 - SameSite cookie protection
 - Origin/Referer header validation
 - PoC HTML form generation
+
+Uses stealth HTTP client for WAF evasion on live targets.
 """
 
 import os
 import time
-import requests
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, urljoin
+
+# Import stealth HTTP client for WAF evasion
+try:
+    from tools.http_client import safe_get, safe_post, get_stealth_session, safe_request
+    USE_STEALTH = True
+except ImportError:
+    import requests
+    USE_STEALTH = False
+    
+    def safe_get(url, **kwargs):
+        return requests.get(url, **kwargs)
+    
+    def safe_post(url, **kwargs):
+        return requests.post(url, **kwargs)
+    
+    def safe_request(method, url, **kwargs):
+        return requests.request(method, url, **kwargs)
 
 
 def test_csrf_token_presence(endpoint: str, method: str = "POST") -> Dict[str, Any]:
@@ -35,13 +53,13 @@ def test_csrf_token_presence(endpoint: str, method: str = "POST") -> Dict[str, A
     # Try request without token
     try:
         if method.upper() == "POST":
-            resp = requests.post(endpoint, data={}, timeout=10)
+            resp = safe_post(endpoint, data={}, timeout=10)
         elif method.upper() == "PUT":
-            resp = requests.put(endpoint, data={}, timeout=10)
+            resp = safe_request("PUT", endpoint, data={}, timeout=10)
         elif method.upper() == "DELETE":
-            resp = requests.delete(endpoint, timeout=10)
+            resp = safe_request("DELETE", endpoint, timeout=10)
         else:
-            resp = requests.get(endpoint, timeout=10)
+            resp = safe_get(endpoint, timeout=10)
         
         # Check response for CSRF token indicators
         response_text = resp.text.lower()

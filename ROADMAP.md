@@ -1,4 +1,4 @@
-# Agentic Bug Bounty – Updated Roadmap (Current Status: Jan 2025)
+# Agentic Bug Bounty – Updated Roadmap (Current Status: Dec 2025)
 
 ## P0 – Core Pipeline Foundations
 - [x] Project Scaffolding & Repo Structure

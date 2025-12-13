@@ -1,0 +1,165 @@
+# Client Assessment Profile
+# Focused on high-impact vulnerabilities for paid client assessments
+# Prioritizes quality over quantity - no noise, only actionable findings
+
+name: client-assessment
+description: High-impact focused assessment for enterprise clients
+
+# Scan configuration
+scan:
+  mode: full-scan
+  timeout: 3600  # 1 hour per target
+  max_concurrent: 3
+
+# Rate limiting - respect client infrastructure
+rate_limiting:
+  requests_per_second: 10
+  burst: 20
+  delay_between_targets: 5  # seconds
+
+# Nuclei configuration
+nuclei:
+  enabled: true
+  severity:
+    - critical
+    - high
+    - medium
+  exclude_tags:
+    - dos
+    - info
+    - intrusive
+    - fuzz
+  rate_limit: 10
+  timeout: 30
+  retries: 2
+
+# Validation configuration
+validators:
+  enabled:
+    - dalfox      # XSS validation
+    - sqlmap      # SQL injection
+    - ssrf        # SSRF validation
+    - bac         # Broken access control
+    - oauth       # OAuth misconfigurations
+    - race        # Race conditions
+    - smuggling   # HTTP smuggling
+    - graphql     # GraphQL security
+    - jwt         # JWT attacks
+    - xxe         # XML external entities
+    - ssti        # Template injection
+    - deser       # Deserialization
+    - command_injection
+    - path_traversal
+    - business_logic
+  
+  disabled:
+    # Skip low-value checks for client assessments
+    - clickjacking
+    - cors_basic      # Unless credentials exposed
+    - rate_limit      # Unless DoS risk
+    - security_headers  # Informational only
+
+# AI Triage configuration  
+ai_triage:
+  enabled: true
+  use_llm: true
+  model: gpt-4o
+  confidence_threshold: high  # Only high-confidence findings
+  min_cvss: 7.0              # Only CVSS 7.0+ findings
+  max_tokens: 4000
+  temperature: 0.1           # More deterministic
+
+# Human validation workflow
+human_validation:
+  enabled: true
+  auto_queue_cvss_threshold: 7.0
+  auto_queue_bounty_threshold: 500
+  require_validation: true   # All findings must be reviewed
+  notify_critical: true      # Immediate notification for critical
+
+# Browser validation
+browser_validation:
+  enabled: true
+  auto_validate_xss: true
+  auto_validate_ui: true
+  devtools_port: 9222
+  screenshot_timeout: 5
+  require_devtools: false
+
+# Finding filters - only high-impact
+finding_filters:
+  min_severity: medium
+  min_confidence: medium
+  
+  # Include these types regardless of severity
+  always_include:
+    - rce
+    - remote_code_execution
+    - command_injection
+    - sqli
+    - sql_injection
+    - ssrf
+    - auth_bypass
+    - authentication_bypass
+    - privilege_escalation
+    - idor
+    - business_logic
+    - payment
+    - deserialization
+    - xxe
+  
+  # Exclude these unless critical
+  exclude_unless_critical:
+    - clickjacking
+    - missing_header
+    - information_disclosure
+    - cors
+
+# Report configuration
+reporting:
+  format:
+    - markdown
+    - pdf
+  include_poc: true
+  include_remediation: true
+  include_cvss: true
+  include_references: true
+  redact_sensitive: true
+  
+  # Executive summary settings
+  executive:
+    max_pages: 3
+    include_risk_score: true
+    include_business_impact: true
+    include_charts: true
+  
+  # Technical report settings
+  technical:
+    include_all_findings: false  # Only high-impact
+    include_screenshots: true
+    include_curl_commands: true
+
+# Phases to run
+phases:
+  - recon
+  - fingerprint
+  - nuclei
+  - validators
+  - triage
+  - validation
+  - report
+
+# Output configuration
+output:
+  base_dir: data/output/assessments
+  artifacts_dir: artifacts
+  reports_dir: reports
+  
+  # Files to generate
+  generate:
+    - findings_json
+    - triage_json
+    - markdown_report
+    - executive_pdf
+    - technical_pdf
+

@@ -203,13 +203,52 @@ def discover_endpoints(base_url: str, lab_name: str) -> List[str]:
     # First, add endpoints from lab metadata (more reliable)
     try:
         meta = load_lab_metadata(lab_name)
+        
+        # Check for explicit endpoints field
         lab_endpoints = meta.get("endpoints", [])
         for ep in lab_endpoints:
-            ep_path = ep.get("path", "")
+            ep_path = ep.get("path", "") if isinstance(ep, dict) else ep
             if ep_path and ep_path != "/":
-                full_url = f"{base_url.rstrip('/')}{ep_path}"
-                if full_url not in discovered_urls:
-                    discovered_urls.append(full_url)
+                # Handle full URL or path
+                if ep_path.startswith("http"):
+                    if ep_path not in discovered_urls:
+                        discovered_urls.append(ep_path)
+                else:
+                    full_url = f"{base_url.rstrip('/')}{ep_path.split('?')[0]}"  # Remove query params
+                    if full_url not in discovered_urls:
+                        discovered_urls.append(full_url)
+        
+        # Also extract URLs/endpoints from expected_findings (often contain endpoint paths)
+        expected_findings = meta.get("expected_findings", {})
+        
+        # expected_findings can be a dict or list
+        findings_to_process = []
+        if isinstance(expected_findings, dict):
+            for key, value in expected_findings.items():
+                if isinstance(value, list):
+                    findings_to_process.extend(value)
+                elif isinstance(value, dict):
+                    findings_to_process.append(value)
+        elif isinstance(expected_findings, list):
+            findings_to_process = expected_findings
+        
+        for finding in findings_to_process:
+            if not isinstance(finding, dict):
+                continue
+            
+            # Look for URL or endpoint fields
+            for field in ["url", "endpoint", "path"]:
+                ep_path = finding.get(field, "")
+                if ep_path and ep_path != "/":
+                    # Extract path without query params
+                    path_only = ep_path.split("?")[0]
+                    if path_only.startswith("http"):
+                        if ep_path not in discovered_urls:
+                            discovered_urls.append(ep_path)
+                    elif path_only.startswith("/"):
+                        full_url = f"{base_url.rstrip('/')}{path_only}"
+                        if full_url not in discovered_urls:
+                            discovered_urls.append(full_url)
     except Exception:
         pass
     

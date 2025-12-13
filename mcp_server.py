@@ -887,6 +887,64 @@ class OpenRedirectResult(BaseModel):
     vulnerable_params: List[Dict[str, Any]]  # [{"param": "...", "payload": "...", "redirects_to": "..."}]
 
 
+# ---------- New Security Checker Models ----------
+
+class RateLimitRequest(BaseModel):
+    target_url: str  # URL to test
+    endpoints: Optional[List[str]] = None  # Optional specific endpoints
+    run_bypass_tests: bool = True  # Whether to test bypass techniques
+
+
+class RateLimitResult(BaseModel):
+    target_url: str
+    vulnerable: bool
+    vulnerable_endpoints: List[str] = []
+    bypass_vulnerable: bool = False
+    findings: Optional[List[Dict[str, Any]]] = []
+    meta: Dict[str, Any]
+
+
+class ClickjackingRequest(BaseModel):
+    target_url: str  # URL to test
+    endpoints: Optional[List[str]] = None  # Optional specific endpoints
+
+
+class ClickjackingResult(BaseModel):
+    target_url: str
+    vulnerable: bool
+    frameable_pages: List[str] = []
+    protected_pages: List[str] = []
+    poc_html: Optional[str] = None  # PoC HTML for clickjacking
+    findings: Optional[List[Dict[str, Any]]] = []
+    meta: Dict[str, Any]
+
+
+class CorsRequest(BaseModel):
+    target_url: str  # URL to test
+    endpoints: Optional[List[str]] = None  # Optional specific endpoints
+
+
+class CorsResult(BaseModel):
+    target_url: str
+    vulnerable: bool
+    vulnerable_endpoints: List[str] = []
+    findings: Optional[List[Dict[str, Any]]] = []
+    meta: Dict[str, Any]
+
+
+class RedosRequest(BaseModel):
+    target_url: str  # URL to test
+    endpoints: Optional[List[str]] = None  # Optional specific endpoints
+
+
+class RedosResult(BaseModel):
+    target_url: str
+    vulnerable: bool
+    vulnerable_params: List[Dict[str, Any]] = []
+    findings: Optional[List[Dict[str, Any]]] = []
+    meta: Dict[str, Any]
+
+
 class TakeoverChecksRequest(BaseModel):
     domain: str  # Base domain (e.g., "example.com")
     subdomains: Optional[List[str]] = None  # Optional pre-discovered subdomains
@@ -3164,7 +3222,10 @@ def run_bac_checks(req: BacChecksRequest):
                     try:
                         data = resp.json()
                         # If we got actual data, it's likely an IDOR
-                        if data and (isinstance(data, dict) and data.get("id")) or isinstance(data, list):
+                        # Note: Check for non-empty list or dict with ID to avoid false positives
+                        is_dict_with_id = isinstance(data, dict) and data.get("id")
+                        is_non_empty_list = isinstance(data, list) and len(data) > 0
+                        if data and (is_dict_with_id or is_non_empty_list):
                             confirmed_issues.append({
                                 "type": "idor_authenticated",
                                 "resource_type": resource_type,
@@ -6801,6 +6862,180 @@ def _check_cloudflare_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
 def _check_fastly_takeover(subdomain: str, cname: str) -> Tuple[bool, str]:
     """Check if Fastly service is claimable."""
     return True, f"CNAME points to {cname} - Fastly service may be misconfigured"
+
+
+# ---------- New Security Checker Endpoints ----------
+
+@app.post("/mcp/run_rate_limit_checks", response_model=RateLimitResult)
+def run_rate_limit_checks(req: RateLimitRequest):
+    """Test for rate limiting vulnerabilities.
+    
+    Tests common sensitive endpoints for missing or bypassable rate limits.
+    Rate limit bypasses are common, easy to find, and often pay $100-$500.
+    
+    Tests:
+    - Missing rate limits on auth/signup/password endpoints
+    - Bypass via X-Forwarded-For header manipulation
+    - Bypass via URL case variations
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
+    try:
+        from tools.rate_limit_tester import validate_rate_limiting
+        result = validate_rate_limiting(
+            translated_url,
+            endpoints=req.endpoints,
+            run_bypass_tests=req.run_bypass_tests
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Rate limit tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"rate_limit_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    return RateLimitResult(
+        target_url=req.target_url,
+        vulnerable=result.get("vulnerable", False),
+        vulnerable_endpoints=result.get("vulnerable_endpoints", []),
+        bypass_vulnerable=result.get("bypass_vulnerable", False),
+        findings=result.get("findings", []),
+        meta={"findings_file": out_path, "tests_run": len(result.get("tests", []))}
+    )
+
+
+@app.post("/mcp/run_clickjacking_checks", response_model=ClickjackingResult)
+def run_clickjacking_checks(req: ClickjackingRequest):
+    """Test for clickjacking vulnerabilities.
+    
+    Tests for missing X-Frame-Options and CSP frame-ancestors.
+    Clickjacking is one of the most common findings (90 reports in RAG).
+    
+    Tests:
+    - Missing X-Frame-Options header
+    - Missing/misconfigured CSP frame-ancestors
+    - Frameable sensitive pages (login, settings, payment)
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
+    try:
+        from tools.clickjacking_tester import validate_clickjacking
+        result = validate_clickjacking(translated_url, endpoints=req.endpoints)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clickjacking tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"clickjacking_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    return ClickjackingResult(
+        target_url=req.target_url,
+        vulnerable=result.get("vulnerable", False),
+        frameable_pages=result.get("frameable_pages", []),
+        protected_pages=result.get("protected_pages", []),
+        poc_html=result.get("poc_html"),
+        findings=result.get("findings", []),
+        meta={"findings_file": out_path}
+    )
+
+
+@app.post("/mcp/run_cors_checks", response_model=CorsResult)
+def run_cors_checks(req: CorsRequest):
+    """Test for CORS misconfiguration vulnerabilities.
+    
+    Tests for dangerous CORS configurations that allow credential theft.
+    CORS misconfigs are common (53 reports in RAG) and pay $100-$1K.
+    
+    Tests:
+    - Reflected Origin (arbitrary origin allowed)
+    - Null Origin allowed
+    - Subdomain bypass (evil.target.com)
+    - Protocol downgrade (HTTP allowed for HTTPS site)
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
+    try:
+        from tools.cors_tester import validate_cors
+        result = validate_cors(translated_url, endpoints=req.endpoints)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"CORS tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"cors_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    return CorsResult(
+        target_url=req.target_url,
+        vulnerable=result.get("vulnerable", False),
+        vulnerable_endpoints=result.get("vulnerable_endpoints", []),
+        findings=result.get("findings", []),
+        meta={"findings_file": out_path, "tests_run": len(result.get("tests", []))}
+    )
+
+
+@app.post("/mcp/run_redos_checks", response_model=RedosResult)
+def run_redos_checks(req: RedosRequest):
+    """Test for ReDoS (Regular Expression Denial of Service) vulnerabilities.
+    
+    Tests for regex patterns that cause exponential backtracking.
+    ReDoS is often overlooked but has 43 reports in RAG.
+    
+    Tests:
+    - Exponential backtracking payloads
+    - Response time comparison (baseline vs attack)
+    - Timeout detection
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0] if parsed.netloc else parsed.path.split("/")[0]
+    _enforce_scope(host)
+    
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
+    try:
+        from tools.redos_tester import validate_redos
+        result = validate_redos(translated_url, endpoints=req.endpoints)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ReDoS tester failed: {e}")
+    
+    ts = int(time.time())
+    host_key = host.replace(":", "_")
+    out_path = os.path.join(OUTPUT_DIR, f"redos_{host_key}_{ts}.json")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+    
+    return RedosResult(
+        target_url=req.target_url,
+        vulnerable=result.get("vulnerable", False),
+        vulnerable_params=result.get("vulnerable_params", []),
+        findings=result.get("findings", []),
+        meta={"findings_file": out_path, "tests_run": len(result.get("tests", []))}
+    )
 
 
 # ---------- RAG Endpoints ----------

@@ -14,6 +14,8 @@ import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
+import requests  # Always import for Session/exceptions support
+
 # Import stealth HTTP client for WAF evasion
 try:
     from tools.http_client import safe_get, safe_post, get_stealth_session

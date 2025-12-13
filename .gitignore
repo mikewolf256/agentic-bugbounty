@@ -56,3 +56,19 @@ nuclei-templates/
 .Trashes
 ehthumbs.db
 Desktop.ini
+
+# Data and outputs (keep structure, ignore contents)
+/data/output/
+/data/projections/
+/data/logs/
+*.log
+
+# Test outputs and validation
+tests/integration/*.json
+tests/integration/*.log
+
+# RAG progress
+data/rag_ingest_progress.json
+
+# Cleanup script (temporary)
+cleanup_repo.sh

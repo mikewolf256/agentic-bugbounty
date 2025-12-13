@@ -15,12 +15,13 @@ import time
 from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse, urljoin
 
+import requests  # Always import requests for Session support
+
 # Import stealth HTTP client for WAF evasion
 try:
     from tools.http_client import safe_get, safe_post, get_stealth_session, safe_request
     USE_STEALTH = True
 except ImportError:
-    import requests
     USE_STEALTH = False
     
     def safe_get(url, **kwargs):

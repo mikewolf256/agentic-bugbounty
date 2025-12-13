@@ -418,6 +418,47 @@ class RandomGenerationRequest(BaseModel):
     tokens: Optional[List[str]] = None  # Optional tokens to analyze
     auth_context: Optional[Dict[str, Any]] = None  # Optional authentication context
 
+
+class SchemaAwareFuzzRequest(BaseModel):
+    """Request for schema-aware API fuzzing"""
+    target_url: str  # Base URL of the API
+    auth_token: Optional[str] = None  # Bearer token for authentication
+    headers: Optional[Dict[str, str]] = None  # Custom headers
+    rate_limit: float = 0.5  # Delay between requests
+    max_endpoints: int = 20  # Maximum endpoints to test
+
+
+class SchemaAwareFuzzResult(BaseModel):
+    """Result of schema-aware API fuzzing"""
+    target: str
+    schema_discovered: bool
+    schema_url: Optional[str] = None
+    endpoints_tested: int
+    vulnerabilities_found: int
+    findings: List[Dict[str, Any]]
+    idor_findings: List[Dict[str, Any]]
+
+
+class MultiRoleBACRequest(BaseModel):
+    """Request for multi-role BAC testing"""
+    target_url: str  # Base URL of the API
+    roles: Optional[List[Dict[str, Any]]] = None  # Role configurations
+    user_token: Optional[str] = None  # User role Bearer token (if not using roles)
+    admin_token: Optional[str] = None  # Admin role Bearer token (if not using roles)
+    endpoints: Optional[List[Dict[str, Any]]] = None  # Specific endpoints to test
+    rate_limit: float = 0.3  # Delay between requests
+
+
+class MultiRoleBACResult(BaseModel):
+    """Result of multi-role BAC testing"""
+    vulnerable: bool
+    vulnerabilities_found: int
+    findings: List[Dict[str, Any]]
+    endpoint_matrix: List[Dict[str, Any]]
+    roles_tested: List[str]
+    endpoints_tested: int
+
+
 class XssChecksRequest(BaseModel):
     target_url: str  # Target URL to test
     params: Optional[List[str]] = None  # Parameters to test (if None, will discover)
@@ -4284,6 +4325,118 @@ def run_graphql_security(req: GraphQLSecurityRequest):
                 os.unlink(output_file)
             except Exception:
                 pass
+
+
+@app.post("/mcp/run_schema_fuzz", response_model=SchemaAwareFuzzResult)
+def run_schema_fuzz(req: SchemaAwareFuzzRequest):
+    """
+    Run schema-aware API fuzzing.
+    
+    This endpoint discovers OpenAPI/Swagger schemas and performs type-aware
+    fuzzing of all endpoints with payloads matched to parameter types.
+    
+    Features:
+    - OpenAPI/Swagger schema discovery
+    - Type-aware payload generation (string, integer, boolean, array, object)
+    - Mass assignment testing
+    - IDOR detection
+    - SQL injection, SSTI, path traversal detection
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0]
+    _enforce_scope(host)
+    
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
+    try:
+        from tools.rest_api_fuzzer import schema_aware_fuzz
+        
+        result = schema_aware_fuzz(
+            translated_url,
+            headers=req.headers,
+            auth_token=req.auth_token,
+            rate_limit=req.rate_limit,
+            max_endpoints=req.max_endpoints
+        )
+        
+        # Save results
+        ts = int(time.time())
+        out_name = f"schema_fuzz_{host.replace(':', '_')}_{ts}.json"
+        out_path = os.path.join(OUTPUT_DIR, out_name)
+        
+        with open(out_path, "w") as fh:
+            json.dump(result, fh, indent=2)
+        
+        return SchemaAwareFuzzResult(
+            target=req.target_url,
+            schema_discovered=result.get("schema_discovered", False),
+            schema_url=result.get("schema_url"),
+            endpoints_tested=result.get("endpoints_tested", 0),
+            vulnerabilities_found=result.get("vulnerabilities_found", 0),
+            findings=result.get("findings", []),
+            idor_findings=result.get("idor_findings", [])
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema-aware fuzzing failed: {str(e)}")
+
+
+@app.post("/mcp/run_multi_role_bac", response_model=MultiRoleBACResult)
+def run_multi_role_bac(req: MultiRoleBACRequest):
+    """
+    Run multi-role Broken Access Control testing.
+    
+    This endpoint tests API endpoints across multiple user roles to detect:
+    - Vertical privilege escalation (user accessing admin functions)
+    - Horizontal privilege escalation (user A accessing user B's data)
+    - Missing authentication checks
+    - Inconsistent access control enforcement
+    
+    Roles can be provided as a list of configurations or as simple user/admin tokens.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(req.target_url)
+    host = parsed.netloc.split(":")[0]
+    _enforce_scope(host)
+    
+    # Translate URL for Docker environment
+    translated_url = translate_url_for_docker(req.target_url)
+    
+    try:
+        from tools.multi_role_bac_tester import validate_multi_role_bac
+        
+        # Build discovery data
+        discovery_data = {
+            "target": translated_url,
+            "roles": req.roles,
+            "user_token": req.user_token,
+            "admin_token": req.admin_token,
+            "endpoints": req.endpoints,
+        }
+        
+        result = validate_multi_role_bac(discovery_data)
+        
+        # Save results
+        ts = int(time.time())
+        out_name = f"multi_role_bac_{host.replace(':', '_')}_{ts}.json"
+        out_path = os.path.join(OUTPUT_DIR, out_name)
+        
+        with open(out_path, "w") as fh:
+            json.dump(result, fh, indent=2)
+        
+        return MultiRoleBACResult(
+            vulnerable=result.get("vulnerable", False),
+            vulnerabilities_found=result.get("vulnerabilities_found", 0),
+            findings=result.get("findings", []),
+            endpoint_matrix=result.get("endpoint_matrix", []),
+            roles_tested=result.get("roles_tested", []),
+            endpoints_tested=result.get("endpoints_tested", 0)
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Multi-role BAC testing failed: {str(e)}")
 
 
 @app.post("/mcp/run_nuclei", response_model=NucleiScanResult)

@@ -18,6 +18,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
+import requests  # Always import for Session/exceptions support
+
 # Import stealth HTTP client for WAF evasion
 try:
     from tools.http_client import safe_get, safe_post, get_stealth_session

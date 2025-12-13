@@ -55,23 +55,23 @@ def test_ssti(target_url: str, param: str = "q", callback_url: Optional[str] = N
         "smarty": "{7*7}",
     }
     
-    def try_request(method: str, payload: str) -> Optional[requests.Response]:
+    def try_request(method: str, payload: str):
         """Try a request with the given method and payload."""
         try:
             if method == "GET":
-                return requests.get(
+                return safe_get(
                     target_url,
                     params={param: payload},
                     timeout=10
                 )
             elif method == "POST_FORM":
-                return requests.post(
+                return safe_post(
                     target_url,
                     data={param: payload},
                     timeout=10
                 )
             elif method == "POST_JSON":
-                return requests.post(
+                return safe_post(
                     target_url,
                     json={param: payload},
                     headers={"Content-Type": "application/json"},

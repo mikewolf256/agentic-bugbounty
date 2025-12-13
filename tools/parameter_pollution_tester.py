@@ -143,7 +143,10 @@ def validate_parameter_pollution(
     if not target:
         return results
     
-    test_result = test_parameter_pollution(target)
+    # Extract params from discovery_data if provided
+    params = discovery_data.get("params")
+    
+    test_result = test_parameter_pollution(target, params=params)
     results["tests_run"] += 1
     if test_result["vulnerable"]:
         results["vulnerable"] = True

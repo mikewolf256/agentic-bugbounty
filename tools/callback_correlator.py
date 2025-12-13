@@ -9,6 +9,8 @@ import os
 import time
 from typing import Dict, List, Optional, Any
 
+import requests  # Always import for Session/exceptions support
+
 # Import stealth HTTP client for WAF evasion
 try:
     from tools.http_client import safe_get, safe_post, get_stealth_session
